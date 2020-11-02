@@ -1,0 +1,13 @@
+{
+  "name": "SSSI Ship",
+  "description": "Simple game in space.",
+  "version": "0.5",
+  "app": {
+    "launch": {
+      "web_url": "http://sssiship.nesro.cz/"
+    }
+  },
+  "icons": {
+    "128": "icon_128.png"
+  }
+}
