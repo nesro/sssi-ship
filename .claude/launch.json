@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sssi-ship",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "/Users/tomasnesrovnal/g/sssi-ship/phaser",
+      "port": 3000
+    }
+  ]
+}

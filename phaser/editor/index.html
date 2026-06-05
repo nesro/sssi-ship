@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Nesro Nova — Content Editor</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0a0a0a; --surface: #111; --surface2: #1a1a1a; --border: #2a2a2a;
+  --text: #ddd; --muted: #555; --accent: #00ccff; --yellow: #ffcc00;
+  --green: #00aa44; --red: #cc2222; --orange: #ff8800;
+  --boost: #00ff88; --enabler: #ffcc00; --payoff: #ff8844;
+  --font: 'Courier New', monospace;
+}
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; height: 100vh; display: flex; flex-direction: column; }
+header { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 20px; }
+header h1 { font-size: 15px; color: var(--accent); }
+header span { color: var(--muted); font-size: 11px; }
+nav { display: flex; gap: 1px; padding: 8px 16px 0; background: var(--surface); border-bottom: 1px solid var(--border); }
+.tab { padding: 7px 16px; background: var(--bg); border: 1px solid var(--border); border-bottom: none; cursor: pointer; color: var(--muted); font-family: var(--font); font-size: 12px; }
+.tab.active { color: var(--text); background: var(--surface2); border-color: var(--border); border-bottom: 1px solid var(--surface2); }
+.tab:hover:not(.active) { color: var(--text); }
+.page { display: none; flex: 1; overflow: hidden; }
+.page.active { display: flex; }
+
+/* ── CARDS ── */
+#cards-page { flex-direction: row; }
+#card-list { width: 220px; border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+#card-list-header { padding: 8px; border-bottom: 1px solid var(--border); display: flex; gap: 6px; }
+#card-list-header input { flex: 1; background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 4px 6px; font-family: var(--font); font-size: 11px; }
+#card-list-header button { background: var(--green); border: none; color: #000; padding: 4px 8px; cursor: pointer; font-family: var(--font); font-size: 11px; font-weight: bold; }
+#card-items { flex: 1; overflow-y: auto; }
+.card-item { padding: 7px 10px; cursor: pointer; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 6px; }
+.card-item:hover { background: var(--surface); }
+.card-item.selected { background: var(--surface2); border-left: 2px solid var(--accent); }
+.cat-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.cat-dot.boost { background: var(--boost); }
+.cat-dot.enabler { background: var(--enabler); }
+.cat-dot.payoff { background: var(--payoff); }
+.card-item-name { font-size: 11px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-item-note { font-size: 9px; color: var(--muted); }
+
+#card-editor { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+#card-form { flex: 1; overflow-y: auto; padding: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-content: start; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field.full { grid-column: 1 / -1; }
+label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+input, select, textarea { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 6px 8px; font-family: var(--font); font-size: 12px; width: 100%; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+textarea { resize: vertical; min-height: 50px; }
+select option { background: var(--surface2); }
+.delta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.delta-field { display: flex; flex-direction: column; gap: 3px; }
+.delta-field label { font-size: 9px; }
+.delta-field input { padding: 4px 6px; font-size: 11px; }
+#card-actions { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
+#card-actions button { padding: 6px 14px; border: none; font-family: var(--font); font-size: 11px; cursor: pointer; }
+.btn-save  { background: var(--accent); color: #000; font-weight: bold; }
+.btn-del   { background: var(--red); color: #fff; }
+.btn-copy  { background: var(--surface2); border: 1px solid var(--border) !important; color: var(--text); }
+.btn-new   { background: var(--green); color: #000; font-weight: bold; }
+.status    { font-size: 11px; color: var(--muted); flex: 1; text-align: right; }
+.tag-needs { font-size: 9px; background: #332200; color: var(--orange); padding: 2px 5px; border-radius: 2px; }
+
+/* ── MISSIONS ── */
+#missions-page { flex-direction: column; overflow-y: auto; padding: 16px; gap: 16px; }
+.mission-block { background: var(--surface); border: 1px solid var(--border); padding: 16px; }
+.mission-block h2 { color: var(--accent); margin-bottom: 8px; font-size: 14px; }
+.mission-block p { color: var(--muted); font-size: 11px; margin-bottom: 12px; }
+.wave-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.wave-table th { text-align: left; color: var(--muted); padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.wave-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.wave-table td input { background: transparent; border: none; color: var(--text); font-family: var(--font); font-size: 11px; width: 100%; }
+.wave-table td input:focus { outline: 1px solid var(--accent); }
+.wave-type { display: inline-block; padding: 1px 5px; font-size: 9px; border-radius: 2px; }
+.wave-type.star   { background: #222; color: #fff; }
+.wave-type.circle { background: #1a2233; color: #88aaff; }
+.wave-type.boss   { background: #331100; color: var(--orange); }
+.wave-type.event  { background: #003322; color: var(--boost); }
+.threshold-row { display: flex; gap: 12px; margin-top: 8px; }
+.threshold-item { flex: 1; background: var(--surface2); padding: 8px; border: 1px solid var(--border); }
+.threshold-item label { display: block; font-size: 9px; color: var(--muted); margin-bottom: 4px; }
+.threshold-item span { font-size: 11px; }
+
+/* ── EXPORT ── */
+#export-page { flex-direction: column; padding: 16px; gap: 12px; overflow: hidden; }
+#export-page h2 { font-size: 13px; color: var(--yellow); }
+#export-page p { font-size: 11px; color: var(--muted); }
+.export-block { flex: 1; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+.export-block header { display: flex; justify-content: space-between; align-items: center; }
+.export-block header h3 { font-size: 12px; color: var(--accent); }
+.copy-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 4px 10px; font-family: var(--font); font-size: 10px; cursor: pointer; }
+.copy-btn:hover { border-color: var(--accent); }
+pre { background: var(--surface); border: 1px solid var(--border); padding: 12px; overflow: auto; font-size: 11px; flex: 1; color: #aaa; line-height: 1.5; }
+
+/* ── TALENTS ── */
+#talents-page { flex-direction: column; overflow-y: auto; padding: 16px; gap: 12px; }
+.branch-block { background: var(--surface); border: 1px solid var(--border); padding: 12px; }
+.branch-block h2 { color: var(--yellow); font-size: 13px; margin-bottom: 10px; }
+.node-row { padding: 8px; border: 1px solid var(--border); margin-bottom: 6px; background: var(--bg); }
+.node-row h3 { font-size: 11px; margin-bottom: 6px; }
+.node-levels { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.node-level { background: var(--surface2); padding: 5px; font-size: 10px; }
+.node-level .cost { color: var(--yellow); font-weight: bold; }
+.node-level .desc { color: var(--muted); font-size: 9px; margin-top: 2px; }
+
+scrollbar-width: thin;
+::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: var(--bg); } ::-webkit-scrollbar-thumb { background: var(--border); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⬡ NESRO NOVA — Content Editor</h1>
+  <span>Open phaser/editor/index.html · Works offline · Changes saved to localStorage</span>
+</header>
+
+<nav>
+  <button class="tab active" onclick="showTab('cards')">Cards (42)</button>
+  <button class="tab" onclick="showTab('missions')">Missions</button>
+  <button class="tab" onclick="showTab('talents')">Talents</button>
+  <button class="tab" onclick="showTab('export')">Export TypeScript</button>
+</nav>
+
+<div id="cards-page" class="page active">
+  <div id="card-list">
+    <div id="card-list-header">
+      <input type="text" id="card-search" placeholder="search…" oninput="filterCards()">
+      <button onclick="newCard()">+ NEW</button>
+    </div>
+    <div id="card-items"></div>
+  </div>
+  <div id="card-editor">
+    <div id="card-form">
+      <div class="field"><label>ID (kebab-case)</label><input id="f-id" placeholder="e.g. rapid_fire"></div>
+      <div class="field"><label>Category</label>
+        <select id="f-cat">
+          <option value="boost">boost — standalone, always useful</option>
+          <option value="enabler">enabler — activates a new mechanic</option>
+          <option value="payoff">payoff — requires an enabler</option>
+        </select>
+      </div>
+      <div class="field full"><label>Name (display)</label><input id="f-name" placeholder="e.g. Rapid Fire"></div>
+      <div class="field full"><label>Description (shown in card picker)</label><textarea id="f-desc" rows="2" placeholder="e.g. +30% fire rate this mission"></textarea></div>
+      <div class="field"><label>Requires Chain Level</label>
+        <select id="f-chain">
+          <option value="0">0 — always in pool</option>
+          <option value="1">1 — needs chain_pool_1 talent</option>
+          <option value="2">2 — needs chain_pool_2 talent</option>
+        </select>
+      </div>
+      <div class="field"><label>Requires ID (payoffs only)</label><input id="f-req" placeholder="e.g. explosive_rounds"></div>
+      <div class="field"><label>Enables Flag (enablers only)</label>
+        <select id="f-enables">
+          <option value="">— none —</option>
+          <option value="explosiveRounds">explosiveRounds</option>
+          <option value="chainLightning">chainLightning</option>
+          <option value="overcharge">overcharge</option>
+        </select>
+      </div>
+      <div class="field"><label>Implementation</label>
+        <select id="f-impl">
+          <option value="ready">READY — expressible as StatDelta</option>
+          <option value="needs">NEEDS CODE — requires new mechanic</option>
+        </select>
+      </div>
+      <div class="field full">
+        <label>Stat Deltas (leave blank = no change)</label>
+        <div class="delta-grid">
+          <div class="delta-field"><label>frontDamage</label><input type="number" id="d-frontDamage" placeholder="0"></div>
+          <div class="delta-field"><label>frontEnergyCost</label><input type="number" id="d-frontEnergyCost" placeholder="0"></div>
+          <div class="delta-field"><label>frontFireMs</label><input type="number" id="d-frontFireMs" placeholder="0"></div>
+          <div class="delta-field"><label>energyCapacity</label><input type="number" id="d-energyCapacity" placeholder="0"></div>
+          <div class="delta-field"><label>energyRegenSec</label><input type="number" id="d-energyRegenSec" placeholder="0"></div>
+          <div class="delta-field"><label>shieldCapacity</label><input type="number" id="d-shieldCapacity" placeholder="0"></div>
+          <div class="delta-field"><label>shieldRegenSec</label><input type="number" id="d-shieldRegenSec" placeholder="0"></div>
+          <div class="delta-field"><label>dodgeCost</label><input type="number" id="d-dodgeCost" placeholder="0"></div>
+          <div class="delta-field"><label>spreadShotCost</label><input type="number" id="d-spreadShotCost" placeholder="0"></div>
+          <div class="delta-field"><label>heavyBeamCost</label><input type="number" id="d-heavyBeamCost" placeholder="0"></div>
+          <div class="delta-field"><label>sideWeaponCooldownMs</label><input type="number" id="d-sideWeaponCooldownMs" placeholder="0"></div>
+        </div>
+      </div>
+      <div class="field full"><label>Designer Notes (not exported)</label><textarea id="f-notes" rows="2" placeholder="Inspiration, balance thoughts, combos…"></textarea></div>
+    </div>
+    <div id="card-actions">
+      <button class="btn-save" onclick="saveCard()">SAVE</button>
+      <button class="btn-del" onclick="deleteCard()">DELETE</button>
+      <button class="btn-copy" onclick="copyCardTS()">COPY TS</button>
+      <span class="status" id="card-status"></span>
+    </div>
+  </div>
+</div>
+
+<div id="missions-page" class="page">
+  <div class="mission-block">
+    <h2>Mission 2 — Orbital Defense</h2>
+    <p>Asteroid field modifier. Battle Stars + War Circles. Mini-boss War Circle at 120s.</p>
+    <table class="wave-table">
+      <thead><tr><th>Time (s)</th><th>Type</th><th>Count / Detail</th><th>Label</th></tr></thead>
+      <tbody id="m2-waves"></tbody>
+    </table>
+    <div style="margin-top:12px"><strong style="font-size:11px;color:var(--muted)">STAR THRESHOLDS</strong></div>
+    <div class="threshold-row">
+      <div class="threshold-item"><label>1★</label><span>Beat the boss</span></div>
+      <div class="threshold-item"><label>2★</label><span>Shields never fully depleted</span></div>
+      <div class="threshold-item"><label>3★</label><span>≥ 60 enemies killed</span></div>
+    </div>
+    <div style="margin-top:10px;font-size:11px;color:var(--muted)">Ally events: 40s, 90s &nbsp;·&nbsp; Coins: 150 base + 60/star &nbsp;·&nbsp; Unlock: Mission 1 ≥ 1★</div>
+  </div>
+
+  <div class="mission-block">
+    <h2>Mission 3 — The Swarm</h2>
+    <p>Speed nebula: all enemies 60% faster for first 60s. Dense swarms, elite War Circles, 40 HP boss.</p>
+    <table class="wave-table">
+      <thead><tr><th>Time (s)</th><th>Type</th><th>Count / Detail</th><th>Label</th></tr></thead>
+      <tbody id="m3-waves"></tbody>
+    </table>
+    <div style="margin-top:12px"><strong style="font-size:11px;color:var(--muted)">STAR THRESHOLDS</strong></div>
+    <div class="threshold-row">
+      <div class="threshold-item"><label>1★</label><span>Beat the boss</span></div>
+      <div class="threshold-item"><label>2★</label><span>Beat boss with hull HP ≥ 10</span></div>
+      <div class="threshold-item"><label>3★</label><span>Beat boss without using side weapons</span></div>
+    </div>
+    <div style="margin-top:10px;font-size:11px;color:var(--muted)">Ally events: 20s, 55s, 100s &nbsp;·&nbsp; Coins: 250 base + 100/star &nbsp;·&nbsp; Unlock: M1 ≥ 2★ AND M2 ≥ 2★</div>
+  </div>
+</div>
+
+<div id="talents-page" class="page">
+  <div id="talent-branches"></div>
+</div>
+
+<div id="export-page" class="page">
+  <h2>Export TypeScript</h2>
+  <p>Copy the output below and paste it into the corresponding source file in <code>phaser/src/data/</code>.</p>
+  <div class="export-block" style="flex:1">
+    <header>
+      <h3>cards.ts</h3>
+      <button class="copy-btn" onclick="copyExport()">Copy to clipboard</button>
+    </header>
+    <pre id="export-output"></pre>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// DATA
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DEFAULT_CARDS = [
+  // ── BOOSTS ──────────────────────────────────────────────────────────────────
+  { id:'rapid_fire',     name:'Rapid Fire',           cat:'boost',   desc:'+30% fire rate this mission',                          chain:0, req:'', enables:'', impl:'ready',  delta:{frontFireMs:-100}, notes:'' },
+  { id:'extra_energy',   name:'Energy Cache',          cat:'boost',   desc:'+30 energy capacity',                                  chain:0, req:'', enables:'', impl:'ready',  delta:{energyCapacity:30}, notes:'' },
+  { id:'fast_regen',     name:'Efficient Generator',   cat:'boost',   desc:'+8 energy regen/sec',                                  chain:0, req:'', enables:'', impl:'ready',  delta:{energyRegenSec:8}, notes:'' },
+  { id:'shield_boost',   name:'Reinforced Shields',    cat:'boost',   desc:'+30 shield HP',                                        chain:0, req:'', enables:'', impl:'ready',  delta:{shieldCapacity:30}, notes:'' },
+  { id:'fast_shields',   name:'Shield Capacitors',     cat:'boost',   desc:'+4 shield regen/sec',                                  chain:0, req:'', enables:'', impl:'ready',  delta:{shieldRegenSec:4}, notes:'' },
+  { id:'side_recharge',  name:'Quick Reload',          cat:'boost',   desc:'Side weapons recharge 30% faster',                     chain:0, req:'', enables:'', impl:'ready',  delta:{sideWeaponCooldownMs:-1500}, notes:'' },
+  { id:'power_shot',     name:'Power Cells',           cat:'boost',   desc:'+5 damage per laser',                                  chain:0, req:'', enables:'', impl:'ready',  delta:{frontDamage:5}, notes:'' },
+  { id:'lean_shots',     name:'Efficient Barrels',     cat:'boost',   desc:'-2 energy cost per laser',                             chain:0, req:'', enables:'', impl:'ready',  delta:{frontEnergyCost:-2}, notes:'' },
+  { id:'dodge_training', name:'Dodge Training',        cat:'boost',   desc:'-3 energy cost per dodge',                             chain:0, req:'', enables:'', impl:'ready',  delta:{dodgeCost:-3}, notes:'' },
+  // new boosts
+  { id:'shield_wall',    name:'Shield Wall',           cat:'boost',   desc:'+50 shield HP, -5 shield regen/sec (trade-off)',       chain:0, req:'', enables:'', impl:'ready',  delta:{shieldCapacity:50,shieldRegenSec:-5}, notes:'Interesting for aggressive players who take hits but want a buffer' },
+  { id:'overcapacity',   name:'Overcapacity',          cat:'boost',   desc:'+50 energy capacity, -3 energy regen/sec (trade-off)', chain:0, req:'', enables:'', impl:'ready',  delta:{energyCapacity:50,energyRegenSec:-3}, notes:'Good early pick when regen is less relevant' },
+  { id:'precision_fire', name:'Precision Fire',        cat:'boost',   desc:'+10 laser damage, +100ms fire cooldown (slower+harder)',chain:0, req:'', enables:'', impl:'ready',  delta:{frontDamage:10,frontFireMs:100}, notes:'Interesting tradeoff. Pairs well with explosive_rounds' },
+  { id:'spray_n_pray',   name:'Spray & Pray',          cat:'boost',   desc:'-5 laser damage, -100ms fire cooldown (faster+weaker)',chain:0, req:'', enables:'', impl:'ready',  delta:{frontDamage:-5,frontFireMs:-100}, notes:'For players who want fast triggering for proc effects' },
+  { id:'side_mastery',   name:'Side Mastery',          cat:'boost',   desc:'Side weapons recharge 50% faster',                     chain:0, req:'', enables:'', impl:'ready',  delta:{sideWeaponCooldownMs:-2500}, notes:'' },
+  { id:'bulk_capacitors',name:'Bulk Capacitors',       cat:'boost',   desc:'+40 energy capacity',                                  chain:0, req:'', enables:'', impl:'ready',  delta:{energyCapacity:40}, notes:'Slightly larger than extra_energy. Consider merging or differentiating by level gating' },
+  { id:'laser_siphon',   name:'Laser Siphon',          cat:'boost',   desc:'-1 energy per laser, -2 damage (sustained fire shift)', chain:0, req:'', enables:'', impl:'ready',  delta:{frontEnergyCost:-1,frontDamage:-2}, notes:'Good for energy-starved builds' },
+  { id:'spread_ammo',    name:'Spread Ammo',           cat:'boost',   desc:'-3 energy per Spread Shot',                            chain:0, req:'', enables:'', impl:'ready',  delta:{spreadShotCost:-3}, notes:'' },
+  { id:'beam_focus',     name:'Beam Focus',            cat:'boost',   desc:'-3 energy per Heavy Beam',                             chain:0, req:'', enables:'', impl:'ready',  delta:{heavyBeamCost:-3}, notes:'' },
+  // concept boosts (need new mechanics)
+  { id:'momentum',       name:'Momentum',              cat:'boost',   desc:'Each kill: +2% fire rate, stacks up to +30%',          chain:0, req:'', enables:'', impl:'needs',  delta:{}, notes:'Needs a kill-counter multiplier system in GameScene. Very satisfying to snowball' },
+  { id:'last_stand',     name:'Last Stand',            cat:'boost',   desc:'When hull HP < 20%, fire rate doubles',                chain:0, req:'', enables:'', impl:'needs',  delta:{}, notes:'Emergency power fantasy. Check run.hullPercent in firePlayerLaser' },
+  { id:'adaptive_regen', name:'Adaptive Regen',        cat:'boost',   desc:'+8 energy/sec bonus when ship is not dodging',         chain:0, req:'', enables:'', impl:'needs',  delta:{}, notes:'Rewards passive play style' },
+  // ── ENABLERS ────────────────────────────────────────────────────────────────
+  { id:'explosive_rounds',name:'Explosive Rounds',     cat:'enabler', desc:'Lasers 20% chance to explode on hit (40px AoE)',       chain:1, req:'', enables:'explosiveRounds', impl:'ready',  delta:{}, notes:'' },
+  { id:'chain_lightning', name:'Chain Lightning',      cat:'enabler', desc:'Side weapons 15% chance to arc to a 2nd target',      chain:2, req:'', enables:'chainLightning',  impl:'needs',  delta:{}, notes:'Need to implement arc mechanic in fireSideWeapon()' },
+  { id:'overcharge',      name:'Overcharge Protocol',  cat:'enabler', desc:'Every 8th laser shot deals 3× damage',                chain:2, req:'', enables:'overcharge',      impl:'ready',  delta:{}, notes:'' },
+  // new enablers (need new RunFlags + mechanics)
+  { id:'homing_rounds',   name:'Homing Rounds',        cat:'enabler', desc:'Lasers slightly curve toward nearest enemy each frame', chain:1, req:'', enables:'', impl:'needs',  delta:{}, notes:'Add homingRounds RunFlag. In update(), adjust laser velocity slightly toward nearestEnemy. Small curve, not instant snap.' },
+  { id:'tesla_field',     name:'Tesla Field',          cat:'enabler', desc:'Every 5th hit on any enemy triggers AoE lightning',   chain:1, req:'', enables:'', impl:'needs',  delta:{}, notes:'Track hitCount per run. On hit #5 (modulo), spawn lightning AoE at hit position. Visual: cyan arc to nearby enemies.' },
+  { id:'phase_shift',     name:'Phase Shift',          cat:'enabler', desc:'Dodge leaves a damage trail for 2 seconds',           chain:2, req:'', enables:'', impl:'needs',  delta:{}, notes:'On dodge activation, spawn a line of damage hitboxes that linger. Very visual.' },
+  // ── PAYOFFS — explosive chain ───────────────────────────────────────────────
+  { id:'blast_radius',    name:'Blast Radius',         cat:'payoff',  desc:'Explosions deal damage in larger area (+30px radius)', chain:1, req:'explosive_rounds',  enables:'', impl:'ready',  delta:{}, notes:'' },
+  { id:'chain_reaction',  name:'Chain Reaction',       cat:'payoff',  desc:'Explosions can trigger secondary explosions',          chain:1, req:'explosive_rounds',  enables:'', impl:'needs',  delta:{}, notes:'' },
+  { id:'energy_recovery', name:'Energy Recovery',      cat:'payoff',  desc:'Explosions restore 8 energy',                         chain:1, req:'explosive_rounds',  enables:'', impl:'ready',  delta:{}, notes:'' },
+  { id:'blast_amplifier', name:'Blast Amplifier',      cat:'payoff',  desc:'Explosions also slow nearby enemies for 1s',          chain:1, req:'explosive_rounds',  enables:'', impl:'needs',  delta:{}, notes:'Add slow modifier to enemy velocity for duration. Visual effect needed' },
+  // ── PAYOFFS — tesla chain ───────────────────────────────────────────────────
+  { id:'tesla_amplifier', name:'Tesla Amplifier',      cat:'payoff',  desc:'Tesla lightning deals double damage',                  chain:1, req:'tesla_field',       enables:'', impl:'needs',  delta:{}, notes:'' },
+  { id:'chain_conductor', name:'Chain Conductor',      cat:'payoff',  desc:'Tesla lightning chains to 2 additional enemies',      chain:1, req:'tesla_field',       enables:'', impl:'needs',  delta:{}, notes:'Like chain_lightning but triggered by tesla, not side weapons' },
+  // ── PAYOFFS — overcharge chain ──────────────────────────────────────────────
+  { id:'overcharge_regen',name:'Capacitor Discharge',  cat:'payoff',  desc:'Overcharge shots restore 5 energy',                   chain:2, req:'overcharge',         enables:'', impl:'ready',  delta:{}, notes:'' },
+  { id:'overcharge_wave', name:'Overcharge Shockwave', cat:'payoff',  desc:'Overcharge shots emit a 60px AoE shockwave',          chain:2, req:'overcharge',         enables:'', impl:'needs',  delta:{}, notes:'Visual spectacle card. On overcharge hit, spawn circular damage zone' },
+  // ── PAYOFFS — chain_lightning chain ────────────────────────────────────────
+  { id:'storm_chains',    name:'Storm Chains',         cat:'payoff',  desc:'Chain Lightning arcs to 2 additional targets',        chain:2, req:'chain_lightning',    enables:'', impl:'needs',  delta:{}, notes:'' },
+  { id:'chain_master',    name:'Chain Master',         cat:'payoff',  desc:'Chain Lightning jumps ignore previous targets',       chain:2, req:'chain_lightning',    enables:'', impl:'needs',  delta:{}, notes:'Makes chain_lightning feel like proper crowd control' },
+  // ── PAYOFFS — homing chain ─────────────────────────────────────────────────
+  { id:'homing_swarm',    name:'Homing Swarm',         cat:'payoff',  desc:'Homing lasers split into 2 on miss',                  chain:1, req:'homing_rounds',      enables:'', impl:'needs',  delta:{}, notes:'Fun visual. Detect if laser goes offscreen without hitting and spawn 2 weaker homing shots' },
+  { id:'guided_payload',  name:'Guided Payload',       cat:'payoff',  desc:'Homing lasers deal +8 damage',                        chain:1, req:'homing_rounds',      enables:'', impl:'needs',  delta:{}, notes:'Simple damage buff for homing build' },
+  // ── PAYOFFS — phase chain ──────────────────────────────────────────────────
+  { id:'phase_hunter',    name:'Phase Hunter',         cat:'payoff',  desc:'Dodge trail fires 2 homing shots on expiry',         chain:2, req:'phase_shift',         enables:'', impl:'needs',  delta:{}, notes:'High spectacle payoff. Combine with homing_rounds for full effect' },
+  { id:'phase_barrier',   name:'Phase Barrier',        cat:'payoff',  desc:'Dodge trail absorbs 1 incoming shot',                chain:2, req:'phase_shift',         enables:'', impl:'needs',  delta:{}, notes:'Defensive payoff. Makes dodging feel like active defense' },
+  // ── CONCEPT / SPECIAL ──────────────────────────────────────────────────────
+  { id:'lucky_draw',      name:'Lucky Draw',           cat:'boost',   desc:'Draw 1 extra card at your next level-up',             chain:0, req:'', enables:'', impl:'needs',  delta:{}, notes:'One-time effect. Set run.extraCardNextLevel = true. Show 4 cards on next level-up instead of 3' },
+  { id:'shield_nova',     name:'Shield Nova',          cat:'boost',   desc:'When shields break, deal 40 AoE damage',              chain:0, req:'', enables:'', impl:'needs',  delta:{}, notes:'Makes losing shields feel intentional. Track in ShieldSystem or GameScene' },
+];
+
+const M2_WAVES = [
+  { t:3,   type:'star',   detail:'5 Battle Stars',                  label:'WAVE 1' },
+  { t:14,  type:'mixed',  detail:'3 War Circles + 4 Battle Stars',  label:'WAVE 2' },
+  { t:28,  type:'star',   detail:'6 Battle Stars',                  label:'WAVE 3' },
+  { t:35,  type:'event',  detail:'Asteroid sweep (3 rocks)',        label:'HAZARD' },
+  { t:40,  type:'circle', detail:'5 War Circles',                   label:'WAVE 4' },
+  { t:55,  type:'star',   detail:'8 Battle Stars',                  label:'WAVE 5' },
+  { t:60,  type:'event',  detail:'Asteroid sweep (5 rocks)',        label:'HAZARD' },
+  { t:70,  type:'mixed',  detail:'4 War Circles + 4 Battle Stars',  label:'WAVE 6' },
+  { t:85,  type:'star',   detail:'10 Battle Stars',                 label:'WAVE 7' },
+  { t:90,  type:'event',  detail:'Asteroid sweep (4 rocks)',        label:'HAZARD' },
+  { t:100, type:'circle', detail:'5 War Circles',                   label:'WAVE 8' },
+  { t:120, type:'boss',   detail:'War Circle BOSS — 30 HP, faster fire rate', label:'BOSS' },
+];
+
+const M3_WAVES = [
+  { t:0,   type:'event',  detail:'⚡ SPEED NEBULA active — enemies +60% speed', label:'NEBULA' },
+  { t:3,   type:'star',   detail:'8 Battle Stars',                  label:'SWARM!' },
+  { t:10,  type:'mixed',  detail:'6 Stars + 1 Elite Circle (15 HP)', label:'ELITE DETECTED' },
+  { t:18,  type:'star',   detail:'12 Battle Stars',                 label:'SWARM!' },
+  { t:26,  type:'mixed',  detail:'8 Stars + 1 War Circle',         label:'SWARM!' },
+  { t:35,  type:'mixed',  detail:'5 Stars + 1 Elite Circle (15 HP)', label:'ELITE STRIKE' },
+  { t:44,  type:'star',   detail:'15 Battle Stars (dense)',        label:'FINAL SWARM' },
+  { t:60,  type:'event',  detail:'✓ Speed nebula dissipating',     label:'NEBULA CLEARING' },
+  { t:68,  type:'circle', detail:'6 War Circles',                  label:'COUNTERATTACK' },
+  { t:82,  type:'boss',   detail:'Battle Star BOSS — 40 HP, 50% faster fire rate', label:'BOSS INCOMING' },
+];
+
+const TALENT_TREE = [
+  { name:'Weapons', color:'#00ccff', nodes:[
+    { name:'Payload',            levels:[{cost:1,desc:'+8% damage'},{cost:2,desc:'+16% damage'},{cost:3,desc:'+24% damage'}] },
+    { name:'Overclocked Barrels',levels:[{cost:1,desc:'Fire 5% faster'},{cost:2,desc:'10% faster'},{cost:3,desc:'15% faster'}] },
+    { name:'Focused Discharge',  levels:[{cost:1,desc:'-4% energy/laser'},{cost:2,desc:'-8%'},{cost:3,desc:'-12%'}] },
+    { name:'Rapid Reload',       levels:[{cost:1,desc:'-1 energy/side use'},{cost:2,desc:'-2'},{cost:4,desc:'-3'}] },
+  ]},
+  { name:'Shields', color:'#00cccc', nodes:[
+    { name:'Thick Plating',      levels:[{cost:1,desc:'+25 shield HP'},{cost:2,desc:'+50'},{cost:3,desc:'+75'}] },
+    { name:'Capacitor Banks',    levels:[{cost:1,desc:'+2 shield HP/sec'},{cost:2,desc:'+4'},{cost:3,desc:'+6'}] },
+  ]},
+  { name:'Generator', color:'#ffcc00', nodes:[
+    { name:'Power Cell',         levels:[{cost:1,desc:'+15 energy cap'},{cost:2,desc:'+30'},{cost:3,desc:'+45'}] },
+    { name:'Flux Coils',         levels:[{cost:1,desc:'+3 energy/sec'},{cost:2,desc:'+6'},{cost:3,desc:'+9'}] },
+  ]},
+  { name:'Automation', color:'#ff8800', nodes:[
+    { name:'Reflex Dampeners',   levels:[{cost:1,desc:'-1 dodge energy'},{cost:2,desc:'-2'},{cost:4,desc:'-3'}] },
+    { name:'Threat Matrix',      levels:[{cost:1,desc:'Dodge earlier'},{cost:2,desc:'Much earlier'},{cost:3,desc:'Near-perfect'}] },
+  ]},
+  { name:'Chain', color:'#ff4488', nodes:[
+    { name:'Syndicate Contracts',levels:[{cost:2,desc:'Adds explosive synergy cards to pool'}] },
+    { name:'Storm Protocol',     levels:[{cost:3,desc:'Adds overcharge + lightning cards to pool'}] },
+  ]},
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────────────────────────────────────
+
+let cards = [];
+let selectedId = null;
+
+function loadCards() {
+  const saved = localStorage.getItem('nesro-editor-cards');
+  cards = saved ? JSON.parse(saved) : DEFAULT_CARDS.map(c => ({...c, delta:{...c.delta}}));
+}
+
+function saveCards() {
+  localStorage.setItem('nesro-editor-cards', JSON.stringify(cards));
+}
+
+function resetToDefaults() {
+  if (!confirm('Reset all cards to defaults? You will lose your changes.')) return;
+  cards = DEFAULT_CARDS.map(c => ({...c, delta:{...c.delta}}));
+  saveCards();
+  renderCardList();
+  selectCard(cards[0]?.id);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CARD LIST
+// ─────────────────────────────────────────────────────────────────────────────
+
+function renderCardList(filter = '') {
+  const container = document.getElementById('card-items');
+  const filtered  = filter ? cards.filter(c =>
+    c.name.toLowerCase().includes(filter) || c.id.includes(filter) || c.cat.includes(filter)
+  ) : cards;
+
+  const byCategory = { boost: [], enabler: [], payoff: [] };
+  filtered.forEach(c => (byCategory[c.cat] || []).push(c));
+
+  container.innerHTML = '';
+  ['boost','enabler','payoff'].forEach(cat => {
+    if (!byCategory[cat].length) return;
+    const header = document.createElement('div');
+    header.style.cssText = 'padding:5px 10px;font-size:9px;color:var(--muted);text-transform:uppercase;background:var(--bg);border-bottom:1px solid var(--border);letter-spacing:1px;';
+    header.textContent = cat + ' (' + byCategory[cat].length + ')';
+    container.appendChild(header);
+
+    byCategory[cat].forEach(c => {
+      const el = document.createElement('div');
+      el.className = 'card-item' + (c.id === selectedId ? ' selected' : '');
+      el.dataset.id = c.id;
+      el.onclick = () => selectCard(c.id);
+      el.innerHTML = `<div class="cat-dot ${c.cat}"></div>
+        <span class="card-item-name">${c.name}</span>
+        ${c.impl === 'needs' ? '<span class="card-item-note">🔧</span>' : ''}
+        ${c.chain > 0 ? `<span class="card-item-note">⛓${c.chain}</span>` : ''}`;
+      container.appendChild(el);
+    });
+  });
+}
+
+function filterCards() {
+  renderCardList(document.getElementById('card-search').value.toLowerCase());
+}
+
+function selectCard(id) {
+  selectedId = id;
+  const c = cards.find(x => x.id === id);
+  if (!c) return;
+
+  document.getElementById('f-id').value      = c.id;
+  document.getElementById('f-name').value    = c.name;
+  document.getElementById('f-cat').value     = c.cat;
+  document.getElementById('f-desc').value    = c.desc;
+  document.getElementById('f-chain').value   = c.chain;
+  document.getElementById('f-req').value     = c.req;
+  document.getElementById('f-enables').value = c.enables;
+  document.getElementById('f-impl').value    = c.impl;
+  document.getElementById('f-notes').value   = c.notes || '';
+
+  const DELTA_FIELDS = ['frontDamage','frontEnergyCost','frontFireMs','energyCapacity','energyRegenSec','shieldCapacity','shieldRegenSec','dodgeCost','spreadShotCost','heavyBeamCost','sideWeaponCooldownMs'];
+  DELTA_FIELDS.forEach(f => {
+    const el = document.getElementById('d-' + f);
+    if (el) el.value = c.delta[f] !== undefined ? c.delta[f] : '';
+  });
+
+  renderCardList(document.getElementById('card-search').value.toLowerCase());
+  setStatus('');
+}
+
+function saveCard() {
+  const DELTA_FIELDS = ['frontDamage','frontEnergyCost','frontFireMs','energyCapacity','energyRegenSec','shieldCapacity','shieldRegenSec','dodgeCost','spreadShotCost','heavyBeamCost','sideWeaponCooldownMs'];
+  const delta = {};
+  DELTA_FIELDS.forEach(f => {
+    const val = document.getElementById('d-' + f)?.value;
+    if (val !== '' && val !== undefined && !isNaN(Number(val)) && Number(val) !== 0) {
+      delta[f] = Number(val);
+    }
+  });
+
+  const id = document.getElementById('f-id').value.trim().replace(/\s+/g, '_');
+  if (!id) { setStatus('ID is required'); return; }
+
+  const updated = {
+    id,
+    name:    document.getElementById('f-name').value.trim(),
+    cat:     document.getElementById('f-cat').value,
+    desc:    document.getElementById('f-desc').value.trim(),
+    chain:   Number(document.getElementById('f-chain').value),
+    req:     document.getElementById('f-req').value.trim(),
+    enables: document.getElementById('f-enables').value,
+    impl:    document.getElementById('f-impl').value,
+    delta,
+    notes:   document.getElementById('f-notes').value.trim(),
+  };
+
+  const existingIdx = cards.findIndex(c => c.id === id);
+  if (existingIdx >= 0) {
+    cards[existingIdx] = updated;
+  } else {
+    cards.push(updated);
+  }
+
+  selectedId = id;
+  saveCards();
+  renderCardList(document.getElementById('card-search').value.toLowerCase());
+  setStatus('✓ Saved');
+}
+
+function deleteCard() {
+  if (!selectedId) return;
+  if (!confirm('Delete "' + selectedId + '"?')) return;
+  cards = cards.filter(c => c.id !== selectedId);
+  selectedId = null;
+  saveCards();
+  renderCardList();
+  clearForm();
+  setStatus('Deleted');
+}
+
+function newCard() {
+  clearForm();
+  selectedId = null;
+  document.getElementById('f-id').focus();
+  setStatus('Fill in the fields and click SAVE');
+}
+
+function clearForm() {
+  ['f-id','f-name','f-desc','f-req','f-notes'].forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
+  document.getElementById('f-cat').value = 'boost';
+  document.getElementById('f-chain').value = '0';
+  document.getElementById('f-enables').value = '';
+  document.getElementById('f-impl').value = 'ready';
+  ['frontDamage','frontEnergyCost','frontFireMs','energyCapacity','energyRegenSec','shieldCapacity','shieldRegenSec','dodgeCost','spreadShotCost','heavyBeamCost','sideWeaponCooldownMs'].forEach(f => {
+    const el = document.getElementById('d-'+f); if(el) el.value = '';
+  });
+}
+
+function setStatus(msg) {
+  document.getElementById('card-status').textContent = msg;
+  if (msg) setTimeout(() => { document.getElementById('card-status').textContent = ''; }, 2000);
+}
+
+function copyCardTS() {
+  const c = cards.find(x => x.id === selectedId);
+  if (!c) return;
+  navigator.clipboard.writeText(cardToTS(c));
+  setStatus('✓ Copied!');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MISSIONS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function renderMissions() {
+  renderWaveTable('m2-waves', M2_WAVES);
+  renderWaveTable('m3-waves', M3_WAVES);
+}
+
+function renderWaveTable(tbodyId, waves) {
+  const tbody = document.getElementById(tbodyId);
+  tbody.innerHTML = '';
+  waves.forEach(w => {
+    const tr = document.createElement('tr');
+    const typeClass = w.type === 'mixed' ? 'star' : w.type;
+    tr.innerHTML = `<td style="color:var(--muted)">${w.t}s</td>
+      <td><span class="wave-type ${typeClass}">${w.type.toUpperCase()}</span></td>
+      <td>${w.detail}</td>
+      <td style="color:var(--yellow);font-size:11px">${w.label}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TALENTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function renderTalents() {
+  const container = document.getElementById('talent-branches');
+  container.innerHTML = '';
+  TALENT_TREE.forEach(branch => {
+    const el = document.createElement('div');
+    el.className = 'branch-block';
+    el.innerHTML = `<h2 style="color:${branch.color}">${branch.name}</h2>` +
+      branch.nodes.map(node => `
+        <div class="node-row">
+          <h3>${node.name}</h3>
+          <div class="node-levels">
+            ${node.levels.map((lv,i) => `
+              <div class="node-level">
+                <div class="cost">★${lv.cost} — Level ${i+1}</div>
+                <div class="desc">${lv.desc}</div>
+              </div>`).join('')}
+          </div>
+        </div>`).join('');
+    container.appendChild(el);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPORT
+// ─────────────────────────────────────────────────────────────────────────────
+
+function cardToTS(c) {
+  const lines = [];
+  lines.push(`  {`);
+  lines.push(`    id:          '${c.id}',`);
+  lines.push(`    name:        '${c.name}',`);
+  lines.push(`    description: '${c.desc}',`);
+  lines.push(`    category:    '${c.cat}',`);
+  if (c.chain > 0)    lines.push(`    requiresChain: ${c.chain},`);
+  if (c.req)          lines.push(`    requiresId:    '${c.req}',`);
+  if (c.enables)      lines.push(`    enables:       '${c.enables}',`);
+  const deltaKeys = Object.keys(c.delta).filter(k => c.delta[k] !== 0);
+  if (deltaKeys.length) {
+    const deltaStr = deltaKeys.map(k => `${k}: ${c.delta[k]}`).join(', ');
+    lines.push(`    statDelta:   { ${deltaStr} },`);
+  }
+  lines.push(`  },`);
+  return lines.join('\n');
+}
+
+function generateExport() {
+  const ready = cards.filter(c => c.impl === 'ready');
+  const needs  = cards.filter(c => c.impl === 'needs');
+
+  const out = [
+    `import type { CardDefinition } from '../types/index.js';`,
+    ``,
+    `// ${ready.length} cards ready to ship  |  ${needs.length} cards need new mechanics (marked below)`,
+    `export const ALL_CARDS: CardDefinition[] = [`,
+    ...['boost','enabler','payoff'].flatMap(cat => {
+      const group = cards.filter(c => c.cat === cat);
+      if (!group.length) return [];
+      return [`  // ── ${cat.toUpperCase()}S ${'─'.repeat(60-cat.length)}`, ...group.map(cardToTS)];
+    }),
+    `];`,
+    ``,
+    `// ─── NEEDS CODE (${needs.length} cards) ─────────────────────────────────────────────`,
+    `// These cards are designed but not yet implementable as pure StatDeltas.`,
+    `// Each entry below describes what mechanic is needed.`,
+    ...needs.map(c => `// ${c.id}: ${c.notes || c.desc}`),
+  ].join('\n');
+
+  document.getElementById('export-output').textContent = out;
+}
+
+function copyExport() {
+  const text = document.getElementById('export-output').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.querySelector('#export-page .copy-btn');
+    btn.textContent = '✓ Copied!';
+    setTimeout(() => btn.textContent = 'Copy to clipboard', 1500);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TABS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function showTab(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(name + '-page').classList.add('active');
+  event.target.classList.add('active');
+  if (name === 'export') generateExport();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────────────────────────────────────
+
+loadCards();
+renderCardList();
+renderMissions();
+renderTalents();
+if (cards.length) selectCard(cards[0].id);
+
+// Header reset link
+document.querySelector('header span').insertAdjacentHTML('beforeend',
+  ' &nbsp;<a href="#" onclick="resetToDefaults();return false;" style="color:var(--red);font-size:10px">reset to defaults</a>');
+</script>
+</body>
+</html>
