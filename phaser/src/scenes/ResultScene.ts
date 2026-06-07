@@ -4,6 +4,7 @@
 
 import Phaser from 'phaser';
 import { SaveManager } from '../SaveManager.js';
+import type { RunRecord } from '../SaveManager.js';
 import { calculateStars, calculateCoins, MISSIONS } from '../data/missions.js';
 import { DAILY_MISSION_ID, dailyCoins } from '../data/daily.js';
 import type { MissionResult } from '../data/missions.js';
@@ -79,7 +80,8 @@ export class ResultScene extends Phaser.Scene {
       fontSize: '10px', color: '#444444', fontFamily: 'monospace',
     }).setOrigin(0.5);
 
-    this.addContinueButton(W, H * 0.91, 'CONTINUE');
+    this.addContinueButton(W, H * 0.87, 'CONTINUE');
+    this.addSecondaryButtons(W, H * 0.95);
   }
 
   private handleVictory(W: number, H: number, missionId: string): void {
@@ -131,26 +133,68 @@ export class ResultScene extends Phaser.Scene {
 
     // New stars awarded
     if (newStarCount > 0) {
-      this.add.text(W / 2, H * 0.83, `+${newStarCount} new star${newStarCount > 1 ? 's' : ''} earned!`, {
+      this.add.text(W / 2, H * 0.81, `+${newStarCount} new star${newStarCount > 1 ? 's' : ''} earned!`, {
         fontSize: '13px', color: '#ffcc00', fontFamily: 'monospace',
       }).setOrigin(0.5);
     }
 
-    this.addContinueButton(W, H * 0.93, 'CONTINUE');
+    this.addContinueButton(W, H * 0.88, 'CONTINUE');
+    this.addSecondaryButtons(W, H * 0.95);
   }
 
   private buildDefeatScreen(W: number, H: number): void {
-    this.add.text(W / 2, H * 0.25, 'SHIP DESTROYED', {
+    this.add.text(W / 2, H * 0.22, 'SHIP DESTROYED', {
       fontSize: '28px', color: '#ff2200', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5);
 
-    this.add.text(W / 2, H * 0.40, 'Upgrade your ship in the shop\nand try again.', {
-      fontSize: '13px', color: '#888888', fontFamily: 'monospace', align: 'center',
+    // Diagnosis — one actionable sentence based on what actually went wrong.
+    const diagnosis = this.diagnoseDeath();
+    this.add.text(W / 2, H * 0.36, diagnosis.cause, {
+      fontSize: '12px', color: '#666666', fontFamily: 'monospace', align: 'center',
+    }).setOrigin(0.5);
+    this.add.text(W / 2, H * 0.44, diagnosis.tip, {
+      fontSize: '11px', color: '#445544', fontFamily: 'monospace', align: 'center',
+      wordWrap: { width: W * 0.75 },
     }).setOrigin(0.5);
 
-    this.addStatRow(W, H * 0.55, 'Enemies killed', this.result.enemiesKilled);
+    this.addStatRow(W, H * 0.57, 'Enemies killed', this.result.enemiesKilled);
+    this.addStatRow(W, H * 0.63, 'Time survived',  this.formatTime(this.result.secondsTaken));
 
-    this.addContinueButton(W, H * 0.70, 'TRY AGAIN');
+    this.addContinueButton(W, H * 0.75, 'TRY AGAIN');
+    this.addSecondaryButtons(W, H * 0.87);
+  }
+
+  private diagnoseDeath(): { cause: string; tip: string } {
+    const { secondsTaken, enemiesKilled, shieldBroken } = this.result;
+
+    if (secondsTaken < 15) {
+      return {
+        cause: 'Went down in under 15 seconds.',
+        tip:   'Buy a weapon in the shop — even Laser Mk1 changes everything.',
+      };
+    }
+    if (shieldBroken && enemiesKilled < 8) {
+      return {
+        cause: 'Shields failed early.',
+        tip:   'A generator upgrade will keep shields recharged under fire.',
+      };
+    }
+    if (shieldBroken) {
+      return {
+        cause: 'Shields were overwhelmed.',
+        tip:   'Consider upgrading shields or generator before the next run.',
+      };
+    }
+    if (enemiesKilled < 5) {
+      return {
+        cause: 'Firepower was too low.',
+        tip:   'Upgrade your front weapon to clear waves before they pile up.',
+      };
+    }
+    return {
+      cause: 'Close fight.',
+      tip:   'Check the talent tree — even one node can tip the balance.',
+    };
   }
 
   private addStarRow(W: number, y: number, filledCount: number): void {
@@ -193,6 +237,30 @@ export class ResultScene extends Phaser.Scene {
     this.add.text(W / 2, y, `+ ${coins} ◈`, {
       fontSize: '20px', color: '#ffcc00', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5);
+  }
+
+  private addSecondaryButtons(W: number, y: number): void {
+    const save    = SaveManager.load();
+    const history = save.runHistory;
+    if (history.length === 0) return;
+
+    const lastRun = history[history.length - 1] as RunRecord;
+
+    const replayBtn = this.add.text(W / 2 - 65, y, 'WATCH REPLAY', {
+      fontSize: '11px', color: '#335533', fontFamily: 'monospace',
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    replayBtn.on('pointerover', () => replayBtn.setColor('#66aa66'));
+    replayBtn.on('pointerout',  () => replayBtn.setColor('#335533'));
+    replayBtn.on('pointerdown', () => {
+      this.scene.start('GameScene', { missionId: lastRun.missionId, replay: lastRun });
+    });
+
+    const histBtn = this.add.text(W / 2 + 65, y, 'HISTORY', {
+      fontSize: '11px', color: '#335533', fontFamily: 'monospace',
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    histBtn.on('pointerover', () => histBtn.setColor('#66aa66'));
+    histBtn.on('pointerout',  () => histBtn.setColor('#335533'));
+    histBtn.on('pointerdown', () => this.scene.start('RunHistoryScene'));
   }
 
   private addContinueButton(W: number, y: number, label: string): void {

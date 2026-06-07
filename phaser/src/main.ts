@@ -11,6 +11,7 @@ import { GameScene }          from './scenes/GameScene.js';
 import { ResultScene }        from './scenes/ResultScene.js';
 import { ShopScene }          from './scenes/ShopScene.js';
 import { TalentScene }        from './scenes/TalentScene.js';
+import { RunHistoryScene }    from './scenes/RunHistoryScene.js';
 
 const game = new Phaser.Game({
   type:            Phaser.AUTO,
@@ -27,6 +28,7 @@ const game = new Phaser.Game({
     ResultScene,
     ShopScene,
     TalentScene,
+    RunHistoryScene,
   ],
 
   physics: {

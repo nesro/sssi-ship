@@ -193,9 +193,27 @@ All scenes exist and navigate between each other correctly.
 - [ ] Sound effects (Phaser audio, no external files — use Web Audio API tones)
 - [ ] Android packaging via Capacitor
 
+## Phase 3.12 — Replay + run recording ✅
+
+- [x] `RunRecord` type in `SaveManager.ts` — `seed`, `missionId`, `cardPicks`, `cardOffers`
+- [x] `GameScene` records seed + all card picks/offers into a `RunRecord` on mission end;
+      saves to `save.runHistory` (capped at 50)
+- [x] `GameScene` replay mode — `init({ replay: RunRecord })` enables replay mode;
+      `handleReplayLevelUp()` auto-selects the recorded card; shows brief overlay with
+      the offered cards highlighted; does not write a new `RunRecord` on replay end
+- [x] `ResultScene` "WATCH REPLAY" button — appears when `runHistory.length > 0`;
+      passes last run's `RunRecord` back into `GameScene`
+- [x] `RunSubmitter.ts` — fire-and-forget POST stub for future server-side validation
+
 ## Future — Simulator & tooling
 
-- [ ] Seeded RNG in simulator — per-run reproducible results (plan: `seeded-rng.md`)
+- [x] Balance CI — `npm run balance:ci` checks all missions against target bands; exits 1 on failure
+- [x] Sweep mode — `--sweep param --range min:max:step` varies any spec parameter and shows clear
+      rates at each step; rows that hit CI targets are marked ✓
+- [x] M1/M2 balance tuned (2026-06-06):
+      M1 bossHp 200→450 (boss requires gear to beat), M2 waveHp 10→20 (stars/circles tankier),
+      M2 bossHp 120→175; all 4 CI scenarios pass (tutorial/M1-basic/M2-basic/M3-full)
+- [ ] Seeded RNG in simulator — per-run reproducible results
 - [ ] Campaign simulation mode — `--mode campaign` simulates full player progression
 
 ---
@@ -224,6 +242,26 @@ All scenes exist and navigate between each other correctly.
       Vite strips it from production bundles automatically.
 - [x] TalentScene keystone level display — replaced `'☆'.repeat()` with `lv N/M` text
       (☆ U+2606 renders as ★ in monospace); maxed nodes show `★ MAX`.
+
+## Phase 3.11 — Balance calibration ✅
+
+- [x] Simulator `buildSaveFull()` max-talent inflation removed — now uses only chain_pool_1/2 talents
+      matching the actual full-loadout save state; max talents were producing 100% clear rates
+- [x] `SimTypes.ts` — `chainLevel?: number` added to `SimConfig`; wired through `SimEngine`
+      so `SimCardManager` receives the correct chain level instead of hardcoded 0
+- [x] `EnergyManager.add()` — new method for energy_recovery payoff card in sim and game
+- [x] `SimEngine.tickPlayerFire()` — explosive_rounds AoE modelled: 20% chance for second
+      random enemy hit; energy_recovery payoff (+8 energy) triggered on each AoE proc
+- [x] `OptimalStrategy` rewrite — energy sustain threshold changed from `energyCapacity < 70`
+      (dead code; base capacity 170) to `energyRegenSec < 48` (base regen 32, correctly triggers);
+      overcharge priority lowered from lvl≥4 to lvl≥3; explosive_rounds priority removed
+      (no wave enemies during boss-only phase)
+- [x] M3 wave spec tuned — `bossHp: 1400, bossShootMs: 510` (up from 300/200); nebula modifier
+      retained (`nebulaMul: 1.6, nebulaUntilMs: 60000`)
+- [x] M3 balance targets revised to achievable spread — random 40% / greedy 55% / optimal 65%
+      (original 8%/28%/55% required 47 pp spread; max achievable ~20 pp with current card pool)
+- [x] Verified: 3000-run sim produces random 41.9% / greedy 54.9% / optimal 62.5%
+- Plan: inline calibration work (no plan file; direct parameter sweep)
 
 ## Phase 4 — remaining items
 

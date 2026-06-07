@@ -21,12 +21,18 @@ const PAYOFF_SUPPRESSED_WEIGHT = 0.15;
 
 export class CardManager {
   private pool: CardDefinition[];
+  private rng:  () => number;
 
   // chainLevel: 0 = no chain investment, 1 = chain_pool_1, 2 = chain_pool_2
-  constructor(chainLevel: number = 0) {
-    this.pool = ALL_CARDS
-      .filter(c => (c.requiresChain ?? 0) <= chainLevel)
-      .sort(() => Math.random() - 0.5);
+  // rng: seeded PRNG for reproducible draws; defaults to Math.random for non-seeded use
+  constructor(chainLevel: number = 0, rng: () => number = Math.random) {
+    this.rng  = rng;
+    this.pool = ALL_CARDS.filter(c => (c.requiresChain ?? 0) <= chainLevel);
+    // Fisher-Yates shuffle — deterministic when rng is seeded
+    for (let i = this.pool.length - 1; i > 0; i--) {
+      const j = Math.floor(this.rng() * (i + 1));
+      [this.pool[i], this.pool[j]] = [this.pool[j]!, this.pool[i]!];
+    }
   }
 
   draw(run: RunState): CardDefinition[] {
@@ -83,7 +89,7 @@ export class CardManager {
   private weightedRandom(weighted: { card: CardDefinition; weight: number }[]): CardDefinition | null {
     const total = weighted.reduce((sum, w) => sum + w.weight, 0);
     if (total === 0) return null;
-    let r = Math.random() * total;
+    let r = this.rng() * total;
     for (const w of weighted) {
       r -= w.weight;
       if (r <= 0) return w.card;

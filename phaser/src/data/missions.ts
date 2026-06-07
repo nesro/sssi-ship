@@ -26,6 +26,11 @@ export interface MissionDefinition {
     two:   StarThreshold;
     three: StarThreshold;
   };
+  /** Position in the mission-map tree-space (pixels, relative to the TreeCanvas container). */
+  mapX: number;
+  mapY: number;
+  /** Ids of missions this node draws an edge to in the map (children in the tree). */
+  mapConnectsTo: string[];
 }
 
 export interface MissionResult {
@@ -41,6 +46,8 @@ export interface MissionResult {
 }
 
 export const MISSIONS: Record<string, MissionDefinition> = {
+  // Map layout — tree flows top-to-bottom, tutorial at apex, swarm at base.
+  // Positions are in tree-space (px) relative to the TreeCanvas container.
   tutorial: {
     id:             'tutorial',
     name:           'Tutorial',
@@ -52,27 +59,31 @@ export const MISSIONS: Record<string, MissionDefinition> = {
       coinsPerExtraStar:  10,
     },
     starThresholds: {
-      one:   { type: 'beat_boss' },                              // triggered by endMission(true)
-      two:   { type: 'beat_boss_hull_percent_min', value: 60 },  // survive with ≥60% hull
-      three: { type: 'shields_never_broken' },                   // shield never collapsed
+      one:   { type: 'beat_boss' },
+      two:   { type: 'beat_boss_hull_percent_min', value: 60 },
+      three: { type: 'shields_never_broken' },
     },
+    mapX: 400, mapY: 28,
+    mapConnectsTo: ['mission_1'],
   },
 
   mission_1: {
     id:          'mission_1',
     name:        'First Contact',
     description: 'A scouting force approaches. Take them down.',
-    unlockRequires: null,            // available from the start
-    allyEventTimes: [25000, 60000],  // ms into the mission when ally ships appear
+    unlockRequires: { tutorial: 1 },
+    allyEventTimes: [25000, 60000],
     rewards: {
       baseCoins:           80,
-      coinsPerExtraStar:   40,       // earned for each star above the first
+      coinsPerExtraStar:   40,
     },
     starThresholds: {
       one:   { type: 'beat_boss' },
       two:   { type: 'beat_boss_hull_percent_min', value: 50 },
       three: { type: 'beat_boss_within_seconds',   value: 75 },
     },
+    mapX: 280, mapY: 105,
+    mapConnectsTo: ['mission_2'],
   },
 
   mission_2: {
@@ -90,6 +101,8 @@ export const MISSIONS: Record<string, MissionDefinition> = {
       two:   { type: 'shields_never_broken' },
       three: { type: 'enemies_killed_min', value: 60 },
     },
+    mapX: 280, mapY: 170,
+    mapConnectsTo: ['mission_3'],
   },
 
   mission_3: {
@@ -107,6 +120,8 @@ export const MISSIONS: Record<string, MissionDefinition> = {
       two:   { type: 'beat_boss_hull_hp_min', value: 10 },
       three: { type: 'no_side_weapons_used' },
     },
+    mapX: 400, mapY: 228,
+    mapConnectsTo: [],
   },
 };
 

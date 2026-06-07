@@ -1,35 +1,22 @@
 import type { ComputedStats } from '../../src/game/computeStats.js';
 import type { RunState } from '../../src/game/CardManager.js';
+import type { MissionWaveSpec } from '../../src/game/WaveSpec.js';
 
 export interface SimEnemy {
-  hp:         number;
-  maxHp:      number;
-  shootMs:    number;   // base interval between shots
-  nextShotMs: number;   // absolute time of next shot
-}
-
-export interface EnemySpec {
-  hp:       number;
-  shootMs:  number;
-  xp:       number;
-}
-
-export interface WaveSpec {
-  atMs:      number;
-  count:     number;
-  enemySpec: EnemySpec;
-}
-
-export interface MissionSpec {
-  id:           string;
-  waves:        WaveSpec[];
-  bossSpec?:    EnemySpec;   // absent for missions that auto-win (e.g. tutorial)
-  autoWinAtMs?: number;      // if set, mission auto-wins when time reaches this value
+  hp:          number;
+  maxHp:       number;
+  shootMs:     number;
+  nextShotMs:  number;
+  kind:        'star' | 'circle' | 'boss';
+  spawnTimeMs: number;
+  speed:       number;
 }
 
 export interface SimConfig {
-  missionSpec: MissionSpec;
+  missionSpec: MissionWaveSpec;
   stats:       ComputedStats;
+  /** 0 = no chain cards, 1 = explosive_rounds pool, 2 = overcharge/chain_lightning pool */
+  chainLevel?: number;
 }
 
 export interface SimResult {
@@ -41,5 +28,4 @@ export interface SimResult {
   shieldBroken: boolean;
 }
 
-// Re-export RunState so SimEngine doesn't need to import from src/types directly.
-export type { RunState, ComputedStats };
+export type { RunState, ComputedStats, MissionWaveSpec };

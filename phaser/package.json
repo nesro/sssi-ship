@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "sim": "tsx tools/simulate.ts"
+    "sim": "tsx tools/simulate.ts",
+    "balance:ci": "tsx tools/simulate.ts --ci"
   },
   "dependencies": {
     "phaser": "^3.80.0"

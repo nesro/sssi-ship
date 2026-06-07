@@ -21,6 +21,19 @@ export interface DailyRecord {
   attempted:    boolean;  // true once ResultScene commits the result
 }
 
+/** Immutable snapshot of one completed run — used for replay and server validation. */
+export interface RunRecord {
+  seed:         number;    // Mulberry32 seed used for this run
+  missionId:    string;
+  timestamp:    number;    // Date.now() at the moment the run ended
+  cardPicks:    string[];  // card IDs in the order they were picked
+  cardOffers?:  string[][];// all card IDs offered at each level-up (parallel to cardPicks)
+  bossBeaten:   boolean;
+  secondsTaken: number;
+  enemiesKilled: number;
+  hullPercent:  number;
+}
+
 export interface ShipLoadout {
   frontWeapon: string | null;
   leftWeapon:  string | null;
@@ -41,10 +54,11 @@ export interface SaveData {
   talents: Record<string, number>;
   missions: Record<string, MissionRecord>;
   daily: DailyRecord | null;  // null = never attempted
+  runHistory: RunRecord[];     // most recent 50 runs, oldest first
 }
 
 const SAVE_KEY = 'nesro-nova-save';
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 // What a brand-new save looks like.
 function createDefaultSave(): SaveData {
@@ -66,18 +80,21 @@ function createDefaultSave(): SaveData {
     talents: {},
     missions: {
       tutorial:  { unlocked: true,  bestStars: 0 },
-      mission_1: { unlocked: true,  bestStars: 0 },
+      mission_1: { unlocked: false, bestStars: 0 },
       mission_2: { unlocked: false, bestStars: 0 },
       mission_3: { unlocked: false, bestStars: 0 },
     },
     daily: null,
+    runHistory: [],
   };
 }
 
 // Add a new case here whenever SCHEMA_VERSION increases.
 function migrate(save: SaveData): SaveData {
-  if (save.version === SCHEMA_VERSION) return save;
-  // No migrations exist yet — schema is still version 1.
+  if (save.version < 2) {
+    (save as SaveData & { runHistory?: RunRecord[] }).runHistory ??= [];
+    save.version = 2;
+  }
   return save;
 }
 
@@ -128,6 +145,14 @@ export const SaveManager = {
     save.spendableStars      += starDelta;
 
     return { starDelta, newBest };
+  },
+
+  // Appends a completed run to history. Caps at 50 entries (oldest dropped first).
+  recordRun(save: SaveData, record: RunRecord): void {
+    save.runHistory.push(record);
+    if (save.runHistory.length > 50) {
+      save.runHistory.splice(0, save.runHistory.length - 50);
+    }
   },
 
   // Records the result of a daily mission attempt and awards coins.

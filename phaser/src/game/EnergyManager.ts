@@ -21,6 +21,10 @@ export class EnergyManager {
     return true;
   }
 
+  add(amount: number): void {
+    this.energy = Math.min(this.capacity, this.energy + amount);
+  }
+
   get ratio(): number {
     return this.energy / this.capacity;
   }

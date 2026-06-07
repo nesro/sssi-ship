@@ -102,6 +102,70 @@ export class LevelUpOverlay {
     this.container = this.scene.add.container(0, 0, items).setDepth(50);
   }
 
+  /** Replay variant: shows all offered cards, dims the unchosen ones, animates the pick. */
+  showReplay(
+    cards:    CardDefinition[],
+    pickedId: string,
+    onDone:   (card: CardDefinition) => void,
+  ): void {
+    this.hide();
+    const picked = cards.find(c => c.id === pickedId);
+    if (!picked) { onDone(cards[0]!); return; }
+
+    const { width: W, height: H } = this.scene.scale;
+    const items: Phaser.GameObjects.GameObject[] = [];
+
+    const bg = this.scene.add.rectangle(W / 2, H / 2, W, H, BG_COLOR, BG_ALPHA)
+      .setInteractive();
+    items.push(bg);
+
+    const titleText = this.scene.add.text(W / 2, H * 0.18, 'LEVEL UP!', {
+      fontSize: '22px', color: '#ffff00', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5);
+    items.push(titleText);
+
+    const totalH  = cards.length * PANEL_H + (cards.length - 1) * PANEL_GAP;
+    const startY  = H / 2 - totalH / 2;
+    let pickedPanel: Phaser.GameObjects.Rectangle | null = null;
+
+    cards.forEach((card, i) => {
+      const panelY   = startY + i * (PANEL_H + PANEL_GAP) + PANEL_H / 2;
+      const color    = CARD_COLORS[card.category] ?? 0xffffff;
+      const isPicked = card.id === pickedId;
+      const alpha    = isPicked ? 1 : 0.3;
+
+      const panel = this.scene.add.rectangle(W / 2, panelY, PANEL_W, PANEL_H, 0x111111)
+        .setStrokeStyle(isPicked ? 3 : 1, isPicked ? 0xffffff : color)
+        .setAlpha(alpha);
+      items.push(panel);
+      if (isPicked) pickedPanel = panel;
+
+      items.push(this.scene.add.text(
+        W / 2 - PANEL_W / 2 + 12, panelY - 18, card.name,
+        { fontSize: '14px', color: `#${color.toString(16).padStart(6, '0')}`,
+          fontFamily: 'monospace', fontStyle: 'bold' },
+      ).setAlpha(alpha));
+
+      items.push(this.scene.add.text(
+        W / 2 - PANEL_W / 2 + 12, panelY + 2, card.description,
+        { fontSize: '11px', color: '#aaaaaa', fontFamily: 'monospace',
+          wordWrap: { width: PANEL_W - 24 } },
+      ).setAlpha(alpha));
+    });
+
+    this.container = this.scene.add.container(0, 0, items).setDepth(50);
+
+    if (pickedPanel) {
+      this.scene.tweens.add({
+        targets: pickedPanel, scaleX: 1.06, scaleY: 1.06,
+        duration: 200, yoyo: true, repeat: 2,
+        onComplete: () => { this.hide(); onDone(picked); },
+      });
+    } else {
+      this.scene.time.delayedCall(600, () => { this.hide(); onDone(picked); });
+    }
+  }
+
   hide(): void {
     this.container?.destroy();
     this.container = null;

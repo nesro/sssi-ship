@@ -15,6 +15,7 @@ function baseSave(override: Partial<SaveData> = {}): SaveData {
     talents: {},
     missions: {},
     daily: null,
+    runHistory: [],
     ...override,
   };
 }

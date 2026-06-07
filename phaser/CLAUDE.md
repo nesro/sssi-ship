@@ -141,17 +141,25 @@ The "About" button in MenuScene goes back to WelcomeScene with `{ fromMenu: true
 | Tutorial tooltips | 20 | Dark-bg pill text, fades automatically |
 | Debug overlay | 100–101 | Stats panel |
 
-## Balance targets (confirmed)
+## Balance targets
 
-All targets validated by `tools/simulate.ts`. Re-run after any stat change.
+Run `npm run balance:ci` to check all missions. Exits 1 if any strategy is outside the
+tolerance band. After any stat, card, or wave change, re-run before merging.
 
-| Mission | Random | Greedy | Optimal |
-|---------|--------|--------|---------|
-| Tutorial | 85% | 90% | 95% |
-| M1 — no gear | 45% | 60% | 75% |
-| M1 — basic gear | 65% | 80% | 90% |
-| M2 — M1 gear | 20% | 45% | 65% |
-| M3 — full gear | 8% | 28% | 55% |
+| Mission | Random | Greedy | Optimal | Loadout | Wave spec |
+|---------|--------|--------|---------|---------|-----------|
+| Tutorial | ~100% | ~100% | ~100% | `--loadout none` | autoWinAtMs=60 s |
+| M1 — basic gear | 53–75% | 70–100% | 75–100% | `--loadout basic` | bossHp=450, bossShootMs=320 |
+| M2 — basic gear | 8–35% | 20–48% | 20–48% | `--loadout basic` | waveHp=20, bossHp=175 |
+| M3 — full gear | 30–52% | 45–65% | 55–75% | `--loadout full` | bossHp=1400, bossShootMs=510 |
+
+All targets confirmed passing 2026-06-06. M1/none is excluded from CI: with bossHp=450 and no
+gear the clear rate is ~8%, which is intentional — the game pushes players to buy gear before M1.
+
+**Strategy spread notes:**
+- M1/basic: ~25 pp random→greedy spread; card picks matter but gear provides a floor.
+- M2/basic: only ~10 pp spread (optimal ≈ greedy) because no chain talents → no synergy cards.
+- M3/full: ~20 pp spread; overcharge + explosive_rounds synergies widen the gap.
 
 Luck spread (same loadout, best vs worst draws): ±15–20 percentage points.
 

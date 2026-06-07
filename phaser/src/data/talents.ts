@@ -7,28 +7,39 @@ export interface TalentNode {
   id:            string;
   name:          string;
   isKeystone:    boolean;   // true = major payoff node, false = travel node
-  col:           number;    // grid column (0-based, rendered at col * COL_STRIDE + ORIGIN_X)
-  row:           number;    // grid row (0-based, rendered at row * ROW_STRIDE + ORIGIN_Y)
-  requiresNode?: string;   // id of predecessor node — must be unlocked first
+  x:             number;    // tree-space x (pixels, relative to TreeCanvas container)
+  y:             number;    // tree-space y
+  requiresNode?: string;    // id of predecessor node — must be unlocked first
   levels:        TalentLevel[];
 }
 
 export interface TalentBranch {
   id:    string;
   name:  string;
+  color: number;   // hex accent used for keystone ring and branch label
   nodes: TalentNode[];
 }
+
+// ─── Layout constants ─────────────────────────────────────────────────────────
+// Five branches sit side-by-side across the 800 px canvas.
+// Each branch center is 160 px apart; travel nodes sit 45 px left of center,
+// keystones 45 px right.  Row y-values are 55, 150, 245 (3 rows, 95 px apart).
+//
+//  Branch centres (x):  80  240  400  560  720
+//  Travel offset:      −45 from centre   →  35, 195, 355, 515  (chain has no travel nodes)
+//  Keystone offset:    +45 from centre   →  125, 285, 445, 605, 765 (chain uses center)
 
 export const TALENT_TREE: TalentBranch[] = [
   {
     id: 'weapons',
     name: 'Weapons',
+    color: 0x00aaff,
     nodes: [
       {
         id: 'dmg_boost',
         name: 'Hot Rounds',
         isKeystone: false,
-        col: 0, row: 0,
+        x: 35, y: 55,
         levels: [
           { starCost: 1, description: '+4% laser damage' },
         ],
@@ -37,7 +48,7 @@ export const TALENT_TREE: TalentBranch[] = [
         id: 'damage',
         name: 'Combat Mastery',
         isKeystone: true,
-        col: 1, row: 0,
+        x: 125, y: 55,
         requiresNode: 'dmg_boost',
         levels: [
           { starCost: 2, description: '+8% laser damage' },
@@ -49,7 +60,7 @@ export const TALENT_TREE: TalentBranch[] = [
         id: 'fire_boost',
         name: 'Barrel Lube',
         isKeystone: false,
-        col: 0, row: 1,
+        x: 35, y: 150,
         levels: [
           { starCost: 1, description: '−3% fire interval' },
         ],
@@ -58,7 +69,7 @@ export const TALENT_TREE: TalentBranch[] = [
         id: 'fire_rate',
         name: 'Burst Protocol',
         isKeystone: true,
-        col: 1, row: 1,
+        x: 125, y: 150,
         requiresNode: 'fire_boost',
         levels: [
           { starCost: 2, description: '−5% fire interval' },
@@ -70,7 +81,7 @@ export const TALENT_TREE: TalentBranch[] = [
         id: 'weapon_eff',
         name: 'Focused Discharge',
         isKeystone: false,
-        col: 0, row: 2,
+        x: 35, y: 245,
         levels: [
           { starCost: 1, description: '−4% energy per laser' },
           { starCost: 2, description: '−8% energy per laser' },
@@ -80,7 +91,7 @@ export const TALENT_TREE: TalentBranch[] = [
         id: 'side_eff',
         name: 'Rapid Reload',
         isKeystone: true,
-        col: 1, row: 2,
+        x: 125, y: 245,
         requiresNode: 'weapon_eff',
         levels: [
           { starCost: 2, description: '−1 energy per side weapon' },
@@ -93,12 +104,13 @@ export const TALENT_TREE: TalentBranch[] = [
   {
     id: 'shields',
     name: 'Shields',
+    color: 0x00ffaa,
     nodes: [
       {
         id: 'shd_boost',
         name: 'Extra Plating',
         isKeystone: false,
-        col: 0, row: 0,
+        x: 195, y: 55,
         levels: [
           { starCost: 1, description: '+15 shield HP' },
         ],
@@ -107,7 +119,7 @@ export const TALENT_TREE: TalentBranch[] = [
         id: 'shield_cap',
         name: 'Thick Plating',
         isKeystone: true,
-        col: 1, row: 0,
+        x: 285, y: 55,
         requiresNode: 'shd_boost',
         levels: [
           { starCost: 2, description: '+25 shield HP' },
@@ -119,7 +131,7 @@ export const TALENT_TREE: TalentBranch[] = [
         id: 'shd_regen_boost',
         name: 'Trickle Charge',
         isKeystone: false,
-        col: 0, row: 1,
+        x: 195, y: 150,
         levels: [
           { starCost: 1, description: '+1 shield HP/sec' },
         ],
@@ -128,7 +140,7 @@ export const TALENT_TREE: TalentBranch[] = [
         id: 'shield_regen',
         name: 'Capacitor Banks',
         isKeystone: true,
-        col: 1, row: 1,
+        x: 285, y: 150,
         requiresNode: 'shd_regen_boost',
         levels: [
           { starCost: 2, description: '+2 shield HP/sec' },
@@ -141,12 +153,13 @@ export const TALENT_TREE: TalentBranch[] = [
   {
     id: 'generator',
     name: 'Generator',
+    color: 0xffcc00,
     nodes: [
       {
         id: 'bat_boost',
         name: 'Aux Cell',
         isKeystone: false,
-        col: 0, row: 0,
+        x: 355, y: 55,
         levels: [
           { starCost: 1, description: '+10 energy capacity' },
         ],
@@ -155,7 +168,7 @@ export const TALENT_TREE: TalentBranch[] = [
         id: 'battery',
         name: 'Power Cell',
         isKeystone: true,
-        col: 1, row: 0,
+        x: 445, y: 55,
         requiresNode: 'bat_boost',
         levels: [
           { starCost: 2, description: '+15 energy capacity' },
@@ -167,7 +180,7 @@ export const TALENT_TREE: TalentBranch[] = [
         id: 'eff_boost',
         name: 'Flux Primer',
         isKeystone: false,
-        col: 0, row: 1,
+        x: 355, y: 150,
         levels: [
           { starCost: 1, description: '+2 energy/sec' },
         ],
@@ -176,7 +189,7 @@ export const TALENT_TREE: TalentBranch[] = [
         id: 'efficiency',
         name: 'Flux Coils',
         isKeystone: true,
-        col: 1, row: 1,
+        x: 445, y: 150,
         requiresNode: 'eff_boost',
         levels: [
           { starCost: 2, description: '+3 energy/sec' },
@@ -189,12 +202,13 @@ export const TALENT_TREE: TalentBranch[] = [
   {
     id: 'automation',
     name: 'Automation',
+    color: 0xff8844,
     nodes: [
       {
         id: 'dodge_boost',
         name: 'Reflex Oil',
         isKeystone: false,
-        col: 0, row: 0,
+        x: 515, y: 55,
         levels: [
           { starCost: 1, description: '−1 energy per dodge' },
         ],
@@ -203,7 +217,7 @@ export const TALENT_TREE: TalentBranch[] = [
         id: 'dodge_eff',
         name: 'Reflex Dampeners',
         isKeystone: true,
-        col: 1, row: 0,
+        x: 605, y: 55,
         requiresNode: 'dodge_boost',
         levels: [
           { starCost: 2, description: '−1 energy per dodge' },
@@ -215,7 +229,7 @@ export const TALENT_TREE: TalentBranch[] = [
         id: 'dodge_sense',
         name: 'Threat Matrix',
         isKeystone: false,
-        col: 0, row: 1,
+        x: 515, y: 150,
         levels: [
           { starCost: 1, description: 'Dodge reacts slightly earlier' },
         ],
@@ -225,12 +239,13 @@ export const TALENT_TREE: TalentBranch[] = [
   {
     id: 'chain',
     name: 'Chain',
+    color: 0xaa55ff,
     nodes: [
       {
         id: 'chain_pool_1',
         name: 'Syndicate Contracts',
         isKeystone: true,
-        col: 0, row: 0,
+        x: 720, y: 55,
         levels: [
           { starCost: 2, description: 'Unlocks Explosive Rounds cards' },
         ],
@@ -239,7 +254,7 @@ export const TALENT_TREE: TalentBranch[] = [
         id: 'chain_pool_2',
         name: 'Storm Protocol',
         isKeystone: true,
-        col: 1, row: 0,
+        x: 720, y: 150,
         requiresNode: 'chain_pool_1',
         levels: [
           { starCost: 3, description: 'Unlocks Overcharge + Chain Lightning cards' },

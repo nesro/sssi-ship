@@ -138,8 +138,13 @@ describe('isMissionUnlocked', () => {
     expect(isMissionUnlocked('tutorial', noStars)).toBe(true);
   });
 
-  it('mission_1 is always unlocked', () => {
-    expect(isMissionUnlocked('mission_1', noStars)).toBe(true);
+  it('mission_1 is locked without tutorial star', () => {
+    expect(isMissionUnlocked('mission_1', noStars)).toBe(false);
+  });
+
+  it('mission_1 unlocks with 1 star on tutorial', () => {
+    const records = { ...noStars, tutorial: { unlocked: true, bestStars: 1 as 0|1|2|3 } };
+    expect(isMissionUnlocked('mission_1', records)).toBe(true);
   });
 
   it('mission_2 is locked without mission_1 star', () => {

@@ -295,12 +295,12 @@ If clear rates rise by more than 5 pp, bring one or two thresholds back up.
 
 ## Suggested implementation order
 
-1. **Story wiring** (Feature 1) — 2–3 hours, no risk, immediate payoff
-2. **Pause button** (Feature 3) — 1 hour, critical QoL
+1. **Pause button** (Feature 3) — 1 hour, critical QoL for playtesting
+2. **Story wiring** (Feature 1) — 2–3 hours, no risk, immediate payoff
 3. **XP tuning** (Feature 6) — 30 min, run simulator first
 4. **Boost buttons** (Feature 2) — 4–6 hours, fills passive gap
 5. **Close call screen** (Feature 4) — 4–6 hours, best "wow" moment
-6. **Composite ship** (Feature 5) — 2–3 days, biggest visual impact; do last when content is locked
+6. **Composite ship** (Feature 5) — 2–3 days, biggest visual impact; do when content is locked
 
 ---
 

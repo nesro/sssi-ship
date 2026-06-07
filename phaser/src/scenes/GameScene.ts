@@ -7,6 +7,7 @@ import type { EnemySprite } from '../game/enemy.js';
 import type { ComputedStats } from '../game/computeStats.js';
 import type { RunState } from '../game/CardManager.js';
 import type { CardDefinition } from '../data/cards.js';
+import { ALL_CARDS }             from '../data/cards.js';
 import type { MissionResult } from '../data/missions.js';
 import { DebugConfig }          from '../debug/DebugConfig.js';
 import { EnergyManager }        from '../game/EnergyManager.js';
@@ -20,6 +21,7 @@ import { PlayerShipFx }        from '../game/PlayerShipFx.js';
 import { buildGameTextures }    from '../game/textures.js';
 import { Starfield }            from '../game/Starfield.js';
 import { LevelUpOverlay }       from '../ui/LevelUpOverlay.js';
+import { PauseOverlay }         from '../ui/PauseOverlay.js';
 import { SideWeaponButton }     from '../ui/SideWeaponButton.js';
 import { CombatHUD, PLAY_W }    from '../hud/CombatHUD.js';
 import { ShieldVisual }         from '../hud/ShieldVisual.js';
@@ -30,27 +32,17 @@ import type { DailyWaveSpec }   from '../data/daily.js';
 import { SaveManager }          from '../SaveManager.js';
 import { computeStats }         from '../game/computeStats.js';
 import { talentLevel }          from '../data/talents.js';
+import { BOSS_DEATH_LINES, BOSS_NAMES, BOSS_ENCOUNTER_LINES } from '../data/story.js';
+import { mulberry32 }           from '../utils/rng.js';
+import type { RunRecord }       from '../SaveManager.js';
+import { submitRun }            from '../game/RunSubmitter.js';
+import { GameSession }          from '../game/GameSession.js';
+import { ASTEROID_INTERVAL_MS } from '../game/GameRules.js';
+import { WAVE_SPECS }           from '../game/WaveSpec.js';
 
 // ─── module-level constants ───────────────────────────────────────────────────
 
-// Cumulative XP needed to reach level 2, 3, 4, 5, 6 (index = target level - 2).
-const XP_THRESHOLDS = [80, 200, 380, 600, 900];
-const XP_PER_KILL: Record<string, number> = { star: 15, circle: 40, boss: 300 };
-
-// Damage each enemy projectile deals before shield/hull absorption.
-const SHOT_DAMAGE = 5;
-
-// Asteroid field (Mission 2) — asteroids bypass shields and hit hull directly.
-const ASTEROID_DAMAGE      = 5;
 const ASTEROID_SPEED       = 180;   // px/s downward
-const ASTEROID_INTERVAL_MS = 2500;  // ms between spawns
-
-// Nebula speed multiplier applied to all enemies in Mission 3 for the first 60 s.
-const NEBULA_SPEED_MUL       = 1.6;
-const NEBULA_DURATION_MS     = 60_000;
-
-// Hull damage when an enemy sprite physically collides with the player.
-const ENEMY_COLLISION_DAMAGE = 20;
 
 // Duration of the death animation sequence before ResultScene loads.
 const DEATH_ANIM_MS = 1200;
@@ -67,26 +59,34 @@ export class GameScene extends Phaser.Scene {
   private isPaused     = false;
   private pendingAllyCard: CardDefinition | null = null;
 
-  // Result tracking
-  private hullHp            = 100;
-  private hullMaxHp         = 100;
-  private score             = 0;
-  private enemiesKilled     = 0;
-  private missionStartMs    = 0;
-  private sideWeaponsUsed   = false;
+  // Pure game state — no Phaser.
+  private session!: GameSession;
+
   // Daily mission tracking — waves completed before death.
   private dailyWavesCleared = 0;
 
+  // Run recording — seed + ordered card picks for replay / server validation.
+  private runSeed    = 0;
+  private cardPicks:  string[]   = [];
+  private cardOffers: string[][] = [];
+
+  // Replay mode — set when init() receives a RunRecord to replay.
+  private replayMode    = false;
+  private replayRecord: RunRecord | null = null;
+  private replayPickIdx = 0;
+  private replaySpeed   = 1;
+
   // Systems
   private stats!:          ComputedStats;
-  private run!:            RunState;
   private energy!:         EnergyManager;
   private shields!:        ShieldSystem;
   private autoDodge!:      AutoDodge;
   private cardManager!:    CardManager;
   private levelUpOverlay!: LevelUpOverlay;
+  private pauseOverlay!:   PauseOverlay;
   private leftButton:      SideWeaponButton | null = null;
   private rightButton:     SideWeaponButton | null = null;
+
 
   // Physics
   private player!:       Phaser.Physics.Arcade.Sprite;
@@ -116,8 +116,10 @@ export class GameScene extends Phaser.Scene {
   constructor() { super({ key: 'GameScene' }); }
 
   // fallow-ignore-next-line unused-class-member
-  init(data?: { missionId?: string }): void {
-    this.missionId = data?.missionId ?? 'mission_1';
+  init(data?: { missionId?: string; replay?: RunRecord }): void {
+    this.missionId    = data?.missionId ?? data?.replay?.missionId ?? 'mission_1';
+    this.replayMode   = !!data?.replay;
+    this.replayRecord = data?.replay ?? null;
   }
 
   // ─── setup ────────────────────────────────────────────────────────────────
@@ -148,6 +150,8 @@ export class GameScene extends Phaser.Scene {
     this.startEnemyWaves();
     this.scheduleAllyEvents();
     this.setupDebugToggle();
+    this.setupPause();
+    if (this.replayMode) this.setupReplayControls();
   }
 
   private initStats(): void {
@@ -160,15 +164,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private initRun(): void {
-    this.hullHp          = this.hullMaxHp;
-    this.score           = 0;
-    this.enemiesKilled   = 0;
-    this.missionStartMs  = 0;
-    this.sideWeaponsUsed = false;
-    this.isGameActive    = true;
-    this.isPaused        = false;
-    this.pendingAllyCard = null;
-    this.run = {
+    const run: RunState = {
       pickedCardIds:        new Set(),
       rerollsLeft:          5,
       xp:                   0,
@@ -179,6 +175,15 @@ export class GameScene extends Phaser.Scene {
       shotsSinceOvercharge: 0,
       overchargeEvery:      0,
     };
+    this.session         = new GameSession(run);
+    this.isGameActive    = true;
+    this.isPaused        = false;
+    this.pendingAllyCard = null;
+    this.runSeed         = (Math.random() * 0x100000000) >>> 0;
+    this.cardPicks       = [];
+    this.cardOffers      = [];
+    this.replayPickIdx   = 0;
+    this.replaySpeed     = 1;
   }
 
   // ─── physics setup ────────────────────────────────────────────────────────
@@ -204,8 +209,9 @@ export class GameScene extends Phaser.Scene {
     this.energy         = new EnergyManager(this.stats);
     this.shields        = new ShieldSystem(this.stats);
     this.autoDodge      = new AutoDodge();
-    this.cardManager    = new CardManager(this.chainLevel);
+    this.cardManager    = new CardManager(this.chainLevel, mulberry32(this.runSeed));
     this.levelUpOverlay = new LevelUpOverlay(this);
+    this.pauseOverlay   = new PauseOverlay(this);
   }
 
   // ─── side buttons ─────────────────────────────────────────────────────────
@@ -260,25 +266,25 @@ export class GameScene extends Phaser.Scene {
     this.spawnBurst(e.x, e.y, 0x00ffff, 5);
     this.damageEnemy(e, this.stats.frontDamage);
 
-    if (this.run.overcharge && e.active) {
-      this.run.shotsSinceOvercharge++;
-      if (this.run.shotsSinceOvercharge >= this.run.overchargeEvery) {
-        this.run.shotsSinceOvercharge = 0;
+    if (this.session.run.overcharge && e.active) {
+      this.session.run.shotsSinceOvercharge++;
+      if (this.session.run.shotsSinceOvercharge >= this.session.run.overchargeEvery) {
+        this.session.run.shotsSinceOvercharge = 0;
         this.spawnBurst(e.x, e.y, 0xffff00, 10);
         this.damageEnemy(e, this.stats.frontDamage * 2, true);  // 3× total, shown as crit
-        if (this.run.pickedCardIds.has('overcharge_regen')) {
+        if (this.session.run.pickedCardIds.has('overcharge_regen')) {
           this.energy.energy = Math.min(this.energy.capacity, this.energy.energy + 5);
         }
       }
     }
 
-    if (this.run.explosiveRounds && Math.random() < 0.2) {
+    if (this.session.run.explosiveRounds && Math.random() < 0.2) {
       this.triggerExplosion(e.x, e.y);
     }
   }
 
   private triggerExplosion(x: number, y: number, isSecondary = false): void {
-    const radius = this.run.pickedCardIds.has('blast_radius') ? 70 : 40;
+    const radius = this.session.run.pickedCardIds.has('blast_radius') ? 70 : 40;
     this.spawnBurst(x, y, 0xff6600, 12);
 
     // Snapshot positions before damaging so secondary explosions fire at the
@@ -292,11 +298,11 @@ export class GameScene extends Phaser.Scene {
       this.damageEnemy(e, this.stats.frontDamage * 0.5);
     }
 
-    if (!isSecondary && this.run.pickedCardIds.has('energy_recovery')) {
+    if (!isSecondary && this.session.run.pickedCardIds.has('energy_recovery')) {
       this.energy.energy = Math.min(this.energy.capacity, this.energy.energy + 8);
     }
 
-    if (!isSecondary && this.run.pickedCardIds.has('chain_reaction')) {
+    if (!isSecondary && this.session.run.pickedCardIds.has('chain_reaction')) {
       for (const pos of hitPositions) {
         this.time.delayedCall(150, () => {
           if (!this.isGameActive) return;
@@ -314,8 +320,8 @@ export class GameScene extends Phaser.Scene {
     this.spawnBurst(e.x, e.y, 0xff8800, 4);
     this.damageEnemy(e, 15);
 
-    if (this.run.chainLightning && Math.random() < 0.15) {
-      const arcsLeft = this.run.pickedCardIds.has('storm_chains') ? 2 : 1;
+    if (this.session.run.chainLightning && Math.random() < 0.15) {
+      const arcsLeft = this.session.run.pickedCardIds.has('storm_chains') ? 2 : 1;
       this.triggerChainLightning(e.x, e.y, 8, arcsLeft, e);
     }
   }
@@ -392,20 +398,55 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onEnemyDestroyed(enemy: EnemySprite): void {
-    this.score        += this.pointsForType(enemy.enemyType);
-    this.enemiesKilled++;
-    this.run.xp       += XP_PER_KILL[enemy.enemyType] ?? 0;
-    this.combatHUD.updateScore(this.score);
+    const coins = this.session.recordKill(enemy.enemyType);
+    this.combatHUD.updateScore(this.session.score);
     this.spawnBurst(enemy.x, enemy.y, 0xff8800, 18);
+
+    // Award coins immediately so the player keeps them even on a failed run.
+    if (coins > 0) {
+      const save = SaveManager.load();
+      save.coins += coins;
+      SaveManager.save(save);
+      this.spawnCoinNumber(enemy.x, enemy.y, coins);
+    }
+
     const isBoss = enemy === this.bossRef;
     enemy.destroy();
     if (isBoss) { this.removeBossHealthBar(); this.endMission(true); }
   }
 
-  private pointsForType(type: EnemySprite['enemyType']): number {
-    if (type === 'boss')   return 5000;
-    if (type === 'circle') return 500;
-    return 50;
+  private spawnCoinNumber(x: number, y: number, amount: number): void {
+    const txt = this.add.text(
+      x + Phaser.Math.Between(6, 18), y + 8, `+◈${amount}`,
+      { fontSize: '10px', color: '#ffcc00', fontFamily: 'monospace' },
+    ).setDepth(8).setOrigin(0.5);
+
+    this.tweens.add({
+      targets: txt, y: txt.y - 28, alpha: 0,
+      duration: 700, ease: 'Power1',
+      onComplete: () => txt.destroy(),
+    });
+  }
+
+  // Short centred message in the play field — used for boss death lines and
+  // enabler-card armed banners. Fades out after `visibleMs`.
+  private showCentredLine(message: string, visibleMs: number): void {
+    const txt = this.add.text(PLAY_W / 2, this.H * 0.38, message, {
+      fontSize: '12px', color: '#aaaaaa', fontFamily: 'monospace',
+      backgroundColor: '#111111', padding: { x: 10, y: 5 },
+    }).setOrigin(0.5).setDepth(18).setAlpha(0);
+
+    this.tweens.add({
+      targets: txt, alpha: 1,
+      duration: 200, ease: 'Power1',
+      onComplete: () => {
+        this.tweens.add({
+          targets: txt, alpha: 0,
+          delay: visibleMs - 300, duration: 300, ease: 'Power1',
+          onComplete: () => txt.destroy(),
+        });
+      },
+    });
   }
 
   // Phaser's collideSpriteVsGroup always calls the callback as (sprite, groupMember),
@@ -420,17 +461,17 @@ export class GameScene extends Phaser.Scene {
 
     this.tutorial?.trigger('shield', this);
 
-    const hullDmg = this.shields.absorbHit(SHOT_DAMAGE, this.energy);
-    if (hullDmg > 0) {
-      this.hullHp -= hullDmg;
+    const { hullDamage, absorbed } = this.session.resolveShot(this.shields, this.energy);
+    if (!absorbed) {
       this.spawnBurst(this.player.x, this.player.y, 0xff2200, 8);
       this.cameras.main.shake(80, 0.006);
-      if (this.hullHp <= 0) this.endMission(false);
+      if (!this.session.isAlive()) this.endMission(false);
     } else {
       // Shield absorbed the full hit — flash the shield ring.
       this.shieldVisual.onHit();
       this.spawnBurst(this.player.x, this.player.y, 0x00aaff, 4);
     }
+    void hullDamage;
   }
 
   // ─── burst particles ──────────────────────────────────────────────────────
@@ -465,11 +506,21 @@ export class GameScene extends Phaser.Scene {
 
   // Single place that applies a card pick and handles any timer side-effects.
   private onCardPicked(picked: CardDefinition): void {
-    this.cardManager.pick(picked, this.stats, this.run);
+    this.cardPicks.push(picked.id);
+    this.cardManager.pick(picked, this.stats, this.session.run);
     this.combatHUD.showCard(picked.name);
     if (picked.statDelta?.frontFireMs !== undefined) {
       this.restartAutoFireTimer();
     }
+    // Flash an "ARMED" banner when an enabler card is picked so the player
+    // knows the mechanic is now active — without it the AoE/chain effects
+    // are silent and the next card feels disconnected.
+    const ENABLER_BANNERS: Record<string, string> = {
+      explosive_rounds: 'EXPLOSIVE ROUNDS ARMED — AoE on hit!',
+      chain_lightning:  'CHAIN LIGHTNING ARMED — chaining strikes!',
+    };
+    const banner = ENABLER_BANNERS[picked.id];
+    if (banner) this.showCentredLine(banner, 2000);
   }
 
   private firePlayerLaser(): void {
@@ -496,7 +547,7 @@ export class GameScene extends Phaser.Scene {
     if (!weapon) return;
     const cost = weapon === 'spread' ? this.stats.spreadShotCost : this.stats.heavyBeamCost;
     if (!this.energy.trySpend(cost)) return;
-    this.sideWeaponsUsed = true;
+    this.session.sideWeaponsUsed = true;
     weapon === 'spread' ? this.fireSpreadShot() : this.fireBeamShot();
   }
 
@@ -523,48 +574,45 @@ export class GameScene extends Phaser.Scene {
   // ─── enemy waves ──────────────────────────────────────────────────────────
 
   private startEnemyWaves(): void {
-    this.time.delayedCall(1000, () => { this.missionStartMs = this.time.now; });
+    this.time.delayedCall(1000, () => { this.session.missionStartMs = this.time.now; });
 
-    if (this.missionId === 'tutorial')         { this.startTutorialWaves();  return; }
-    if (this.missionId === DAILY_MISSION_ID)   { this.startDailyWaves();     return; }
-    if (this.missionId === 'mission_2')        { this.startMission2Waves();  return; }
-    if (this.missionId === 'mission_3')        { this.startMission3Waves();  return; }
-    this.startMission1Waves();
-  }
+    if (this.missionId === DAILY_MISSION_ID) { this.startDailyWaves(); return; }
 
-  private startMission1Waves(): void {
-    this.at(2000,  () => this.spawnStarWave(5,  'WAVE 1'));
-    this.at(12000, () => this.spawnStarWave(6,  'WAVE 2'));
-    this.at(22000, () => this.spawnStarWave(7,  'WAVE 3'));
-    this.at(32000, () => this.spawnStarWave(8,  'WAVE 4'));
-    this.at(44000, () => this.spawnStarWave(10, 'WAVE 5'));
-    this.at(55000, () => this.spawnBoss());
-  }
+    const spec = WAVE_SPECS[this.missionId];
+    if (!spec) return;
 
-  private startMission2Waves(): void {
-    // Asteroid field runs from mission start until the boss spawns at 90 s.
-    this.startAsteroidField(90_000);
-    this.at(5000,  () => this.spawnStarWave(4,   'WAVE 1'));
-    this.at(18000, () => { this.spawnStarWave(3, 'WAVE 2'); this.spawnCircleWave(2, 20); });
-    this.at(35000, () => this.spawnStarWave(5,   'WAVE 3'));
-    this.at(50000, () => { this.spawnStarWave(2, 'WAVE 4'); this.spawnCircleWave(3, 20); });
-    this.at(68000, () => { this.spawnStarWave(6, 'WAVE 5'); this.spawnCircleWave(2, 20); });
-    this.at(90000, () => this.spawnBoss(120, 500));
-  }
+    if (spec.asteroidFieldUntilMs) this.startAsteroidField(spec.asteroidFieldUntilMs);
 
-  private startMission3Waves(): void {
-    // The speed nebula accelerates all enemies spawned in the first 60 s.
-    const nebStar  = Math.round(85 * NEBULA_SPEED_MUL);   // 136 px/s
-    const nebCirc  = Math.round(60 * NEBULA_SPEED_MUL);   // 96 px/s
-    this.at(3000,  () => this.spawnStarWave(8,   'WAVE 1', nebStar));
-    this.at(14000, () => this.spawnCircleWave(4, 30, 'WAVE 2', nebCirc));
-    this.at(26000, () => this.spawnStarWave(10,  'WAVE 3', nebStar));
-    this.at(40000, () => this.spawnCircleWave(5, 30, 'WAVE 4', nebCirc));
-    // Wave 5 spawns at 55 s — still inside the NEBULA_DURATION_MS window.
-    this.at(55000, () => this.spawnStarWave(12,  'WAVE 5', nebStar));
-    // Nebula ends at 60 s; wave 6 at 73 s uses standard speeds.
-    this.at(73000, () => { this.spawnStarWave(4, 'WAVE 6'); this.spawnCircleWave(6, 30); });
-    this.at(95000, () => this.spawnBoss(300, 200));
+    // Tutorial HUD tips fire at specific ms regardless of wave timing.
+    if (this.missionId === 'tutorial') {
+      this.at(1500,  () => this.tutorial?.trigger('energy', this));
+      this.at(10000, () => this.tutorial?.trigger('shield', this));
+    }
+
+    for (const wave of spec.waves) {
+      this.at(wave.atMs, () => {
+        if (!this.isGameActive) return;
+        const isNebula = spec.nebulaMul !== undefined
+          && spec.nebulaUntilMs !== undefined
+          && wave.atMs < spec.nebulaUntilMs;
+        const speedMul  = isNebula ? spec.nebulaMul! : 1;
+        const baseSpeed = wave.speed ?? (wave.kind === 'star' ? 85 : 60);
+        const speed     = Math.round(baseSpeed * speedMul);
+        if (wave.label) this.showWaveLabel(wave.label);
+        if (wave.kind === 'star') {
+          this.spawnStarWave(wave.count, speed, wave.hp, wave.shootMsMin, wave.shootMsMax);
+        } else {
+          this.spawnCircleWave(wave.count, speed, wave.hp, wave.shootMsMin, wave.shootMsMax);
+        }
+      });
+    }
+
+    if (spec.bossAtMs !== undefined) {
+      this.at(spec.bossAtMs, () => this.spawnBoss(spec.bossHp, spec.bossShootMs));
+    }
+    if (spec.autoWinAtMs !== undefined) {
+      this.at(spec.autoWinAtMs, () => this.endMission(true));
+    }
   }
 
   private startDailyWaves(): void {
@@ -587,7 +635,6 @@ export class GameScene extends Phaser.Scene {
       this.makeCircleEnemy(PLAY_W / 2, -40, 55, spec.enemyHp * 3, spec.shootMs);
     } else {
       const spacing = PLAY_W / (spec.count + 1);
-      // Enemy descent speed grows gently with wave depth.
       const speed = Math.min(55 + spec.waveIndex * 2, 130);
       for (let i = 0; i < spec.count; i++) {
         this.time.delayedCall(i * 200, () => {
@@ -595,30 +642,6 @@ export class GameScene extends Phaser.Scene {
           this.makeStarEnemy(spacing * (i + 1), -20, speed, spec.enemyHp, spec.shootMs);
         });
       }
-    }
-  }
-
-  private startTutorialWaves(): void {
-    // Survival mission — no weapons. Four slow waves over 60 s, then auto-win.
-    this.at(1500,  () => this.tutorial?.trigger('energy', this));
-    this.at(3000,  () => this.spawnTutorialStars(2, 'WAVE 1'));
-    this.at(10000, () => this.tutorial?.trigger('shield', this));
-    this.at(12000, () => this.spawnTutorialStars(2, 'WAVE 2'));
-    this.at(25000, () => this.spawnTutorialStars(3, 'WAVE 3'));
-    this.at(40000, () => this.spawnTutorialStars(3, 'WAVE 4'));
-    // Auto-win after 60 s — player has survived the gauntlet.
-    this.at(60000, () => this.endMission(true));
-  }
-
-  private spawnTutorialStars(count: number, label: string): void {
-    if (!this.isGameActive) return;
-    this.showWaveLabel(label);
-    const spacing = PLAY_W / (count + 1);
-    for (let i = 0; i < count; i++) {
-      this.time.delayedCall(i * 350, () => {
-        if (!this.isGameActive) return;
-        this.makeStarEnemy(spacing * (i + 1), -20, 55, 5, Phaser.Math.Between(3000, 5000));
-      });
     }
   }
 
@@ -662,10 +685,10 @@ export class GameScene extends Phaser.Scene {
     const a = asteroid as Phaser.Physics.Arcade.Sprite;
     if (!a.active) return;
     a.destroy();
-    this.hullHp -= ASTEROID_DAMAGE;
+    this.session.resolveAsteroid();
     this.spawnBurst(this.player.x, this.player.y, 0xff6600, 6);
     this.cameras.main.shake(80, 0.006);
-    if (this.hullHp <= 0) this.endMission(false);
+    if (!this.session.isAlive()) this.endMission(false);
   }
 
   // Enemy sprite physically reaches the player — the enemy explodes and the
@@ -680,11 +703,10 @@ export class GameScene extends Phaser.Scene {
     // Destroy the enemy (awards XP, score, burst effect).
     this.onEnemyDestroyed(e);
     // Deal collision damage — shields absorb first.
-    const hullDmg = this.shields.absorbHit(ENEMY_COLLISION_DAMAGE, this.energy);
-    if (hullDmg > 0) {
-      this.hullHp -= hullDmg;
+    const { absorbed } = this.session.resolveEnemyCollision(this.shields, this.energy);
+    if (!absorbed) {
       this.cameras.main.shake(120, 0.012);
-      if (this.hullHp <= 0) this.endMission(false);
+      if (!this.session.isAlive()) this.endMission(false);
     } else {
       this.shieldVisual.onHit();
     }
@@ -696,32 +718,32 @@ export class GameScene extends Phaser.Scene {
     this.time.delayedCall(ms, fn, [], this);
   }
 
-  private spawnStarWave(count: number, label?: string, speed = 85): void {
+  private spawnStarWave(
+    count: number, speed: number, hp: number,
+    shootMsMin: number, shootMsMax: number,
+  ): void {
     if (!this.isGameActive) return;
-    if (label) this.showWaveLabel(label);
     const spacing = PLAY_W / (count + 1);
     for (let i = 0; i < count; i++) {
       this.time.delayedCall(i * 200, () => {
         if (!this.isGameActive) return;
-        this.makeStarEnemy(
-          spacing * (i + 1), -20, speed, 10,
-          Phaser.Math.Between(1800, 3500),
-        );
+        this.makeStarEnemy(spacing * (i + 1), -20, speed, hp,
+          Phaser.Math.Between(shootMsMin, shootMsMax));
       });
     }
   }
 
-  private spawnCircleWave(count: number, hp: number, label?: string, speed = 60): void {
+  private spawnCircleWave(
+    count: number, speed: number, hp: number,
+    shootMsMin: number, shootMsMax: number,
+  ): void {
     if (!this.isGameActive) return;
-    if (label) this.showWaveLabel(label);
     const spacing = PLAY_W / (count + 1);
     for (let i = 0; i < count; i++) {
       this.time.delayedCall(i * 400, () => {
         if (!this.isGameActive) return;
-        this.makeCircleEnemy(
-          spacing * (i + 1), -40, speed, hp,
-          Phaser.Math.Between(2000, 3000),
-        );
+        this.makeCircleEnemy(spacing * (i + 1), -40, speed, hp,
+          Phaser.Math.Between(shootMsMin, shootMsMax));
       });
     }
   }
@@ -750,6 +772,8 @@ export class GameScene extends Phaser.Scene {
   private spawnBoss(hp = 200, shootMs = 320): void {
     if (!this.isGameActive) return;
     this.showWaveLabel('⚠ BOSS');
+    const encounterLine = BOSS_ENCOUNTER_LINES[this.missionId];
+    if (encounterLine) this.showCentredLine(encounterLine, 2800);
     const boss = this.enemies.create(PLAY_W / 2, -70, 'bossTex') as unknown as EnemySprite;
     boss.setVelocityY(45);
     boss.enemyType = 'boss'; boss.hp = hp; boss.maxHp = hp;
@@ -793,7 +817,7 @@ export class GameScene extends Phaser.Scene {
 
   private buildBossHealthBar(boss: EnemySprite): void {
     this.bossBarGfx   = this.add.graphics().setDepth(10);
-    this.bossBarLabel = this.add.text(PLAY_W / 2, 168, 'BOSS', {
+    this.bossBarLabel = this.add.text(PLAY_W / 2, 168, BOSS_NAMES[this.missionId] ?? 'BOSS', {
       fontSize: '11px', color: '#ff8800', fontFamily: 'monospace',
     }).setOrigin(0.5).setDepth(10);
     this.updateBossHealthBar();
@@ -831,7 +855,7 @@ export class GameScene extends Phaser.Scene {
     if (!mission) return;
     AllyShipEvent.scheduleAll(
       this, mission.allyEventTimes,
-      this.cardManager, this.run,
+      this.cardManager, this.session.run,
       (card) => this.onAllyDrop(card),
     );
   }
@@ -845,7 +869,7 @@ export class GameScene extends Phaser.Scene {
   private showAllyDropPicker(card: CardDefinition): void {
     this.pauseCombat();
     this.levelUpOverlay.show(
-      [card], this.run.rerollsLeft, 'ALLY DROP',
+      [card], this.session.run.rerollsLeft, 'ALLY DROP',
       (picked) => { this.onCardPicked(picked); this.resumeCombat(); },
       null,
       () => this.resumeCombat(),
@@ -855,24 +879,51 @@ export class GameScene extends Phaser.Scene {
   // ─── card picker (level-up) ────────────────────────────────────────────────
 
   private checkLevelUp(): void {
-    if (this.run.level > XP_THRESHOLDS.length) return;
-    const threshold = XP_THRESHOLDS[this.run.level - 1];
-    if (this.run.xp >= threshold) {
-      this.run.level++;
-      this.combatHUD.updateLevel(this.run.level);
-      const cards = this.cardManager.draw(this.run);
-      if (cards.length > 0) this.showLevelUpPickerWithCards(cards);
+    if (!this.session.checkLevelUp()) return;
+    this.combatHUD.updateLevel(this.session.run.level);
+    if (this.replayMode && this.replayRecord) {
+      this.handleReplayLevelUp();
+      return;
     }
+    const cards = this.cardManager.draw(this.session.run);
+    if (cards.length > 0) this.showLevelUpPickerWithCards(cards);
+  }
+
+  private handleReplayLevelUp(): void {
+    const idx      = this.replayPickIdx++;
+    const pickedId = this.replayRecord!.cardPicks[idx];
+    if (!pickedId) return;
+
+    const pickedCard = ALL_CARDS.find(c => c.id === pickedId);
+    if (!pickedCard) return;
+
+    const offerIds = this.replayRecord!.cardOffers?.[idx];
+    if (offerIds && offerIds.length > 0) {
+      const offered = offerIds
+        .map(id => ALL_CARDS.find(c => c.id === id))
+        .filter((c): c is CardDefinition => c !== undefined);
+      if (offered.length > 0) {
+        this.pauseCombat();
+        this.levelUpOverlay.showReplay(offered, pickedId, (card) => {
+          this.onCardPicked(card);
+          this.resumeCombat();
+        });
+        return;
+      }
+    }
+    // No offer data stored — silently apply the picked card.
+    this.onCardPicked(pickedCard);
   }
 
   private showLevelUpPickerWithCards(cards: CardDefinition[]): void {
+    this.cardOffers.push(cards.map(c => c.id));
     this.tutorial?.trigger('cards', this);
     this.pauseCombat();
     this.levelUpOverlay.show(
-      cards, this.run.rerollsLeft, 'LEVEL UP!',
+      cards, this.session.run.rerollsLeft, 'LEVEL UP!',
       (picked) => { this.onCardPicked(picked); this.resumeCombat(); },
       () => {
-        const rerolled = this.cardManager.reroll(this.run);
+        const rerolled = this.cardManager.reroll(this.session.run);
         if (rerolled && rerolled.length > 0) {
           this.levelUpOverlay.hide();
           this.showLevelUpPickerWithCards(rerolled);
@@ -918,25 +969,48 @@ export class GameScene extends Phaser.Scene {
     if (!this.isGameActive) return;
     this.isGameActive = false;
     this.physics.pause();
-    const secondsTaken = (this.time.now - this.missionStartMs) / 1000;
+    const secondsTaken = (this.time.now - this.session.missionStartMs) / 1000;
 
-    if (!bossBeaten) {
+    if (bossBeaten) {
+      const line = BOSS_DEATH_LINES[this.missionId];
+      if (line) this.showCentredLine(line, 600);
+    } else {
       this.playDeathAnimation();
     }
 
     const delay = bossBeaten ? 800 : DEATH_ANIM_MS;
     this.time.delayedCall(delay, () => {
+      const safeSeconds = Math.max(0, secondsTaken);
       const result: MissionResult = {
         missionId:       this.missionId,
         bossBeaten,
-        hullPercent:     (this.hullHp / this.hullMaxHp) * 100,
-        hullHpRemaining: this.hullHp,
-        secondsTaken:    Math.max(0, secondsTaken),
-        enemiesKilled:   this.enemiesKilled,
+        hullPercent:     this.session.hullPercent(),
+        hullHpRemaining: this.session.hullHp,
+        secondsTaken:    safeSeconds,
+        enemiesKilled:   this.session.enemiesKilled,
         shieldBroken:    this.shields.broken,
-        sideWeaponsUsed: this.sideWeaponsUsed,
+        sideWeaponsUsed: this.session.sideWeaponsUsed,
         wavesCleared:    this.missionId === DAILY_MISSION_ID ? this.dailyWavesCleared : undefined,
       };
+
+      const runRecord: RunRecord = {
+        seed:         this.runSeed,
+        missionId:    this.missionId,
+        timestamp:    Date.now(),
+        cardPicks:    [...this.cardPicks],
+        cardOffers:   this.cardOffers.map(o => [...o]),
+        bossBeaten,
+        secondsTaken: safeSeconds,
+        enemiesKilled: this.session.enemiesKilled,
+        hullPercent:  result.hullPercent,
+      };
+      if (!this.replayMode) {
+        const save = SaveManager.load();
+        SaveManager.recordRun(save, runRecord);
+        SaveManager.save(save);
+        void submitRun(runRecord);
+      }
+
       this.scene.start('ResultScene', result);
     });
   }
@@ -993,6 +1067,68 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  private setupReplayControls(): void {
+    const { width: W } = this.scale;
+    const speedBtn = this.add.text(W - 10, 36, '⚡ 1×', {
+      fontSize: '13px', fontFamily: 'monospace', color: '#446644',
+    }).setOrigin(1, 0).setDepth(15).setInteractive({ useHandCursor: true });
+
+    speedBtn.on('pointerdown', () => {
+      if (this.replaySpeed === 1) {
+        this.replaySpeed = 2;
+        this.time.timeScale = 2;
+        this.physics.world.timeScale = 0.5; // 0.5 = double speed in Phaser's arc-world
+        speedBtn.setText('⚡ 2×').setColor('#88cc88');
+      } else {
+        this.replaySpeed = 1;
+        this.time.timeScale = 1;
+        this.physics.world.timeScale = 1;
+        speedBtn.setText('⚡ 1×').setColor('#446644');
+      }
+    });
+
+    this.add.text(W - 10, 14, '▶ REPLAY', {
+      fontSize: '11px', fontFamily: 'monospace', color: '#336633',
+    }).setOrigin(1, 0).setDepth(15);
+  }
+
+  private setupPause(): void {
+    // Tap-friendly pause button: top-right corner of the play field.
+    const btnX = PLAY_W - 20;
+    const btnY = 14;
+    const btn = this.add.text(btnX, btnY, '⏸', {
+      fontSize: '18px', fontFamily: 'monospace', color: '#444444',
+    }).setOrigin(1, 0).setDepth(15).setInteractive({ useHandCursor: true });
+    btn.on('pointerover', () => btn.setColor('#888888'));
+    btn.on('pointerout',  () => btn.setColor('#444444'));
+    btn.on('pointerdown', () => this.togglePause());
+
+    this.input.keyboard?.on('keydown-ESC', () => this.togglePause());
+  }
+
+  private togglePause(): void {
+    if (!this.isGameActive) return;
+    if (this.isPaused && this.pauseOverlay.visible) {
+      this.hidePauseMenu();
+    } else if (!this.isPaused) {
+      this.showPauseMenu();
+    }
+  }
+
+  private showPauseMenu(): void {
+    this.pauseCombat();
+    this.pauseOverlay.show(
+      () => this.hidePauseMenu(),
+      () => { this.pauseOverlay.hide(); this.scene.restart(); },
+      () => { this.pauseOverlay.hide(); this.scene.start('MissionSelectScene'); },
+    );
+  }
+
+  private hidePauseMenu(): void {
+    this.pauseOverlay.hide();
+    this.resumeCombat();
+  }
+
   // ─── update loop ──────────────────────────────────────────────────────────
 
   // fallow-ignore-next-line unused-class-member
@@ -1021,10 +1157,10 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.combatHUD.update(
-      this.hullHp, this.hullMaxHp,
+      this.session.hullHp, this.session.hullMaxHp,
       this.energy.energy, this.energy.capacity, this.energy.ratio,
       this.shields.shieldHp, this.shields.maxShieldHp, this.shields.ratio,
-      this.run.xp, this.run.level,
+      this.session.run.xp, this.session.run.level,
     );
     this.enemyHpBars.update(this.enemies);
     this.shieldVisual.update(delta, this.player.x, this.player.y, this.shields.ratio);
@@ -1035,12 +1171,12 @@ export class GameScene extends Phaser.Scene {
     if (this.combatHUD.hasDebugOverlay) {
       this.combatHUD.updateDebugOverlay({
         fps:    Math.round(this.game.loop.actualFps),
-        hp:     `${this.hullHp}/${this.hullMaxHp}`,
+        hp:     `${this.session.hullHp}/${this.session.hullMaxHp}`,
         shield: `${Math.round(this.shields.shieldHp)}/${this.shields.maxShieldHp}`,
         energy: `${Math.round(this.energy.energy)}/${this.energy.capacity}`,
-        xp:     `${this.run.xp} lv${this.run.level}`,
-        cards:  this.run.pickedCardIds.size,
-        time:   `${Math.floor((time - this.missionStartMs) / 1000)}s`,
+        xp:     `${this.session.run.xp} lv${this.session.run.level}`,
+        cards:  this.session.run.pickedCardIds.size,
+        time:   `${Math.floor((time - this.session.missionStartMs) / 1000)}s`,
       });
     }
   }
