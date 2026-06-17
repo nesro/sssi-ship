@@ -1,0 +1,11 @@
+{
+  "$schema": "https://fallow.tools/schemas/config.json",
+  "ignoreDependencies": ["@capacitor/android"],
+  "duplicates": {
+    "minOccurrences": 3
+  },
+  "health": {
+    "maxCognitive": 25,
+    "maxCrap": 400
+  }
+}

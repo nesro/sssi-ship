@@ -7,6 +7,13 @@
       "runtimeArgs": ["run", "dev"],
       "cwd": "/Users/tomasnesrovnal/g/sssi-ship/phaser",
       "port": 3000
+    },
+    {
+      "name": "v2-dev",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["dev", "--port", "5174"],
+      "cwd": "/Users/tomasnesrovnal/g/sssi-ship/v2",
+      "port": 5174
     }
   ]
 }
