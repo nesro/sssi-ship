@@ -36,6 +36,6 @@ export class BootScene extends Phaser.Scene {
   // fallow-ignore-next-line unused-class-member
   create(): void {
     Sound.attach(this.sound);
-    this.scene.start('MenuScene');
+    this.scene.start('HubScene');
   }
 }

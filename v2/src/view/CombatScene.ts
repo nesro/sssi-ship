@@ -1,10 +1,11 @@
 import Phaser from 'phaser';
 import { resolveCardAction } from '../core/cards';
-import { LANE_LENGTH, MS_PER_TICK } from '../core/constants';
+import { LANE_LENGTH, MS_PER_TICK, TICKS_PER_SECOND } from '../core/constants';
 import { buildMissionResult } from '../core/result';
 import { createCoreState } from '../core/state';
 import { applyBoost } from '../core/supplies';
 import { advanceTick } from '../core/tick';
+import { activeDamageMult, computeEffectiveStats } from '../core/stats';
 import type { CoreState, EnemyState } from '../core/types';
 import { ALL_CARDS } from '../data/cards';
 import { missionById } from '../data/missions';
@@ -17,16 +18,16 @@ import { CardOverlay } from './CardOverlay';
 import { CombatHud } from './CombatHud';
 import { NarratorBar } from './NarratorBar';
 import { SupplyButtons } from './SupplyButtons';
-import { fontPx, GAME_WIDTH, GAME_X, LOGICAL_HEIGHT, LOGICAL_WIDTH, px, SHIP_GUN_X_OFFSET, SHIP_GUN_Y_OFFSET } from './layout';
+import { fontPx, GAME_WIDTH, GAME_X, LEFT_PANEL_W, LOGICAL_HEIGHT, LOGICAL_WIDTH, px, RIGHT_PANEL_W, SHIP_GUN_X_OFFSET, SHIP_GUN_Y_OFFSET } from './layout';
 import { buildGameTextures, laserTextureForWeaponId, splitWeaponId, textureForEnemyKind, TEXTURE_KEYS } from './textures';
 import { drawThruster, renderGunIndicator, tickLaserBolts, tickMuzzleFlashes } from './shipRenderers';
 import type { LaserBolt, MuzzleFlash } from './shipRenderers';
 import { UI_FONT } from './widgets';
 
-// Ship sits at the bottom-centre of the game field; enemies descend from the top.
-const SHIP_CENTER_X = GAME_X + Math.floor(GAME_WIDTH / 2); // 345 logical
-const SHIP_Y = LOGICAL_HEIGHT - 80;                         // 740 logical
-const GAME_TOP_Y = 30;                                      // top of enemy lane (logical)
+// Ship sits at the bottom-centre of the game field; enemies stream from the top.
+const SHIP_CENTER_X = GAME_X + Math.floor(GAME_WIDTH / 2); // 480 logical
+const SHIP_Y = LOGICAL_HEIGHT - 80;                         // 460 logical
+const GAME_TOP_Y = 30;                                      // top margin for progress bar
 const LASER_TRAVEL_MS = 180;
 const MUZZLE_FLASH_MS = 100;
 // Cap per-frame catch-up: if the tab is backgrounded on mobile, deltaMs can spike to many
@@ -93,6 +94,8 @@ export class CombatScene extends Phaser.Scene {
   private floatingTexts: FloatingText[] = [];
   private shieldPulseRings: ShieldPulseRing[] = [];
   private shieldHitFlash = 0;
+  /** DPS / kills / time labels in the right panel. */
+  private rightInfoTexts!: Phaser.GameObjects.Text[];
   /** Coin reward per enemy id — stored at spawn, consumed on death. */
   private enemyCoinRewards = new Map<number, number>();
   /** HP snapshot from before the last tick — used to detect mid-tick hits for the hit burst. */
@@ -116,11 +119,18 @@ export class CombatScene extends Phaser.Scene {
     Sound.startMusic();
     buildGameTextures(this);
 
-    // Panel divider: vertical line at the left-panel boundary
-    this.add
-      .rectangle(px(GAME_X), 0, px(1), px(LOGICAL_HEIGHT), 0x333355)
-      .setOrigin(0, 0)
-      .setDepth(1);
+    // Left panel divider
+    this.add.rectangle(px(LEFT_PANEL_W), 0, px(1), px(LOGICAL_HEIGHT), 0x333355).setOrigin(0, 0).setDepth(1);
+    // Right panel: progress bar strip replaces the divider line — drawn each frame by progressGfx
+
+    // Right panel info: DPS / kills / time stacked at the bottom
+    const infoX = px(LOGICAL_WIDTH - RIGHT_PANEL_W / 2);
+    const infoStyle = { fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: '#888899' };
+    this.rightInfoTexts = [
+      this.add.text(infoX, px(496), '', infoStyle).setOrigin(0.5, 0).setDepth(10),
+      this.add.text(infoX, px(510), '', infoStyle).setOrigin(0.5, 0).setDepth(10),
+      this.add.text(infoX, px(524), '', infoStyle).setOrigin(0.5, 0).setDepth(10),
+    ];
 
     this.hud = new CombatHud(this);
     this.cardOverlay = new CardOverlay(this, (action) => { this.handleCardAction(action); });
@@ -142,7 +152,7 @@ export class CombatScene extends Phaser.Scene {
       .setBlendMode(Phaser.BlendModes.ADD)
       .setDepth(4);
 
-    // Thruster heartbeat: subtle scale pulse
+    // Thruster heartbeat: subtle scale pulse along ship body
     this.tweens.add({
       targets: this.shipSprite,
       scaleY: 1.06,
@@ -171,14 +181,14 @@ export class CombatScene extends Phaser.Scene {
     this.narratorSupportCallShown = false;
     this.narratorBossShown = false;
 
-    // Panel label
+    // Mission name at top of right panel
     this.add
-      .text(px(LOGICAL_WIDTH / 2 + GAME_X / 2), px(18), mission.name, {
+      .text(px(LOGICAL_WIDTH - RIGHT_PANEL_W / 2), px(8), mission.name, {
         fontFamily: UI_FONT,
-        fontSize: `${String(fontPx(11))}px`,
-        color: '#6666aa',
+        fontSize: `${String(fontPx(8))}px`,
+        color: '#888899',
       })
-      .setOrigin(0.5)
+      .setOrigin(0.5, 0)
       .setDepth(10);
 
     this.addStarfield();
@@ -198,7 +208,7 @@ export class CombatScene extends Phaser.Scene {
       const y = GAME_TOP_Y + (ry % (LOGICAL_HEIGHT - GAME_TOP_Y));
       const alpha = rx % 3 === 0 ? 0.6 : 0.22;
       const size = rx % 7 === 0 ? 2 : 1;
-      const speed = 12 + (rz % 30); // logical units / second; parallax spread
+      const speed = 18 + (rz % 50); // logical units / second; parallax spread (scrolls left)
       const rect = this.add.rectangle(px(x), px(y), px(size), px(size), 0xffffff, alpha).setDepth(0);
       this.stars.push({ rect, speed });
     }
@@ -236,31 +246,33 @@ export class CombatScene extends Phaser.Scene {
     if (lastEvent === undefined) return;
     const totalTicks = lastEvent.atTimelineTick * 1.05;
     const progress = Math.min(1, this.core.timelineTick / totalTicks);
-    const bx = px(GAME_X + 4); const bw = px(GAME_WIDTH - 8); const bh = px(3);
-    const by = px(GAME_TOP_Y - 9);
+    // Vertical strip at the left edge of the right panel (replaces divider line)
+    const bx = px(LOGICAL_WIDTH - RIGHT_PANEL_W); const bw = px(4);
     this.progressGfx.fillStyle(0x222244, 0.7);
-    this.progressGfx.fillRect(bx, by, bw, bh);
+    this.progressGfx.fillRect(bx, 0, bw, px(LOGICAL_HEIGHT));
+    const filledH = progress * LOGICAL_HEIGHT;
     this.progressGfx.fillStyle(PALETTE_CYAN, 0.65);
-    this.progressGfx.fillRect(bx, by, bw * progress, bh);
+    this.progressGfx.fillRect(bx, px(LOGICAL_HEIGHT - filledH), bw, px(filledH));
+    // Support call markers: horizontal ticks crossing the bar
     for (const tick of this.core.mission.supportCallTicks) {
       const frac = Math.min(1, tick / totalTicks);
-      const tx = bx + bw * frac;
+      const ty = px(LOGICAL_HEIGHT - LOGICAL_HEIGHT * frac);
       this.progressGfx.fillStyle(PALETTE_AMBER, 0.9);
-      this.progressGfx.fillRect(tx - px(1), by - px(2), px(2), bh + px(4));
+      this.progressGfx.fillRect(bx - px(2), ty - px(1), bw + px(4), px(2));
     }
   }
 
   private renderBossBar(boss: EnemyState): void {
     const ratio = boss.hp / boss.maxHp;
-    const bx = px(GAME_X + 4); const bw = px(GAME_WIDTH - 8);
-    const by = px(GAME_TOP_Y - 9); const bh = px(5);
+    const bx = px(LOGICAL_WIDTH - RIGHT_PANEL_W); const bw = px(4);
     this.progressGfx.fillStyle(0x2a1a00, 0.8);
-    this.progressGfx.fillRect(bx, by, bw, bh);
+    this.progressGfx.fillRect(bx, 0, bw, px(LOGICAL_HEIGHT));
+    const filledH = ratio * LOGICAL_HEIGHT;
     this.progressGfx.fillStyle(0xff6600, 0.9);
-    this.progressGfx.fillRect(bx, by, bw * ratio, bh);
-    // Bright leading edge on the health fill
+    this.progressGfx.fillRect(bx, px(LOGICAL_HEIGHT - filledH), bw, px(filledH));
+    // Bright leading edge at top of fill
     this.progressGfx.fillStyle(0xffaa22, 1.0);
-    this.progressGfx.fillRect(bx + bw * ratio - px(2), by, px(2), bh);
+    this.progressGfx.fillRect(bx, px(LOGICAL_HEIGHT - filledH), bw, px(2));
   }
 
   private renderShield(): void {
@@ -446,6 +458,7 @@ export class CombatScene extends Phaser.Scene {
     this.updateBurstParticles(deltaMs);
     this.updateFloatingTexts(deltaMs);
     this.hud.update(this.core);
+    this.updateRightInfo();
     this.supplyButtons.update(this.core);
     this.narrator.update(deltaMs);
     this.maybeFinish();
@@ -493,6 +506,10 @@ export class CombatScene extends Phaser.Scene {
     const weapon = this.core.loadout.weapon;
     if (weapon === null) return;
     const isNova = weapon.kind === 'nova';
+    const side = this.gunToggle ? 1 : -1;
+    this.gunToggle = !this.gunToggle;
+    const gx = px(SHIP_CENTER_X) + this.driftX() + (isNova ? 0 : px(SHIP_GUN_X_OFFSET) * side);
+    const gy = px(SHIP_Y - SHIP_GUN_Y_OFFSET) + this.bobY();
     let targetY = px(GAME_TOP_Y);
     if (!isNova) {
       let front: { distance: number } | undefined;
@@ -502,10 +519,6 @@ export class CombatScene extends Phaser.Scene {
       if (front === undefined) return;
       targetY = this.laneToY(front.distance);
     }
-    const side = this.gunToggle ? 1 : -1;
-    this.gunToggle = !this.gunToggle;
-    const gx = px(SHIP_CENTER_X) + this.driftX() + (isNova ? 0 : px(SHIP_GUN_X_OFFSET) * side);
-    const gy = px(SHIP_Y - SHIP_GUN_Y_OFFSET) + this.bobY();
     if (!isNova && targetY >= gy) return;
     const textureKey = laserTextureForWeaponId(weapon.id);
     const boltScale = boltScaleForLevel(splitWeaponId(weapon.id).level);
@@ -519,7 +532,8 @@ export class CombatScene extends Phaser.Scene {
   }
 
   private renderGuns(): void {
-    renderGunIndicator(this.gunGfx, this.core.loadout.weapon, px(SHIP_CENTER_X) + this.driftX(), px(SHIP_Y - SHIP_GUN_Y_OFFSET) + this.bobY());
+    renderGunIndicator(this.gunGfx, this.core.loadout.weapon,
+      px(SHIP_CENTER_X) + this.driftX(), px(SHIP_Y - SHIP_GUN_Y_OFFSET) + this.bobY());
   }
 
   private renderMuzzleFlashes(deltaMs: number): void {
@@ -589,7 +603,7 @@ export class CombatScene extends Phaser.Scene {
       let sprite = this.enemySprites.get(enemy.id);
       if (sprite === undefined) {
         sprite = this.add
-          .image(px(SHIP_CENTER_X), 0, textureForEnemyKind(enemy.kind, enemy.isBoss, enemy.blocksConveyor))
+          .image(px(SHIP_CENTER_X), px(GAME_TOP_Y), textureForEnemyKind(enemy.kind, enemy.isBoss, enemy.blocksConveyor))
           .setBlendMode(Phaser.BlendModes.ADD);
         this.enemySprites.set(enemy.id, sprite);
         this.addEnemyAnimTween(sprite, enemy);
@@ -652,6 +666,15 @@ export class CombatScene extends Phaser.Scene {
     const shipY = px(SHIP_Y);
     const topY = px(GAME_TOP_Y);
     return shipY - (distance / LANE_LENGTH) * (shipY - topY);
+  }
+
+  private updateRightInfo(): void {
+    const stats = computeEffectiveStats(this.core.loadout, this.core.modifiers, activeDamageMult(this.core));
+    const dps = stats.weaponEquipped ? (stats.weaponDamage / stats.weaponInterval) * TICKS_PER_SECOND : 0;
+    const time = (this.core.tick / TICKS_PER_SECOND).toFixed(1);
+    this.rightInfoTexts[0]?.setText(`DPS ${dps.toFixed(1)}`);
+    this.rightInfoTexts[1]?.setText(`k${String(this.core.stats.kills)}`);
+    this.rightInfoTexts[2]?.setText(`t ${time}s`);
   }
 
   private maybeFinish(): void {

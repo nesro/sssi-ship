@@ -1,20 +1,27 @@
 // Native-resolution rendering (V2_HANDOFF.md §4.2): the canvas is sized logical × dpr and
 // zoomed back down, so game units are device pixels. All view code sizes through px().
 
-export const LOGICAL_WIDTH = 540;
-export const LOGICAL_HEIGHT = 820;
+export const LOGICAL_WIDTH = 960;
+export const LOGICAL_HEIGHT = 540;
 
 export const DPR = Math.max(1, Math.round((globalThis.devicePixelRatio || 1) * 100) / 100);
 
 export const SCREEN_WIDTH = LOGICAL_WIDTH * DPR;
 export const SCREEN_HEIGHT = LOGICAL_HEIGHT * DPR;
 
-/** Width of the left control panel (HUD + supply buttons) in logical units. */
-export const PANEL_WIDTH = 150;
-/** X coordinate where the game field starts (right of panel). */
-export const GAME_X = PANEL_WIDTH;
-/** Width of the game field in logical units. */
-export const GAME_WIDTH = LOGICAL_WIDTH - PANEL_WIDTH;
+/** Width of the left panel (vertical stat bars) in logical units. */
+export const LEFT_PANEL_W = 90;
+/** Width of the right panel (supplies + info) in logical units. */
+export const RIGHT_PANEL_W = 90;
+/** X coordinate where the game field starts. */
+export const GAME_X = LEFT_PANEL_W;
+/** Width of the game field in logical units (960 − 90 − 90 = 780). */
+export const GAME_WIDTH = LOGICAL_WIDTH - LEFT_PANEL_W - RIGHT_PANEL_W;
+/** @deprecated use LEFT_PANEL_W */
+export const PANEL_WIDTH = LEFT_PANEL_W;
+
+/** Width of each half in the hub (menu+shop) screen. */
+export const HUB_LEFT_W = 480;
 
 /** Converts a logical design measurement into device pixels. */
 export function px(logical: number): number {

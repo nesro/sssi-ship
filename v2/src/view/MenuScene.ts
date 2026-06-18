@@ -334,9 +334,15 @@ export class MenuScene extends Phaser.Scene {
     const innerX = panelX + px(20);
     const startBtnY = panelY + px(PANEL_H - 52);
 
+    const dismiss = (): void => {
+      this.detailObjects.forEach((o) => { o.destroy(); });
+      this.detailObjects = [];
+    };
+
     const backdrop = this.add
       .rectangle(0, 0, px(LOGICAL_WIDTH), panelY, 0x000000, 0.55)
       .setOrigin(0, 0).setDepth(20).setInteractive();
+    backdrop.on('pointerdown', dismiss);
     this.detailObjects.push(backdrop);
 
     const bg = this.add
@@ -410,10 +416,7 @@ export class MenuScene extends Phaser.Scene {
     const closeBtn = addTextButton(this, {
       x: panelX + panelW - px(16), y: panelY + px(16),
       label: '✕', color: 0x666688, size: 13,
-      onClick: () => {
-        this.detailObjects.forEach((o) => { o.destroy(); });
-        this.detailObjects = [];
-      },
+      onClick: dismiss,
     });
     closeBtn.setOrigin(1, 0).setDepth(21);
     this.detailObjects.push(closeBtn);

@@ -13,7 +13,7 @@ export interface LaserBolt {
   targetY: number;
 }
 
-/** Draws the animated thruster flame. Clears `g` before drawing. */
+/** Draws the animated thruster flame pointing DOWN (used by ShopPreviewPanel). Clears `g` before drawing. */
 export function drawThruster(
   g: Phaser.GameObjects.Graphics,
   cx: number, baseY: number, h: number, flicker: number,
@@ -76,3 +76,4 @@ export function tickLaserBolts(bolts: LaserBolt[], deltaMs: number): LaserBolt[]
     return true;
   });
 }
+

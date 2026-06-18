@@ -21,6 +21,7 @@ export const TEXTURE_KEYS = {
   swarm: 'enemy-swarm',
   blocker: 'enemy-blocker',
   boss: 'enemy-boss',
+  guardian: 'enemy-guardian',
   // Projectiles — one per weapon kind+tier
   laserPulse1: 'laser-pulse-1',
   laserPulse2: 'laser-pulse-2',
@@ -48,6 +49,7 @@ export function textureForEnemyKind(kind: string, isBoss: boolean, blocks: boole
     striker: TEXTURE_KEYS.striker,
     tank: TEXTURE_KEYS.tank,
     swarm: TEXTURE_KEYS.swarm,
+    guardian: TEXTURE_KEYS.guardian,
   };
   const texture = known[kind];
   if (texture === undefined) {
@@ -148,6 +150,13 @@ function buildEnemyTextures(scene: Phaser.Scene): void {
     g.lineStyle(w, PALETTE.enemyOrange, a);
     g.strokeRect(px(8), px(8), px(28), px(28));
     strokeDiamond(g, px(22), px(22), px(14));
+  });
+  bake(scene, TEXTURE_KEYS.guardian, px(32), px(32), (g, w, a) => {
+    g.lineStyle(w, PALETTE.shieldBlue, a);
+    g.strokeCircle(px(16), px(16), px(12));
+    g.strokeCircle(px(16), px(16), px(6));
+    g.lineBetween(px(16), px(4), px(16), px(28));
+    g.lineBetween(px(4), px(16), px(28), px(16));
   });
   bake(scene, TEXTURE_KEYS.boss, px(72), px(72), (g, w, a) => {
     g.lineStyle(w, PALETTE.enemyRed, a);

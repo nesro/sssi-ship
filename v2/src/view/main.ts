@@ -1,9 +1,8 @@
 import Phaser from 'phaser';
 import { BootScene } from './BootScene';
 import { CombatScene } from './CombatScene';
-import { MenuScene } from './MenuScene';
+import { HubScene } from './HubScene';
 import { ResultScene } from './ResultScene';
-import { ShopScene } from './ShopScene';
 import { PALETTE } from './palette';
 import { DPR, SCREEN_HEIGHT, SCREEN_WIDTH } from './layout';
 import { defaultSave, loadSave, persistSave, resetSave } from '../save/SaveManager';
@@ -18,7 +17,7 @@ const game = new Phaser.Game({
   zoom: 1 / DPR,
   backgroundColor: PALETTE.backgroundNearBlack,
   render: { roundPixels: true },
-  scene: [BootScene, MenuScene, CombatScene, ResultScene, ShopScene],
+  scene: [BootScene, HubScene, CombatScene, ResultScene],
 });
 
 // Dev/debug handle (v1 convention): drive scenes from the browser console.
@@ -32,21 +31,21 @@ if (import.meta.env.DEV) {
   };
   g.__cheat = {
     /** Add coins to the current save. Usage: __cheat.coins(5000) */
-    coins: (amount: number) => { persistSave({ ...loadSave(), coins: loadSave().coins + amount }); goTo('ShopScene'); },
+    coins: (amount: number) => { persistSave({ ...loadSave(), coins: loadSave().coins + amount }); goTo('HubScene'); },
     /** Set coins to an exact amount. Usage: __cheat.setCoins(9999) */
-    setCoins: (amount: number) => { persistSave({ ...loadSave(), coins: amount }); goTo('ShopScene'); },
+    setCoins: (amount: number) => { persistSave({ ...loadSave(), coins: amount }); goTo('HubScene'); },
     /** Unlock all missions by granting stars. Usage: __cheat.unlockAll() */
     unlockAll: () => {
       const save = loadSave();
       persistSave({ ...save, missionStars: { ...save.missionStars, 'smoke-1': ['smoke-1-hull', 'smoke-1-kills', 'smoke-1-time'] } });
-      goTo('MenuScene');
+      goTo('HubScene');
     },
     /** Reset save to factory defaults. Usage: __cheat.reset() */
-    reset: () => { resetSave(); goTo('MenuScene'); },
+    reset: () => { resetSave(); goTo('HubScene'); },
     /** Print current save to console. Usage: __cheat.inspect() */
     inspect: () => { console.log(JSON.stringify(loadSave(), null, 2)); },
     /** Load a rich save for full shop testing. Usage: __cheat.richSave() */
-    richSave: () => { persistSave({ ...defaultSave(), coins: 99999 }); goTo('ShopScene'); },
+    richSave: () => { persistSave({ ...defaultSave(), coins: 99999 }); goTo('HubScene'); },
   };
   console.info('[dev] __cheat available: coins(n) · setCoins(n) · richSave() · unlockAll() · reset() · inspect()');
 }

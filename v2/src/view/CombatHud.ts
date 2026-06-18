@@ -1,58 +1,97 @@
 import Phaser from 'phaser';
-import { BROWNOUT_THRESHOLD, TICKS_PER_SECOND } from '../core/constants';
-import { brownoutFactor } from '../core/energy';
+import { BROWNOUT_THRESHOLD } from '../core/constants';
 import { activeDamageMult, computeEffectiveStats } from '../core/stats';
 import type { CoreState } from '../core/types';
 import { cssColor, PALETTE } from './palette';
-import { fontPx, px } from './layout';
+import { fontPx, LEFT_PANEL_W, LOGICAL_HEIGHT, px } from './layout';
 import { UI_FONT } from './widgets';
 
-const LINE_HEIGHT = 24;
-const HUD_TOP = 54;
+const BAR_W = 12;
+const BAR_TOP = 28;
+const BAR_BOT = LOGICAL_HEIGHT - 22;
+const BAR_H = BAR_BOT - BAR_TOP;
+const LABEL_Y = 10;
+const VALUE_Y = LOGICAL_HEIGHT - 6;
+const SECTION = LEFT_PANEL_W / 3; // 30 logical px per bar slot
 
-/** Key stats in the left control panel, colour-coded per system (V2_HANDOFF.md §4.1). */
+// Bar centres at 1/6, 3/6, 5/6 of LEFT_PANEL_W → 15, 45, 75
+const BAR_X = [
+  Math.round(SECTION * 0.5),
+  Math.round(SECTION * 1.5),
+  Math.round(SECTION * 2.5),
+] as const;
+
+const BARS = [
+  { label: 'HUL', color: PALETTE.hullWhite },
+  { label: 'SHD', color: PALETTE.shieldBlue },
+  { label: 'NRG', color: PALETTE.generatorAmber },
+] as const;
+
+/** Vertical stat bars in the left panel: HULL / SHIELD / ENERGY (V2_HANDOFF.md §4.1). */
 export class CombatHud {
-  private readonly lines: Phaser.GameObjects.Text[];
+  private readonly gfx: Phaser.GameObjects.Graphics;
+  private readonly values: Phaser.GameObjects.Text[];
 
   constructor(scene: Phaser.Scene) {
-    const rows: { color: number }[] = [
-      { color: PALETTE.hullWhite },
-      { color: PALETTE.shieldBlue },
-      { color: PALETTE.generatorAmber },
-      { color: PALETTE.weaponCyan },
-      { color: PALETTE.motorMagenta },
-    ];
-    this.lines = rows.map((row, index) =>
+    this.gfx = scene.add.graphics().setDepth(10);
+
+    // Static labels above each bar
+    BARS.forEach((bar, i) => {
       scene.add
-        .text(px(8), px(HUD_TOP + index * LINE_HEIGHT), '', {
+        .text(px(BAR_X[i] ?? 0), px(LABEL_Y), bar.label, {
           fontFamily: UI_FONT,
-          fontSize: `${String(fontPx(11))}px`,
-          color: cssColor(row.color),
+          fontSize: `${String(fontPx(7))}px`,
+          color: cssColor(bar.color),
         })
-        .setDepth(10),
+        .setOrigin(0.5, 0)
+        .setDepth(11);
+    });
+
+    this.values = BARS.map((_, i) =>
+      scene.add
+        .text(px(BAR_X[i] ?? 0), px(VALUE_Y), '', {
+          fontFamily: UI_FONT,
+          fontSize: `${String(fontPx(7))}px`,
+          color: '#777788',
+        })
+        .setOrigin(0.5, 1)
+        .setDepth(11),
     );
   }
 
   update(state: CoreState): void {
     const { ship } = state;
     const stats = computeEffectiveStats(state.loadout, state.modifiers, activeDamageMult(state));
-    const stretch = brownoutFactor(ship.energy, stats.generatorCapacity);
-    const energyFraction = stats.generatorCapacity > 0 ? ship.energy / stats.generatorCapacity : 0;
-    const brownout = energyFraction < BROWNOUT_THRESHOLD ? ` ×${stretch.toFixed(1)}` : '';
-    const dps = stats.weaponEquipped ? (stats.weaponDamage / stats.weaponInterval) * TICKS_PER_SECOND : 0;
-    const texts = [
-      `HULL ${bar(ship.hull, ship.maxHull)} ${Math.ceil(ship.hull).toString()}`,
-      `SHLD ${bar(ship.shield, stats.shieldCapacity)} ${Math.ceil(ship.shield).toString()}`,
-      `ENRG ${bar(ship.energy, stats.generatorCapacity)} ${Math.ceil(ship.energy).toString()}${brownout}`,
-      `DPS ${dps.toFixed(1)}  k${String(state.stats.kills)}`,
-      `t ${(state.tick / TICKS_PER_SECOND).toFixed(1)}s  q${String(state.enemies.length)}`,
-    ];
-    this.lines.forEach((line, index) => line.setText(texts[index] ?? ''));
-  }
-}
+    const hullFrac = ship.maxHull > 0 ? ship.hull / ship.maxHull : 0;
+    const shieldFrac = stats.shieldCapacity > 0 ? ship.shield / stats.shieldCapacity : 0;
+    const energyFrac = stats.generatorCapacity > 0 ? ship.energy / stats.generatorCapacity : 0;
+    const inBrownout = energyFrac < BROWNOUT_THRESHOLD;
 
-function bar(value: number, max: number): string {
-  const SLOTS = 6;
-  const filled = Math.round(Math.max(0, Math.min(1, value / max)) * SLOTS);
-  return '█'.repeat(filled) + '░'.repeat(SLOTS - filled);
+    const fracs = [hullFrac, shieldFrac, energyFrac];
+    const colors = [PALETTE.hullWhite, PALETTE.shieldBlue, inBrownout ? 0xff4400 : PALETTE.generatorAmber];
+    const rawValues = [Math.ceil(ship.hull), Math.ceil(ship.shield), Math.ceil(ship.energy)];
+
+    this.gfx.clear();
+    BARS.forEach((_, i) => {
+      const cx = BAR_X[i] ?? 0;
+      const frac = Math.max(0, Math.min(1, fracs[i] ?? 0));
+      const filled = Math.round(frac * BAR_H);
+      const color = colors[i] ?? PALETTE.hullWhite;
+
+      // Dim background track
+      this.gfx.fillStyle(0x111122, 0.7);
+      this.gfx.fillRect(px(cx - BAR_W / 2), px(BAR_TOP), px(BAR_W), px(BAR_H));
+
+      if (filled > 0) {
+        // Main fill, bottom-to-top
+        this.gfx.fillStyle(color, 0.7);
+        this.gfx.fillRect(px(cx - BAR_W / 2), px(BAR_BOT - filled), px(BAR_W), px(filled));
+        // Bright leading edge at top of fill
+        this.gfx.fillStyle(color, 0.95);
+        this.gfx.fillRect(px(cx - BAR_W / 2), px(BAR_BOT - filled), px(BAR_W), px(2));
+      }
+    });
+
+    this.values.forEach((v, i) => { v.setText(String(rawValues[i] ?? 0)); });
+  }
 }

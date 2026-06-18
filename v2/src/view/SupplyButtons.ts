@@ -1,10 +1,10 @@
 import Phaser from 'phaser';
 import type { CoreState } from '../core/types';
 import { cssColor, PALETTE } from './palette';
-import { fontPx, PANEL_WIDTH, px } from './layout';
+import { fontPx, LOGICAL_WIDTH, RIGHT_PANEL_W, px } from './layout';
 import { UI_FONT } from './widgets';
 
-const BUTTON_W = 130;
+const BUTTON_W = 70;
 const BUTTON_H = 42;
 const BUTTON_GAP = 8;
 const BUTTONS_TOP = 195;
@@ -19,7 +19,7 @@ export class SupplyButtons {
     onTap: (slot: number) => void,
   ) {
     state.supplies.forEach((supply, slot) => {
-      const x = px(PANEL_WIDTH / 2);
+      const x = px(LOGICAL_WIDTH - RIGHT_PANEL_W / 2);
       const y = px(BUTTONS_TOP + slot * (BUTTON_H + BUTTON_GAP));
       const panel = scene.add
         .rectangle(x, y, px(BUTTON_W), px(BUTTON_H), 0x0a0a18, 0.9)

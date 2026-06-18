@@ -62,12 +62,12 @@ export class ResultScene extends Phaser.Scene {
     addTextButton(this, {
       x: SCREEN_WIDTH / 2, y: buttonY, label: 'MISSIONS',
       color: PALETTE.hullWhite,
-      onClick: () => { this.scene.start('MenuScene'); },
+      onClick: () => { this.scene.start('HubScene'); },
     });
     addTextButton(this, {
       x: SCREEN_WIDTH / 2 + px(160), y: buttonY, label: 'SHOP',
       color: PALETTE.motorMagenta,
-      onClick: () => { this.scene.start('ShopScene'); },
+      onClick: () => { this.scene.start('HubScene'); },
     });
   }
 }

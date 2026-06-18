@@ -43,27 +43,26 @@ const TABS: { key: ShopTab; label: string; color: number }[] = [
   { key: 'supplies', label: 'SUPPLIES', color: PALETTE.hullWhite },
 ];
 
-// Vertical bands (logical units). The screen stacks top-to-bottom so each region
-// gets the full 540px width instead of being squeezed into a side column.
-const TAB_ROW_Y = 132;
+// Vertical bands (logical units). Landscape canvas 820×540 — compressed to fit.
+const TAB_ROW_Y = 84;
 const TAB_MARGIN = 12;
-const PREVIEW_BOTTOM_Y = 302;
-const LIST_TOP_LOGICAL = 320;
-const ROW_HEIGHT_LOGICAL = 46;
-const ROW_BG_HEIGHT = 40;
-const ACTION_TOP_LOGICAL = 694;
+const PREVIEW_BOTTOM_Y = 200;
+const LIST_TOP_LOGICAL = 216;
+const ROW_HEIGHT_LOGICAL = 40;
+const ROW_BG_HEIGHT = 34;
+const ACTION_TOP_LOGICAL = 432;
 const SIDE_MARGIN = 14;
 const ROW_WIDTH = LOGICAL_WIDTH - SIDE_MARGIN * 2;
 
 // Ship sits on the left of the preview band; bars + DPS fill the right.
 const PREVIEW_LAYOUT: PreviewLayout = {
   shipX: 92,
-  shipY: 224,
+  shipY: 155,
   barsLeftX: 170,
-  barsTopY: 198,
-  barWidth: 330,
-  dpsX: 335,
-  dpsY: 262,
+  barsTopY: 124,
+  barWidth: 450,
+  dpsX: 450,
+  dpsY: 186,
 };
 
 /** The shop (§3.8): tabs per system, buy/equip, and the live load-calculator preview. */
@@ -95,28 +94,28 @@ export class ShopScene extends Phaser.Scene {
     buildGameTextures(this);
 
     this.add
-      .text(SCREEN_WIDTH / 2, px(32), 'NESRO NOVA', {
+      .text(SCREEN_WIDTH / 2, px(22), 'NESRO NOVA', {
         fontFamily: UI_FONT,
-        fontSize: `${String(fontPx(28))}px`,
+        fontSize: `${String(fontPx(24))}px`,
         color: cssColor(PALETTE.weaponCyan),
       })
       .setOrigin(0.5);
 
     // Top-level MISSIONS / SHOP switch
     addTextButton(this, {
-      x: SCREEN_WIDTH / 2 - px(70), y: px(96),
-      label: 'MISSIONS', color: PALETTE.weaponCyan, size: 15,
+      x: SCREEN_WIDTH / 2 - px(70), y: px(52),
+      label: 'MISSIONS', color: PALETTE.weaponCyan, size: 14,
       onClick: () => { this.scene.start('MenuScene'); },
     }).setAlpha(0.55);
     addTextButton(this, {
-      x: SCREEN_WIDTH / 2 + px(70), y: px(96),
-      label: 'SHOP', color: PALETTE.motorMagenta, size: 15,
+      x: SCREEN_WIDTH / 2 + px(70), y: px(52),
+      label: 'SHOP', color: PALETTE.motorMagenta, size: 14,
       onClick: () => { /* already here */ },
     }).setAlpha(1);
 
-    this.addDivider(112);
+    this.addDivider(68);
     this.buildCategoryTabs();
-    this.addDivider(154);
+    this.addDivider(100);
     this.addDivider(PREVIEW_BOTTOM_Y);
     this.addDivider(ACTION_TOP_LOGICAL - 8);
 
@@ -173,7 +172,7 @@ export class ShopScene extends Phaser.Scene {
     });
     this.rebuildable = [];
     this.rebuildable.push(
-      addLabel(this, { x: px(SIDE_MARGIN), y: px(62), text: `⬤ ${String(this.save.coins)} coins`, color: PALETTE.generatorAmber, size: 14 }),
+      addLabel(this, { x: px(SIDE_MARGIN), y: px(40), text: `⬤ ${String(this.save.coins)} coins`, color: PALETTE.generatorAmber, size: 13 }),
     );
     if (this.tab === 'supplies') this.buildSupplyRows();
     else this.buildItemRows(this.tab);
@@ -521,7 +520,7 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private buildSupplyRows(): void {
-    const ROW_GAP = ROW_HEIGHT_LOGICAL + 30;
+    const ROW_GAP = ROW_HEIGHT_LOGICAL + 22;
     Object.entries(SUPPLIES).forEach(([supplyId, entry], index) => {
       const y = LIST_TOP_LOGICAL + index * ROW_GAP;
       const owned = this.save.ownedSupplyCharges[supplyId] ?? 0;
