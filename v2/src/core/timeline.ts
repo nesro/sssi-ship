@@ -65,5 +65,8 @@ function spawnEnemy(state: CoreState, spec: EnemySpec, baseDistance: number): vo
     coinReward: spec.coinReward,
     isBoss: spec.isBoss ?? false,
     regenPerTick: spec.regenPerTick ?? 0,
+    critChance: spec.critChance,
+    missChance: spec.missChance,
+    critMult: spec.critMult,
   });
 }

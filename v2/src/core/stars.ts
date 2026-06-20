@@ -13,6 +13,8 @@ function starEarned(state: CoreState, star: StarSpec): boolean {
   switch (star.family) {
     case 'boss-time':
       return state.bossKillTick !== null && state.bossKillTick <= star.threshold;
+    case 'finish-time':
+      return state.tick <= star.threshold;
     case 'hull-above':
       return state.ship.hull / state.ship.maxHull >= star.threshold;
     case 'all-kills':

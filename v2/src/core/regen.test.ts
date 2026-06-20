@@ -135,12 +135,7 @@ describe('tutorial missions run to completion', () => {
   const TUTORIAL_IDS = ['t1', 't2', 't3', 't4'] as const;
 
   TUTORIAL_IDS.forEach((id) => {
-    // ENGINE invariant only: every tutorial, run with its real forced loadout, must reach a
-    // terminal state within the tick budget (no infinite / stuck missions). Whether each
-    // tutorial is *winnable* is a BALANCE question owned by the human-tuning pass — it is
-    // tracked in HANDOFF_TO_HUMAN.md, not asserted here. As of this writing t1 (shield-only)
-    // and t2 resolve to 'defeat' with greedy picks and need balance before victory is asserted.
-    it(`${id} runs its forced loadout to a terminal state within 2000 ticks`, () => {
+    it(`${id} completes in victory with its forced loadout within 2000 ticks`, () => {
       const mission = missionById(id);
       if (mission.forcedLoadout === undefined) throw new Error(`${id} must define a forcedLoadout`);
       const loadout = resolveForcedLoadout(mission.forcedLoadout);
@@ -150,7 +145,7 @@ describe('tutorial missions run to completion', () => {
         advanceTick(state);
         if (state.status !== 'running') break;
       }
-      expect(state.status).not.toBe('running');
+      expect(state.status).toBe('victory');
     });
   });
 });

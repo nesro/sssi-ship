@@ -6,8 +6,8 @@ import { computeLoadoutReport } from '../core/report';
 import type { LoadoutSnapshot, WeaponKind } from '../core/types';
 import { cssColor, PALETTE } from './palette';
 import { fontPx, px, SHIP_GUN_X_OFFSET, SHIP_GUN_Y_OFFSET } from './layout';
-import { laserTextureForWeaponId, TEXTURE_KEYS } from './textures';
-import { drawThruster, renderGunIndicator, tickLaserBolts, tickMuzzleFlashes } from './shipRenderers';
+import { laserTextureForWeaponId, TEXTURE_KEYS, textureForShipId } from './textures';
+import { drawMotorHousing, drawThruster, renderGunIndicator, tickLaserBolts, tickMuzzleFlashes, THRUSTER_PARAMS } from './shipRenderers';
 import type { LaserBolt, MuzzleFlash } from './shipRenderers';
 import { UI_FONT } from './widgets';
 
@@ -43,6 +43,7 @@ export class ShopPreviewPanel {
   // Scene objects
   private readonly ship: Phaser.GameObjects.Image;
   private readonly thrusterGfx: Phaser.GameObjects.Graphics;
+  private readonly motorGfx: Phaser.GameObjects.Graphics;
   private readonly shieldGfx: Phaser.GameObjects.Graphics;
   private readonly gunGfx: Phaser.GameObjects.Graphics;
   private readonly muzzleFlashGfx: Phaser.GameObjects.Graphics;
@@ -50,6 +51,10 @@ export class ShopPreviewPanel {
   private readonly energyLabel: Phaser.GameObjects.Text;
   private readonly shieldLabel: Phaser.GameObjects.Text;
   private readonly dpsLabel: Phaser.GameObjects.Text;
+  private readonly enrgStaticLabel: Phaser.GameObjects.Text;
+  private readonly shldStaticLabel: Phaser.GameObjects.Text;
+  private panelVisible = true;
+  private motorLevel: 1 | 2 | 3 = 1;
 
   // Animation
   private phase = 0;
@@ -86,6 +91,7 @@ export class ShopPreviewPanel {
     this.barWidthPx = px(layout.barWidth);
 
     this.thrusterGfx = scene.add.graphics().setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
+    this.motorGfx = scene.add.graphics().setDepth(4).setBlendMode(Phaser.BlendModes.ADD);
     this.muzzleFlashGfx = scene.add.graphics().setDepth(6).setBlendMode(Phaser.BlendModes.ADD);
     this.gunGfx = scene.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
     this.barGfx = scene.add.graphics().setDepth(8);
@@ -116,15 +122,39 @@ export class ShopPreviewPanel {
     this.shieldLabel = scene.add.text(valRightX, sy - px(3), '', { ...labelStyle, color: cssColor(PALETTE.shieldBlue) }).setOrigin(1, 1).setDepth(9);
 
     // Static ENRG / SHLD prefix labels above the left end of each bar
-    scene.add.text(this.barsLeftX, ey - px(3), 'ENRG', { ...labelStyle, color: cssColor(PALETTE.generatorAmber) }).setOrigin(0, 1).setDepth(9);
-    scene.add.text(this.barsLeftX, sy - px(3), 'SHLD', { ...labelStyle, color: cssColor(PALETTE.shieldBlue) }).setOrigin(0, 1).setDepth(9);
+    this.enrgStaticLabel = scene.add.text(this.barsLeftX, ey - px(3), 'ENRG', { ...labelStyle, color: cssColor(PALETTE.generatorAmber) }).setOrigin(0, 1).setDepth(9);
+    this.shldStaticLabel = scene.add.text(this.barsLeftX, sy - px(3), 'SHLD', { ...labelStyle, color: cssColor(PALETTE.shieldBlue) }).setOrigin(0, 1).setDepth(9);
 
     this.dpsLabel = scene.add.text(px(layout.dpsX), px(layout.dpsY), '', { ...labelStyle, fontSize: `${String(fontPx(13))}px`, color: cssColor(PALETTE.weaponCyan) }).setOrigin(0.5, 0.5).setDepth(9);
+  }
+
+  setVisible(v: boolean): void {
+    this.panelVisible = v;
+    this.ship.setVisible(v);
+    this.thrusterGfx.setVisible(v);
+    this.shieldGfx.setVisible(v);
+    this.gunGfx.setVisible(v);
+    this.muzzleFlashGfx.setVisible(v);
+    this.barGfx.setVisible(v);
+    this.energyLabel.setVisible(v);
+    this.shieldLabel.setVisible(v);
+    this.dpsLabel.setVisible(v);
+    this.enrgStaticLabel.setVisible(v);
+    this.shldStaticLabel.setVisible(v);
+    if (!v) {
+      this.barGfx.clear();
+      for (const bolt of this.laserBolts) { bolt.sprite.destroy(); }
+      this.laserBolts = [];
+      this.muzzleFlashes = [];
+      this.muzzleFlashGfx.clear();
+    }
   }
 
   /** Call when the loadout selection changes — resets the energy/shield simulation from zero. */
   show(current: LoadoutSnapshot, prospective: LoadoutSnapshot | null): void {
     const activeLoadout = prospective ?? current;
+    this.motorLevel = motorLevelFromId(activeLoadout.motor.id);
+    this.ship.setTexture(textureForShipId(activeLoadout.ship.id));
     const stats = computeEffectiveStats(activeLoadout, defaultModifiers());
     this.simStats = stats;
     this.simEnergy = 0;
@@ -139,8 +169,9 @@ export class ShopPreviewPanel {
     this.dpsLabel.setText(stats.weaponEquipped ? `DPS  ${report.dpsSingleTarget.toFixed(1)}` : 'NO WEAPON');
   }
 
-  /** Driven by ShopScene.update(). */
+  /** Driven by HubScene.update(). */
   update(deltaMs: number): void {
+    if (!this.panelVisible) return;
     this.phase += deltaMs;
     if (this.simStats !== null) {
       this.stepSim(deltaMs);
@@ -256,8 +287,10 @@ export class ShopPreviewPanel {
   }
 
   private renderThruster(): void {
-    const flicker = 0.55 + 0.45 * Math.sin(this.phase * 0.014);
-    drawThruster(this.thrusterGfx, this.shipX, this.shipY + px(24), px(10 + 10 * flicker), flicker);
+    const p = THRUSTER_PARAMS[this.motorLevel];
+    const flicker = p.minBright + p.range * Math.sin(this.phase * p.speed);
+    drawThruster(this.thrusterGfx, this.shipX, this.shipY + px(24), px(p.hBase + p.hScale * flicker), { flicker, motorLevel: this.motorLevel });
+    drawMotorHousing(this.motorGfx, this.shipX, this.shipY, this.motorLevel);
   }
 
   private renderShield(): void {
@@ -293,5 +326,12 @@ export class ShopPreviewPanel {
       this.shieldGfx.strokeCircle(cx, cy, r - px(2.5));
     }
   }
+}
+
+function motorLevelFromId(motorId: string): 1 | 2 | 3 {
+  const last = motorId.at(-1);
+  if (last === '3') return 3;
+  if (last === '2') return 2;
+  return 1;
 }
 

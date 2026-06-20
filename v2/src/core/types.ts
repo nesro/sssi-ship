@@ -15,6 +15,12 @@ export interface WeaponSpec {
   maxTargets: number;
   /** Damage multiplier applied per enemy after the first (pierce falloff). */
   falloffPerTarget: number;
+  /** 0–1 probability of dealing critMult × damage instead of normal damage. */
+  critChance: number;
+  /** 0–1 probability of dealing 0 damage (bolt still fires visually). */
+  missChance: number;
+  /** Damage multiplier on a critical hit. */
+  critMult: number;
 }
 
 export interface ShieldSpec {
@@ -43,6 +49,25 @@ export interface MotorSpec {
   bonusRerollsPerMission?: number;
 }
 
+export type ShipPassiveKind =
+  | 'enemy-miss-bonus'       // Interceptor: adds to every enemy's missChance
+  | 'collision-reduction'    // Tanker: halves collision damage
+  | 'coin-bonus'             // Salvager: multiplies coins from kills
+  | 'generator-capacity-bonus' // Reactor: multiplies generator capacity
+  | 'crit-mult-override';    // Warship: overrides player critMult
+
+export interface ShipSpec {
+  id: string;
+  name: string;
+  hull: number;
+  price: number;
+  starsRequired?: number;
+  passiveKind: ShipPassiveKind;
+  /** Numeric meaning depends on passiveKind: bonus fraction / multiplier / override value. */
+  passiveValue: number;
+  passiveDescription: string;
+}
+
 export type SupplyKind = 'shield-restore' | 'energy-refill' | 'damage-boost';
 
 /** Reserve supplies: permanent purchases whose charges auto-refill every mission (§3.7). */
@@ -65,6 +90,7 @@ export interface SupplyLoadout {
 
 /** Every equipped item at mission start. Recorded in replays (V2_HANDOFF.md §2.2). */
 export interface LoadoutSnapshot {
+  ship: ShipSpec;
   weapon: WeaponSpec | null;
   shield: ShieldSpec;
   generator: GeneratorSpec;
@@ -186,6 +212,12 @@ export interface EnemySpec {
   isBoss?: boolean;
   /** HP restored per tick; regenerates up to maxHp. Used by tutorial guardian. */
   regenPerTick?: number;
+  /** 0–1 probability of dealing critMult × damage on a shot. */
+  critChance: number;
+  /** 0–1 probability of dealing 0 damage on a shot (bolt still fires visually). */
+  missChance: number;
+  /** Damage multiplier on a critical hit. */
+  critMult: number;
 }
 
 export interface SpawnEvent {
@@ -197,13 +229,13 @@ export interface SpawnEvent {
   spacing: number;
 }
 
-export type StarFamily = 'boss-time' | 'hull-above' | 'all-kills' | 'shield-unbroken';
+export type StarFamily = 'boss-time' | 'finish-time' | 'hull-above' | 'all-kills' | 'shield-unbroken';
 
 /** Benchmark stars (§3.4): evaluated per run, several can be earned at once. */
 export interface StarSpec {
   id: string;
   family: StarFamily;
-  /** boss-time: max tick for the boss kill. hull-above: hull fraction. Others: unused (0). */
+  /** boss-time / finish-time: max tick. hull-above: hull fraction. Others: unused (0). */
   threshold: number;
 }
 
@@ -213,8 +245,16 @@ export interface ForcedLoadout {
   shieldId: string;
   generatorId: string;
   motorId: string;
+  shipId?: string;
   /** Pre-gifted supply charges for the mission (supplyId → count). */
   suppliesGifted?: Record<string, number>;
+}
+
+export interface NarratorEvent {
+  /** Fires once when timelineTick reaches this value. */
+  atTimelineTick: number;
+  /** Lines displayed one at a time; player clicks NEXT to advance. */
+  lines: string[];
 }
 
 export interface MissionSpec {
@@ -230,6 +270,8 @@ export interface MissionSpec {
   completionCoins: number;
   /** Total stars required to unlock this mission in the tree. */
   starGate: number;
+  /** Narrator popup events — time-based, pause the sim like pendingOffer. */
+  narratorEvents?: NarratorEvent[];
   /**
    * If set, the very first support call in this mission offers exactly these three card IDs
    * instead of the normal weighted draw. Used by tutorial missions to guarantee a teaching
@@ -260,6 +302,16 @@ export interface EnemyState {
   isBoss: boolean;
   /** HP restored per tick; 0 means no regen. */
   regenPerTick: number;
+  critChance: number;
+  missChance: number;
+  critMult: number;
+}
+
+export type ShotEventKind = 'player-crit' | 'player-miss' | 'enemy-crit' | 'enemy-miss';
+
+export interface ShotEvent {
+  kind: ShotEventKind;
+  enemyId?: number;
 }
 
 export interface ShipState {
@@ -329,4 +381,13 @@ export interface CoreState {
   consecutiveKills: number;
   /** Total enemy-group wipe events this run; used by WINDMILL counter card. */
   wavesClearedThisRun: number;
+  /** Crit/miss events from the current tick; cleared at the start of each tick; never hashed. */
+  pendingVisualEvents: ShotEvent[];
+  /**
+   * Lines of the active narrator popup (pauses ticks like pendingOffer).
+   * null = no popup. NOT included in hashCoreState (view-only display state).
+   */
+  pendingNarrator: string[] | null;
+  /** atTimelineTick values of narrator events already fired; prevents re-fire. Included in hash. */
+  firedNarratorTicks: number[];
 }

@@ -1,13 +1,13 @@
 import Phaser from 'phaser';
 import { resolveCardAction } from '../core/cards';
-import { LANE_LENGTH, MS_PER_TICK, TICKS_PER_SECOND } from '../core/constants';
+import { resolveNarrator } from '../core/narrator';
+import { LANE_LENGTH, MS_PER_TICK } from '../core/constants';
 import { buildMissionResult } from '../core/result';
 import { createCoreState } from '../core/state';
 import { applyBoost } from '../core/supplies';
 import { advanceTick } from '../core/tick';
-import { activeDamageMult, computeEffectiveStats } from '../core/stats';
 import type { CoreState, EnemyState } from '../core/types';
-import { ALL_CARDS } from '../data/cards';
+import { ALL_CARDS, cardById } from '../data/cards';
 import { missionById } from '../data/missions';
 import { getStoryLine } from '../data/story';
 import { resolveForcedLoadout } from '../data/loadouts';
@@ -18,11 +18,12 @@ import { CardOverlay } from './CardOverlay';
 import { CombatHud } from './CombatHud';
 import { NarratorBar } from './NarratorBar';
 import { SupplyButtons } from './SupplyButtons';
+import { cssColor, PALETTE } from './palette';
 import { fontPx, GAME_WIDTH, GAME_X, LEFT_PANEL_W, LOGICAL_HEIGHT, LOGICAL_WIDTH, px, RIGHT_PANEL_W, SHIP_GUN_X_OFFSET, SHIP_GUN_Y_OFFSET } from './layout';
-import { buildGameTextures, laserTextureForWeaponId, splitWeaponId, textureForEnemyKind, TEXTURE_KEYS } from './textures';
-import { drawThruster, renderGunIndicator, tickLaserBolts, tickMuzzleFlashes } from './shipRenderers';
+import { buildGameTextures, laserTextureForWeaponId, splitWeaponId, textureForEnemyKind, textureForShipId } from './textures';
+import { drawMotorHousing, drawThruster, renderGunIndicator, tickLaserBolts, tickMuzzleFlashes, THRUSTER_PARAMS } from './shipRenderers';
 import type { LaserBolt, MuzzleFlash } from './shipRenderers';
-import { UI_FONT } from './widgets';
+import { addModalBackdrop, addTextButton, drawDevBorder, UI_FONT } from './widgets';
 
 // Ship sits at the bottom-centre of the game field; enemies stream from the top.
 const SHIP_CENTER_X = GAME_X + Math.floor(GAME_WIDTH / 2); // 480 logical
@@ -68,6 +69,8 @@ export class CombatScene extends Phaser.Scene {
   private narrator!: NarratorBar;
   private shipSprite!: Phaser.GameObjects.Image;
   private thrusterGfx!: Phaser.GameObjects.Graphics;
+  private motorGfx!: Phaser.GameObjects.Graphics;
+  private motorLevel: 1 | 2 | 3 = 1;
   private thrusterPhase = 0;
   private enemySprites = new Map<number, Phaser.GameObjects.Image>();
   private previousDistances = new Map<number, number>();
@@ -79,7 +82,7 @@ export class CombatScene extends Phaser.Scene {
   private gunGfx!: Phaser.GameObjects.Graphics;
   private gunToggle = false;
   private hpBarGfx!: Phaser.GameObjects.Graphics;
-  private progressGfx!: Phaser.GameObjects.Graphics;
+
   private shieldGfx!: Phaser.GameObjects.Graphics;
   private accumulatorMs = 0;
   private finished = false;
@@ -94,8 +97,13 @@ export class CombatScene extends Phaser.Scene {
   private floatingTexts: FloatingText[] = [];
   private shieldPulseRings: ShieldPulseRing[] = [];
   private shieldHitFlash = 0;
-  /** DPS / kills / time labels in the right panel. */
-  private rightInfoTexts!: Phaser.GameObjects.Text[];
+  /** "CARDS" header — made visible after the first card is picked. */
+  private cardsHeader!: Phaser.GameObjects.Text;
+  /** Per-card name + description rows, appended as cards are picked. */
+  private cardEntries: Array<{ name: Phaser.GameObjects.Text; desc: Phaser.GameObjects.Text }> = [];
+  private exitConfirmObjects: Phaser.GameObjects.GameObject[] = [];
+  private narratorModalObjects: Phaser.GameObjects.GameObject[] = [];
+  private narratorLineIdx = 0;
   /** Coin reward per enemy id — stored at spawn, consumed on death. */
   private enemyCoinRewards = new Map<number, number>();
   /** HP snapshot from before the last tick — used to detect mid-tick hits for the hit burst. */
@@ -114,41 +122,57 @@ export class CombatScene extends Phaser.Scene {
       ? resolveForcedLoadout(mission.forcedLoadout)
       : buildLoadout(this.save);
     this.core = createCoreState(mission, loadout, seed, ALL_CARDS);
+    this.motorLevel = motorLevelFromId(loadout.motor.id);
 
     Sound.attach(this.sound);
     Sound.startMusic();
     buildGameTextures(this);
+    drawDevBorder(this, this.save);
 
-    // Left panel divider
+    // Panel dividers
     this.add.rectangle(px(LEFT_PANEL_W), 0, px(1), px(LOGICAL_HEIGHT), 0x333355).setOrigin(0, 0).setDepth(1);
-    // Right panel: progress bar strip replaces the divider line — drawn each frame by progressGfx
+    this.add.rectangle(px(GAME_X + GAME_WIDTH), 0, px(1), px(LOGICAL_HEIGHT), 0x333355).setOrigin(0, 0).setDepth(1);
 
-    // Right panel info: DPS / kills / time stacked at the bottom
+    // Right panel center X (reused for cards header, mission name, card entries)
     const infoX = px(LOGICAL_WIDTH - RIGHT_PANEL_W / 2);
-    const infoStyle = { fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: '#888899' };
-    this.rightInfoTexts = [
-      this.add.text(infoX, px(496), '', infoStyle).setOrigin(0.5, 0).setDepth(10),
-      this.add.text(infoX, px(510), '', infoStyle).setOrigin(0.5, 0).setDepth(10),
-      this.add.text(infoX, px(524), '', infoStyle).setOrigin(0.5, 0).setDepth(10),
-    ];
+
+    // "CARDS" header — shown after first pick
+    this.cardsHeader = this.add.text(infoX, px(22), '', {
+      fontFamily: UI_FONT,
+      fontSize: `${String(fontPx(9))}px`,
+      color: '#445566',
+      align: 'center',
+    }).setOrigin(0.5, 0).setDepth(10);
 
     this.hud = new CombatHud(this);
     this.cardOverlay = new CardOverlay(this, (action) => { this.handleCardAction(action); });
     this.supplyButtons = new SupplyButtons(this, this.core, (slot) => { this.handleBoostTap(slot); });
     this.narrator = new NarratorBar(this);
 
+    const exitX = px(LOGICAL_WIDTH - RIGHT_PANEL_W / 2);
+    const exitY = px(466);
+    const exitBg = this.add
+      .rectangle(exitX, exitY, px(RIGHT_PANEL_W - 20), px(30), 0x110a14, 0.9)
+      .setStrokeStyle(px(1), 0x443355)
+      .setDepth(10)
+      .setInteractive({ useHandCursor: true });
+    exitBg.on('pointerdown', () => { this.showExitConfirm(); });
+    this.add.text(exitX, exitY, 'EXIT', {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: '#665577',
+    }).setOrigin(0.5).setDepth(11);
+
     this.thrusterGfx = this.add.graphics().setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
+    this.motorGfx = this.add.graphics().setDepth(4).setBlendMode(Phaser.BlendModes.ADD);
     this.shieldGfx = this.add.graphics().setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
     this.shieldPulseGfx = this.add.graphics().setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
     this.muzzleFlashGfx = this.add.graphics().setDepth(6).setBlendMode(Phaser.BlendModes.ADD);
     this.gunGfx = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
     this.particleGfx = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
-    this.progressGfx = this.add.graphics().setDepth(2);
     this.hpBarGfx = this.add.graphics().setDepth(7);
     this.vignetteGfx = this.add.graphics().setDepth(9);
 
     this.shipSprite = this.add
-      .image(px(SHIP_CENTER_X), px(SHIP_Y), TEXTURE_KEYS.ship)
+      .image(px(SHIP_CENTER_X), px(SHIP_Y), textureForShipId(this.core.loadout.ship.id))
       .setBlendMode(Phaser.BlendModes.ADD)
       .setDepth(4);
 
@@ -173,6 +197,8 @@ export class CombatScene extends Phaser.Scene {
     this.floatingTexts = [];
     this.shieldPulseRings = [];
     this.stars = [];
+    this.exitConfirmObjects = [];
+    this.cardEntries = [];
     this.shieldHitFlash = 0;
     this.gunToggle = false;
     this.thrusterPhase = 0;
@@ -180,6 +206,8 @@ export class CombatScene extends Phaser.Scene {
     this.finished = false;
     this.narratorSupportCallShown = false;
     this.narratorBossShown = false;
+    this.narratorModalObjects = [];
+    this.narratorLineIdx = 0;
 
     // Mission name at top of right panel
     this.add
@@ -231,49 +259,6 @@ export class CombatScene extends Phaser.Scene {
     }
   }
 
-  private renderProgressOrBossBar(): void {
-    this.progressGfx.clear();
-    const boss = this.core.enemies.find((e) => e.isBoss);
-    if (boss !== undefined) {
-      this.renderBossBar(boss);
-    } else {
-      this.renderProgressBar();
-    }
-  }
-
-  private renderProgressBar(): void {
-    const lastEvent = this.core.mission.events[this.core.mission.events.length - 1];
-    if (lastEvent === undefined) return;
-    const totalTicks = lastEvent.atTimelineTick * 1.05;
-    const progress = Math.min(1, this.core.timelineTick / totalTicks);
-    // Vertical strip at the left edge of the right panel (replaces divider line)
-    const bx = px(LOGICAL_WIDTH - RIGHT_PANEL_W); const bw = px(4);
-    this.progressGfx.fillStyle(0x222244, 0.7);
-    this.progressGfx.fillRect(bx, 0, bw, px(LOGICAL_HEIGHT));
-    const filledH = progress * LOGICAL_HEIGHT;
-    this.progressGfx.fillStyle(PALETTE_CYAN, 0.65);
-    this.progressGfx.fillRect(bx, px(LOGICAL_HEIGHT - filledH), bw, px(filledH));
-    // Support call markers: horizontal ticks crossing the bar
-    for (const tick of this.core.mission.supportCallTicks) {
-      const frac = Math.min(1, tick / totalTicks);
-      const ty = px(LOGICAL_HEIGHT - LOGICAL_HEIGHT * frac);
-      this.progressGfx.fillStyle(PALETTE_AMBER, 0.9);
-      this.progressGfx.fillRect(bx - px(2), ty - px(1), bw + px(4), px(2));
-    }
-  }
-
-  private renderBossBar(boss: EnemyState): void {
-    const ratio = boss.hp / boss.maxHp;
-    const bx = px(LOGICAL_WIDTH - RIGHT_PANEL_W); const bw = px(4);
-    this.progressGfx.fillStyle(0x2a1a00, 0.8);
-    this.progressGfx.fillRect(bx, 0, bw, px(LOGICAL_HEIGHT));
-    const filledH = ratio * LOGICAL_HEIGHT;
-    this.progressGfx.fillStyle(0xff6600, 0.9);
-    this.progressGfx.fillRect(bx, px(LOGICAL_HEIGHT - filledH), bw, px(filledH));
-    // Bright leading edge at top of fill
-    this.progressGfx.fillStyle(0xffaa22, 1.0);
-    this.progressGfx.fillRect(bx, px(LOGICAL_HEIGHT - filledH), bw, px(2));
-  }
 
   private renderShield(): void {
     this.shieldGfx.clear();
@@ -417,7 +402,8 @@ export class CombatScene extends Phaser.Scene {
 
     // Detect events and trigger visual/audio feedback
     const shotsFired = this.core.stats.shotsFired - shotsBefore;
-    for (let i = 0; i < shotsFired; i++) this.spawnLaserBolt();
+    const playerBoltKind = this.resolvePlayerBoltKind();
+    for (let i = 0; i < shotsFired; i++) this.spawnLaserBolt(playerBoltKind);
     if (shotsFired > 0) Sound.fire();
     if (this.core.stats.kills > killsBefore) Sound.kill();
 
@@ -431,19 +417,37 @@ export class CombatScene extends Phaser.Scene {
       Sound.shieldPulse();
       this.shieldPulseRings.push({ radius: px(28), alpha: 0.75 });
     }
+    const enemyMissIds = new Set(
+      this.core.pendingVisualEvents
+        .filter((e) => e.kind === 'enemy-miss' && e.enemyId !== undefined)
+        .map((e) => e.enemyId as number),
+    );
+    const enemyCritIds = new Set(
+      this.core.pendingVisualEvents
+        .filter((e) => e.kind === 'enemy-crit' && e.enemyId !== undefined)
+        .map((e) => e.enemyId as number),
+    );
     for (const e of this.core.enemies) {
       const before = timersBefore.get(e.id);
-      if (before !== undefined && e.shootTimer > before) this.spawnEnemyBolt(e);
+      if (before !== undefined && e.shootTimer > before) {
+        const outcome = enemyMissIds.has(e.id) ? 'miss' : enemyCritIds.has(e.id) ? 'crit' : 'normal';
+        this.spawnEnemyBolt(e, outcome);
+        if (outcome === 'miss') this.spawnDeflectionSpark();
+      }
     }
 
     // Decay flash
     this.shieldHitFlash = Math.max(0, this.shieldHitFlash - SHIELD_FLASH_DECAY * deltaMs / 1000);
 
     this.syncCardOverlay();
+    this.syncNarratorModal();
     this.syncNarrator();
     const alpha = this.core.pendingOffer !== null ? 1 : this.accumulatorMs / MS_PER_TICK;
+    const boss = this.core.enemies.find((e) => e.isBoss) ?? null;
+    const lastEvent = this.core.mission.events[this.core.mission.events.length - 1];
+    const totalTicks = lastEvent !== undefined ? lastEvent.atTimelineTick * 1.05 : 1;
+    const progressFrac = boss === null ? Math.min(1, this.core.timelineTick / totalTicks) : 0;
     this.updateStars(deltaMs);
-    this.renderProgressOrBossBar();
     this.renderThruster();
     this.renderShield();
     this.renderShieldPulseRings(deltaMs);
@@ -457,17 +461,44 @@ export class CombatScene extends Phaser.Scene {
     this.updateEnemyBolts(deltaMs);
     this.updateBurstParticles(deltaMs);
     this.updateFloatingTexts(deltaMs);
-    this.hud.update(this.core);
-    this.updateRightInfo();
+    this.hud.update(this.core, boss, progressFrac);
     this.supplyButtons.update(this.core);
     this.narrator.update(deltaMs);
     this.maybeFinish();
   }
 
   private handleCardAction(action: number): void {
+    const prevCount = this.core.pickedCardIds.length;
     resolveCardAction(this.core, action);
+    if (this.core.pickedCardIds.length > prevCount) {
+      const newId = this.core.pickedCardIds[this.core.pickedCardIds.length - 1];
+      if (newId !== undefined) {
+        if (this.cardEntries.length === 0) this.cardsHeader.setText('CARDS');
+        this.addCardToDisplay(cardById(newId));
+      }
+    }
     if (this.core.pendingOffer === null) this.cardOverlay.hide();
     else this.cardOverlay.show(this.core.pendingOffer, this.core);
+  }
+
+  private addCardToDisplay(card: ReturnType<typeof cardById>): void {
+    const infoX = px(LOGICAL_WIDTH - RIGHT_PANEL_W / 2);
+    const nameY = 38 + this.cardEntries.length * 42;
+    const nameText = this.add.text(infoX, px(nameY), card.name, {
+      fontFamily: UI_FONT,
+      fontSize: `${String(fontPx(12))}px`,
+      color: cardSystemColor(card.system),
+      align: 'center',
+      wordWrap: { width: px(RIGHT_PANEL_W - 20) },
+    }).setOrigin(0.5, 0).setDepth(10);
+    const descText = this.add.text(infoX, px(nameY + 16), card.description, {
+      fontFamily: UI_FONT,
+      fontSize: `${String(fontPx(10))}px`,
+      color: '#778899',
+      align: 'center',
+      wordWrap: { width: px(RIGHT_PANEL_W - 20) },
+    }).setOrigin(0.5, 0).setDepth(10);
+    this.cardEntries.push({ name: nameText, desc: descText });
   }
 
   private handleBoostTap(slot: number): void {
@@ -481,6 +512,63 @@ export class CombatScene extends Phaser.Scene {
     if (this.core.pendingOffer !== null && !this.cardOverlay.visible) {
       this.cardOverlay.show(this.core.pendingOffer, this.core);
     }
+  }
+
+  private syncNarratorModal(): void {
+    const lines = this.core.pendingNarrator;
+    if (lines !== null && this.narratorModalObjects.length === 0) {
+      this.narratorLineIdx = 0;
+      this.showNarratorLine(lines, 0);
+    }
+    if (lines === null && this.narratorModalObjects.length > 0) {
+      this.hideNarratorModal();
+    }
+  }
+
+  private showNarratorLine(lines: string[], idx: number): void {
+    this.hideNarratorModal();
+    const depth = 35;
+    const panelW = 520;
+    const panelH = 170;
+    const cx = LOGICAL_WIDTH / 2;
+    const cy = LOGICAL_HEIGHT / 2;
+    this.narratorModalObjects.push(addModalBackdrop(this, depth));
+    this.narratorModalObjects.push(
+      this.add.rectangle(px(cx), px(cy), px(panelW), px(panelH), 0x080820, 0.97)
+        .setStrokeStyle(px(1), 0x334466)
+        .setDepth(depth + 1),
+    );
+    this.narratorModalObjects.push(
+      this.add.text(px(cx + panelW / 2 - 8), px(cy - panelH / 2 + 7), `${String(idx + 1)}/${String(lines.length)}`, {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`, color: '#444466',
+      }).setOrigin(1, 0).setDepth(depth + 2),
+    );
+    this.narratorModalObjects.push(
+      this.add.text(px(cx), px(cy - 22), lines[idx] ?? '', {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(16))}px`,
+        color: '#ffaa22', wordWrap: { width: px(panelW - 48) }, align: 'center',
+      }).setOrigin(0.5).setDepth(depth + 2),
+    );
+    const isLast = idx >= lines.length - 1;
+    this.narratorModalObjects.push(
+      addTextButton(this, {
+        x: px(cx), y: px(cy + 54), label: isLast ? 'CONTINUE' : 'NEXT →',
+        color: 0x00ffee, size: 16,
+        onClick: () => {
+          if (isLast) {
+            resolveNarrator(this.core);
+          } else {
+            this.narratorLineIdx = idx + 1;
+            this.showNarratorLine(lines, this.narratorLineIdx);
+          }
+        },
+      }).setDepth(depth + 2),
+    );
+  }
+
+  private hideNarratorModal(): void {
+    this.narratorModalObjects.forEach((o) => { o.destroy(); });
+    this.narratorModalObjects = [];
   }
 
   private syncNarrator(): void {
@@ -498,11 +586,15 @@ export class CombatScene extends Phaser.Scene {
   }
 
   private renderThruster(): void {
-    const flicker = 0.55 + 0.45 * Math.sin(this.thrusterPhase * 0.014);
-    drawThruster(this.thrusterGfx, px(SHIP_CENTER_X) + this.driftX(), px(SHIP_Y + 24) + this.bobY(), px(10 + 10 * flicker), flicker);
+    const p = THRUSTER_PARAMS[this.motorLevel];
+    const flicker = p.minBright + p.range * Math.sin(this.thrusterPhase * p.speed);
+    const cx = px(SHIP_CENTER_X) + this.driftX();
+    const baseY = px(SHIP_Y + 24) + this.bobY();
+    drawThruster(this.thrusterGfx, cx, baseY, px(p.hBase + p.hScale * flicker), { flicker, motorLevel: this.motorLevel });
+    drawMotorHousing(this.motorGfx, cx, px(SHIP_Y) + this.bobY(), this.motorLevel);
   }
 
-  private spawnLaserBolt(): void {
+  private spawnLaserBolt(boltKind: 'normal' | 'crit' | 'miss' = 'normal'): void {
     const weapon = this.core.loadout.weapon;
     if (weapon === null) return;
     const isNova = weapon.kind === 'nova';
@@ -527,8 +619,34 @@ export class CombatScene extends Phaser.Scene {
       .setBlendMode(Phaser.BlendModes.ADD)
       .setScale(boltScale)
       .setDepth(5);
+    if (boltKind === 'crit') sprite.setTint(0xffffff);
+    else if (boltKind === 'miss') { sprite.setTint(0x445566); sprite.setAlpha(0.35); }
     this.laserBolts.push({ sprite, vy: (targetY - gy) / LASER_TRAVEL_MS, targetY });
     this.muzzleFlashes.push({ x: gx, y: gy, life: MUZZLE_FLASH_MS });
+  }
+
+  private resolvePlayerBoltKind(): 'normal' | 'crit' | 'miss' {
+    const events = this.core.pendingVisualEvents.filter(
+      (e) => e.kind === 'player-crit' || e.kind === 'player-miss',
+    );
+    if (events.some((e) => e.kind === 'player-crit')) return 'crit';
+    if (events.length > 0 && events.every((e) => e.kind === 'player-miss')) return 'miss';
+    return 'normal';
+  }
+
+  private spawnDeflectionSpark(): void {
+    const cx = px(SHIP_CENTER_X) + this.driftX();
+    const cy = px(SHIP_Y - 6) + this.bobY();
+    for (let i = 0; i < 5; i++) {
+      const angle = (i / 5) * Math.PI * 2 + i * 0.2;
+      const speed = px(35 + i * 12);
+      this.burstParticles.push({
+        x: cx, y: cy,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        color: 0x44aaff, life: 200, maxLife: 200,
+      });
+    }
   }
 
   private renderGuns(): void {
@@ -544,12 +662,14 @@ export class CombatScene extends Phaser.Scene {
     this.laserBolts = tickLaserBolts(this.laserBolts, deltaMs);
   }
 
-  private spawnEnemyBolt(enemy: EnemyState): void {
+  private spawnEnemyBolt(enemy: EnemyState, outcome: 'normal' | 'crit' | 'miss' = 'normal'): void {
     const startY = this.laneToY(enemy.distance) + px(12);
     const targetY = px(SHIP_Y - 20);
     if (startY >= targetY) return;
+    const color = outcome === 'crit' ? 0xff9900 : outcome === 'miss' ? 0x334455 : 0xff6600;
+    const alpha = outcome === 'miss' ? 0.35 : 0.9;
     const rect = this.add
-      .rectangle(px(SHIP_CENTER_X), startY, px(3), px(8), 0xff6600, 0.9)
+      .rectangle(px(SHIP_CENTER_X), startY, px(3), px(8), color, alpha)
       .setDepth(5)
       .setBlendMode(Phaser.BlendModes.ADD);
     const travelMs = 240;
@@ -626,8 +746,8 @@ export class CombatScene extends Phaser.Scene {
   }
 
   private drawEnemyHpBar(sx: number, sy: number, frac: number): void {
-    const bw = px(22); const bh = px(3);
-    const bx = sx - bw / 2; const by = sy - px(20);
+    const bw = px(32); const bh = px(3);
+    const bx = sx - bw / 2; const by = sy - px(34);
     this.hpBarGfx.fillStyle(0x111122, 0.8);
     this.hpBarGfx.fillRect(bx, by, bw, bh);
     const col = frac > 0.55 ? 0x22ee44 : frac > 0.25 ? 0xffaa00 : 0xff2200;
@@ -656,6 +776,11 @@ export class CombatScene extends Phaser.Scene {
       this.tweens.add({ targets: sprite, angle: 360, duration: 5000, repeat: -1, ease: 'Linear', delay });
     } else if (enemy.kind === 'tank') {
       this.tweens.add({ targets: sprite, angle: 360, duration: 3200, repeat: -1, ease: 'Linear', delay });
+    } else if (enemy.kind === 'turret') {
+      // Turret oscillates but never rotates fully — it's a stationary emplacement.
+      this.tweens.add({ targets: sprite, scaleX: 1.08, scaleY: 1.08, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut', delay });
+    } else if (enemy.kind === 'kamikaze') {
+      this.tweens.add({ targets: sprite, angle: 360, duration: 600, repeat: -1, ease: 'Linear', delay });
     } else {
       this.tweens.add({ targets: sprite, angle: 360, duration: 2400, repeat: -1, ease: 'Linear', delay });
     }
@@ -668,14 +793,6 @@ export class CombatScene extends Phaser.Scene {
     return shipY - (distance / LANE_LENGTH) * (shipY - topY);
   }
 
-  private updateRightInfo(): void {
-    const stats = computeEffectiveStats(this.core.loadout, this.core.modifiers, activeDamageMult(this.core));
-    const dps = stats.weaponEquipped ? (stats.weaponDamage / stats.weaponInterval) * TICKS_PER_SECOND : 0;
-    const time = (this.core.tick / TICKS_PER_SECOND).toFixed(1);
-    this.rightInfoTexts[0]?.setText(`DPS ${dps.toFixed(1)}`);
-    this.rightInfoTexts[1]?.setText(`k${String(this.core.stats.kills)}`);
-    this.rightInfoTexts[2]?.setText(`t ${time}s`);
-  }
 
   private maybeFinish(): void {
     if (this.core.status === 'running' || this.finished) return;
@@ -689,6 +806,30 @@ export class CombatScene extends Phaser.Scene {
       this.playDeathAnimation();
       this.time.delayedCall(1400, () => { this.scene.start('ResultScene', { result, newStarIds }); });
     }
+  }
+
+  private showExitConfirm(): void {
+    if (this.exitConfirmObjects.length > 0) return;
+    const cx = px(LOGICAL_WIDTH / 2);
+    const cy = px(LOGICAL_HEIGHT / 2);
+    const backdrop = addModalBackdrop(this, 40);
+    const title = this.add.text(cx, cy - px(35), 'ABANDON MISSION?', {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(20))}px`, color: '#ddeeff',
+    }).setOrigin(0.5).setDepth(41);
+    const confirmBtn = addTextButton(this, {
+      x: cx - px(60), y: cy + px(20), label: 'ABANDON', color: 0xff4444, size: 13,
+      onClick: () => { this.exitConfirmObjects = []; this.scene.start('HubScene'); },
+    }).setDepth(41);
+    const cancelBtn = addTextButton(this, {
+      x: cx + px(60), y: cy + px(20), label: 'CANCEL', color: 0xffaa22, size: 13,
+      onClick: () => { this.hideExitConfirm(); },
+    }).setDepth(41);
+    this.exitConfirmObjects = [backdrop, title, confirmBtn, cancelBtn];
+  }
+
+  private hideExitConfirm(): void {
+    this.exitConfirmObjects.forEach((obj) => { obj.destroy(); });
+    this.exitConfirmObjects = [];
   }
 
   private playDeathAnimation(): void {
@@ -706,9 +847,6 @@ export class CombatScene extends Phaser.Scene {
   }
 }
 
-// Colour constants for thruster (avoid palette import cycle with Graphics API)
-const PALETTE_AMBER = 0xffaa22;
-const PALETTE_CYAN = 0x00eeff;
 
 function randomSeed(): number {
   return crypto.getRandomValues(new Uint32Array(1))[0] ?? 1;
@@ -717,4 +855,20 @@ function randomSeed(): number {
 /** Glow/size multiplier for a laser bolt: level 1 = 0.85×, level 5 = 1.13×. */
 function boltScaleForLevel(level: number): number {
   return 0.8 + level * 0.06;
+}
+
+function motorLevelFromId(motorId: string): 1 | 2 | 3 {
+  const last = motorId.at(-1);
+  if (last === '3') return 3;
+  if (last === '2') return 2;
+  return 1;
+}
+
+/** Maps a card's system to its palette color string for the name label. */
+function cardSystemColor(system: string): string {
+  if (system === 'weapon') return cssColor(PALETTE.weaponCyan);
+  if (system === 'shield') return cssColor(PALETTE.shieldBlue);
+  if (system === 'generator') return cssColor(PALETTE.generatorAmber);
+  if (system === 'motor') return cssColor(PALETTE.motorMagenta);
+  return '#aabbcc';
 }

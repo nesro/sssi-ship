@@ -14,7 +14,12 @@ const GLOW_PASSES = [
 ];
 
 export const TEXTURE_KEYS = {
-  ship: 'ship',
+  ship: 'ship', // interceptor (default / backward compat)
+  shipInterceptor: 'ship-interceptor-tex',
+  shipTanker: 'ship-tanker-tex',
+  shipSalvager: 'ship-salvager-tex',
+  shipReactor: 'ship-reactor-tex',
+  shipWarship: 'ship-warship-tex',
   fodder: 'enemy-fodder',
   striker: 'enemy-striker',
   tank: 'enemy-tank',
@@ -22,6 +27,8 @@ export const TEXTURE_KEYS = {
   blocker: 'enemy-blocker',
   boss: 'enemy-boss',
   guardian: 'enemy-guardian',
+  turret: 'enemy-turret',
+  kamikaze: 'enemy-kamikaze',
   // Projectiles — one per weapon kind+tier
   laserPulse1: 'laser-pulse-1',
   laserPulse2: 'laser-pulse-2',
@@ -40,17 +47,33 @@ export const TEXTURE_KEYS = {
   iconNova2: 'icon-nova-2',
 } as const;
 
+/** Maps a ship spec id to its texture key (all ships share same bounding box and gun anchor). */
+export function textureForShipId(shipId: string): string {
+  const map: Record<string, string> = {
+    'ship-interceptor': TEXTURE_KEYS.shipInterceptor,
+    'ship-tanker': TEXTURE_KEYS.shipTanker,
+    'ship-salvager': TEXTURE_KEYS.shipSalvager,
+    'ship-reactor': TEXTURE_KEYS.shipReactor,
+    'ship-warship': TEXTURE_KEYS.shipWarship,
+  };
+  return map[shipId] ?? TEXTURE_KEYS.ship;
+}
+
 /** Maps a core enemy kind to its texture; logs a warning for unknown kinds. */
 export function textureForEnemyKind(kind: string, isBoss: boolean, blocks: boolean): string {
   if (isBoss) return TEXTURE_KEYS.boss;
-  if (blocks) return TEXTURE_KEYS.blocker;
   const known: Record<string, string> = {
     fodder: TEXTURE_KEYS.fodder,
     striker: TEXTURE_KEYS.striker,
     tank: TEXTURE_KEYS.tank,
     swarm: TEXTURE_KEYS.swarm,
+    blocker: TEXTURE_KEYS.blocker,
     guardian: TEXTURE_KEYS.guardian,
+    turret: TEXTURE_KEYS.turret,
+    kamikaze: TEXTURE_KEYS.kamikaze,
   };
+  // Unnamed blockers (kind not in map) fall back to the blocker texture.
+  if (blocks && !(kind in known)) return TEXTURE_KEYS.blocker;
   const texture = known[kind];
   if (texture === undefined) {
     console.warn(`Unknown enemy kind "${kind}" — falling back to fodder texture`);
@@ -102,72 +125,151 @@ export function iconTextureForWeaponId(weaponId: string): string {
 type ShapePainter = (g: Phaser.GameObjects.Graphics, lineWidth: number, alpha: number) => void;
 
 export function buildGameTextures(scene: Phaser.Scene): void {
-  if (scene.textures.exists(TEXTURE_KEYS.ship)) return; // textures are global; bake once
-  buildShipTexture(scene);
+  if (scene.textures.exists(TEXTURE_KEYS.shipInterceptor)) return; // textures are global; bake once
+  buildShipTextures(scene);
   buildEnemyTextures(scene);
   buildProjectileTextures(scene);
   buildWeaponIconTextures(scene);
 }
 
-function buildShipTexture(scene: Phaser.Scene): void {
-  bake(scene, TEXTURE_KEYS.ship, px(48), px(52), (g, w, a) => {
+// All ships: 48×52 logical px. Gun barrels at x=7 and x=41, muzzle tips at y=16.
+// This keeps SHIP_GUN_X_OFFSET=17 and SHIP_GUN_Y_OFFSET=10 valid for every skin.
+/** Standard dual gun barrels at x=7 and x=41, muzzle tips at y=16. Used by 4 of 5 ships. */
+function drawStandardGunBarrels(g: Phaser.GameObjects.Graphics): void {
+  g.lineBetween(px(7), px(36), px(7), px(16));
+  g.lineBetween(px(5), px(16), px(9), px(16));
+  g.lineBetween(px(41), px(36), px(41), px(16));
+  g.lineBetween(px(39), px(16), px(43), px(16));
+}
+
+function buildShipTextures(scene: Phaser.Scene): void {
+  // Interceptor — agile triangle, cyan (also kept as legacy 'ship' key)
+  const interceptorPainter = (g: Phaser.GameObjects.Graphics, w: number, a: number): void => {
     g.lineStyle(w, PALETTE.weaponCyan, a);
     g.strokeTriangle(px(24), px(4), px(8), px(48), px(40), px(48));
     g.lineBetween(px(8), px(32), px(1), px(48));
     g.lineBetween(px(40), px(32), px(47), px(48));
-    // Left gun barrel (muzzle at y=16, matches SHIP_GUN_Y_OFFSET = 10 from origin y=26)
-    g.lineBetween(px(7), px(36), px(7), px(16));
-    g.lineBetween(px(5), px(16), px(9), px(16));
-    // Right gun barrel
-    g.lineBetween(px(41), px(36), px(41), px(16));
-    g.lineBetween(px(39), px(16), px(43), px(16));
+    drawStandardGunBarrels(g);
     g.strokeCircle(px(24), px(22), px(4));
     g.lineBetween(px(18), px(30), px(16), px(48));
     g.lineBetween(px(30), px(30), px(32), px(48));
+  };
+  bake(scene, TEXTURE_KEYS.ship, px(48), px(52), interceptorPainter);
+  bake(scene, TEXTURE_KEYS.shipInterceptor, px(48), px(52), interceptorPainter);
+
+  // Tanker — wide armoured hull, magenta
+  bake(scene, TEXTURE_KEYS.shipTanker, px(48), px(52), (g, w, a) => {
+    g.lineStyle(w, PALETTE.motorMagenta, a);
+    g.strokeTriangle(px(24), px(6), px(10), px(28), px(38), px(28));
+    g.strokeRect(px(4), px(28), px(40), px(18));
+    g.lineBetween(px(0), px(28), px(0), px(48));
+    g.lineBetween(px(48), px(28), px(48), px(48));
+    g.lineBetween(px(0), px(48), px(4), px(46));
+    g.lineBetween(px(48), px(48), px(44), px(46));
+    drawStandardGunBarrels(g);
+    g.lineBetween(px(14), px(28), px(14), px(46));
+    g.lineBetween(px(34), px(28), px(34), px(46));
+  });
+
+  // Salvager — asymmetric, amber (claw on the left)
+  bake(scene, TEXTURE_KEYS.shipSalvager, px(48), px(52), (g, w, a) => {
+    g.lineStyle(w, PALETTE.generatorAmber, a);
+    g.strokeTriangle(px(24), px(4), px(14), px(48), px(36), px(48));
+    drawStandardGunBarrels(g);
+    // Claw arm on left
+    g.lineBetween(px(14), px(30), px(2), px(20));
+    g.lineBetween(px(2), px(20), px(0), px(12));
+    g.lineBetween(px(2), px(20), px(6), px(14));
+    // Cargo pod on right
+    g.strokeRect(px(36), px(30), px(10), px(14));
+    g.lineBetween(px(36), px(37), px(46), px(37));
+  });
+
+  // Reactor — narrow with large energy ring, shield blue
+  bake(scene, TEXTURE_KEYS.shipReactor, px(48), px(52), (g, w, a) => {
+    g.lineStyle(w, PALETTE.shieldBlue, a);
+    g.strokeTriangle(px(24), px(4), px(16), px(48), px(32), px(48));
+    g.strokeCircle(px(24), px(28), px(10));
+    g.strokeCircle(px(24), px(28), px(4));
+    drawStandardGunBarrels(g);
+    g.lineBetween(px(14), px(28), px(8), px(28));
+    g.lineBetween(px(34), px(28), px(40), px(28));
+  });
+
+  // Warship — swept angular wings, orange/red
+  bake(scene, TEXTURE_KEYS.shipWarship, px(48), px(52), (g, w, a) => {
+    g.lineStyle(w, PALETTE.enemyOrange, a);
+    g.strokeTriangle(px(24), px(4), px(20), px(48), px(28), px(48));
+    // Forward-swept wings
+    g.lineBetween(px(20), px(32), px(2), px(44));
+    g.lineBetween(px(2), px(44), px(4), px(48));
+    g.lineBetween(px(4), px(48), px(20), px(40));
+    g.lineBetween(px(28), px(32), px(46), px(44));
+    g.lineBetween(px(46), px(44), px(44), px(48));
+    g.lineBetween(px(44), px(48), px(28), px(40));
+    // Wider gun mounts
+    g.lineBetween(px(7), px(38), px(7), px(16));
+    g.lineBetween(px(4), px(16), px(10), px(16));
+    g.lineBetween(px(41), px(38), px(41), px(16));
+    g.lineBetween(px(38), px(16), px(44), px(16));
+    g.strokeRect(px(5), px(32), px(5), px(8));
+    g.strokeRect(px(38), px(32), px(5), px(8));
   });
 }
 
 function buildEnemyTextures(scene: Phaser.Scene): void {
-  bake(scene, TEXTURE_KEYS.fodder, px(28), px(28), (g, w, a) => {
+  bake(scene, TEXTURE_KEYS.fodder, px(48), px(48), (g, w, a) => {
     g.lineStyle(w, PALETTE.enemyRed, a);
-    strokeDiamond(g, px(14), px(14), px(9));
+    strokeDiamond(g, px(24), px(24), px(18));
   });
-  bake(scene, TEXTURE_KEYS.striker, px(32), px(32), (g, w, a) => {
+  bake(scene, TEXTURE_KEYS.striker, px(52), px(52), (g, w, a) => {
     g.lineStyle(w, PALETTE.enemyOrange, a);
-    traceStar(g, px(16), px(16), px(14), px(6));
+    traceStar(g, px(26), px(26), px(22), px(9));
   });
-  bake(scene, TEXTURE_KEYS.tank, px(36), px(36), (g, w, a) => {
+  bake(scene, TEXTURE_KEYS.tank, px(56), px(56), (g, w, a) => {
     g.lineStyle(w, PALETTE.enemyRed, a);
-    g.strokeRect(px(8), px(8), px(20), px(20));
-    g.lineBetween(px(18), px(5), px(18), px(31));
-    g.lineBetween(px(5), px(18), px(31), px(18));
+    g.strokeRect(px(10), px(10), px(36), px(36));
+    g.lineBetween(px(28), px(7), px(28), px(49));
+    g.lineBetween(px(7), px(28), px(49), px(28));
   });
-  bake(scene, TEXTURE_KEYS.swarm, px(16), px(16), (g, w, a) => {
+  bake(scene, TEXTURE_KEYS.swarm, px(30), px(30), (g, w, a) => {
     g.lineStyle(w, PALETTE.enemyOrange, a);
-    strokeDiamond(g, px(8), px(8), px(4));
+    strokeDiamond(g, px(15), px(15), px(10));
   });
-  bake(scene, TEXTURE_KEYS.blocker, px(44), px(44), (g, w, a) => {
+  bake(scene, TEXTURE_KEYS.blocker, px(64), px(64), (g, w, a) => {
     g.lineStyle(w, PALETTE.enemyOrange, a);
-    g.strokeRect(px(8), px(8), px(28), px(28));
-    strokeDiamond(g, px(22), px(22), px(14));
+    g.strokeRect(px(9), px(9), px(46), px(46));
+    strokeDiamond(g, px(32), px(32), px(22));
   });
-  bake(scene, TEXTURE_KEYS.guardian, px(32), px(32), (g, w, a) => {
+  bake(scene, TEXTURE_KEYS.guardian, px(52), px(52), (g, w, a) => {
     g.lineStyle(w, PALETTE.shieldBlue, a);
-    g.strokeCircle(px(16), px(16), px(12));
-    g.strokeCircle(px(16), px(16), px(6));
-    g.lineBetween(px(16), px(4), px(16), px(28));
-    g.lineBetween(px(4), px(16), px(28), px(16));
+    g.strokeCircle(px(26), px(26), px(20));
+    g.strokeCircle(px(26), px(26), px(9));
+    g.lineBetween(px(26), px(6), px(26), px(46));
+    g.lineBetween(px(6), px(26), px(46), px(26));
   });
-  bake(scene, TEXTURE_KEYS.boss, px(72), px(72), (g, w, a) => {
+  bake(scene, TEXTURE_KEYS.turret, px(60), px(60), (g, w, a) => {
+    g.lineStyle(w, 0xcc8800, a);
+    g.strokeRect(px(12), px(24), px(36), px(27));
+    g.lineBetween(px(30), px(3), px(30), px(24));
+    g.lineBetween(px(21), px(12), px(39), px(12));
+    g.strokeCircle(px(30), px(34), px(8));
+  });
+  bake(scene, TEXTURE_KEYS.kamikaze, px(40), px(40), (g, w, a) => {
+    g.lineStyle(w, 0xff2255, a);
+    traceStar(g, px(20), px(20), px(17), px(7));
+    g.strokeCircle(px(20), px(20), px(5));
+  });
+  bake(scene, TEXTURE_KEYS.boss, px(96), px(96), (g, w, a) => {
     g.lineStyle(w, PALETTE.enemyRed, a);
-    strokeDiamond(g, px(36), px(36), px(30));
-    g.strokeCircle(px(36), px(36), px(16));
-    g.lineBetween(px(36), px(20), px(36), px(52));
-    g.lineBetween(px(20), px(36), px(52), px(36));
-    g.lineBetween(px(36), px(6), px(36), px(2));
-    g.lineBetween(px(36), px(66), px(36), px(70));
-    g.lineBetween(px(6), px(36), px(2), px(36));
-    g.lineBetween(px(66), px(36), px(70), px(36));
+    strokeDiamond(g, px(48), px(48), px(40));
+    g.strokeCircle(px(48), px(48), px(22));
+    g.lineBetween(px(48), px(27), px(48), px(69));
+    g.lineBetween(px(27), px(48), px(69), px(48));
+    g.lineBetween(px(48), px(8), px(48), px(3));
+    g.lineBetween(px(48), px(88), px(48), px(93));
+    g.lineBetween(px(8), px(48), px(3), px(48));
+    g.lineBetween(px(88), px(48), px(93), px(48));
   });
 }
 

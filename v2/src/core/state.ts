@@ -1,4 +1,4 @@
-import { REROLLS_PER_MISSION, SHIP_MAX_HULL } from './constants';
+import { REROLLS_PER_MISSION } from './constants';
 import { mulberry32 } from './rng';
 import { computeEffectiveStats, defaultModifiers } from './stats';
 import type { CardDefinition, CoreState, LoadoutSnapshot, MissionSpec } from './types';
@@ -20,8 +20,8 @@ export function createCoreState(
     nextEnemyId: 1,
     status: 'running',
     ship: {
-      hull: SHIP_MAX_HULL,
-      maxHull: SHIP_MAX_HULL,
+      hull: loadout.ship.hull,
+      maxHull: loadout.ship.hull,
       // Start empty: the player watches the generator fill energy and then pulse the
       // shield up step by step. Starting full would hide the core mechanic entirely.
       shield: 0,
@@ -53,5 +53,8 @@ export function createCoreState(
     spawnedCount: 0,
     consecutiveKills: 0,
     wavesClearedThisRun: 0,
+    pendingVisualEvents: [],
+    pendingNarrator: null,
+    firedNarratorTicks: [],
   };
 }

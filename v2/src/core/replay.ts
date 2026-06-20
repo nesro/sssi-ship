@@ -1,5 +1,6 @@
 import { CARD_ACTION_SKIP } from './constants';
 import { resolveCardAction } from './cards';
+import { resolveNarrator } from './narrator';
 import { createCoreState } from './state';
 import { applyBoost } from './supplies';
 import { advanceTick } from './tick';
@@ -59,6 +60,7 @@ export function runMission(
   const state = createCoreState(mission, loadout, seed, policies.cardPool ?? []);
 
   while (state.status === 'running' && state.tick < maxTicks) {
+    if (state.pendingNarrator !== null) { resolveNarrator(state); continue; }
     if (state.pendingOffer !== null) {
       resolveCardAction(state, pickCard(state, state.pendingOffer));
       continue;
@@ -135,6 +137,7 @@ export function hashCoreState(state: CoreState): string {
     shieldBroke: state.shieldBroke,
     bossKillTick: state.bossKillTick,
     spawnedCount: state.spawnedCount,
+    firedNarratorTicks: state.firedNarratorTicks,
     enemies: state.enemies.map((e) => ({ id: e.id, distance: e.distance, hp: e.hp })),
   });
   let hash = 0x811c9dc5;

@@ -28,13 +28,26 @@ export function fireShipWeapon(state: CoreState, stats: EffectiveStats): void {
 
   const effectiveTargets = computeTargetCount(state, stats, mods);
   const targets = selectTargets(state.enemies, effectiveTargets, mods.haywireTargeting, state.rng);
+  const weapon = state.loadout.weapon;
 
+  let hitCount = 0;
   targets.forEach((enemy, index) => {
     const falloff = Math.pow(stats.weaponFalloff, index);
     const situationalMult = computeSituationalMult(enemy, mods);
-    const finalDamage = applyRandomness(shotDamage * falloff * situationalMult, mods, state.rng);
+    const preCritDamage = shotDamage * falloff * situationalMult;
+    const critMult = stats.shipCritMultOverride !== null ? stats.shipCritMultOverride : (weapon?.critMult ?? 2);
+    const { damage: rolledDamage, wasMiss, wasCrit } = weapon !== null
+      ? rollShotOutcome(weapon.missChance, weapon.critChance, critMult, preCritDamage, state.rng)
+      : { damage: preCritDamage, wasMiss: false, wasCrit: false };
+    if (wasMiss) {
+      state.pendingVisualEvents.push({ kind: 'player-miss', enemyId: enemy.id });
+      return;
+    }
+    if (wasCrit) state.pendingVisualEvents.push({ kind: 'player-crit', enemyId: enemy.id });
+    const finalDamage = applyRandomness(rolledDamage, mods, state.rng);
     enemy.hp -= finalDamage;
     state.stats.damageDealt += finalDamage;
+    hitCount += 1;
   });
   state.stats.shotsFired += 1;
 
@@ -45,7 +58,7 @@ export function fireShipWeapon(state: CoreState, stats: EffectiveStats): void {
 
   const refunded = overcharged && mods.overchargeRefund;
   const energyCost = (refunded || isFreeShot) ? 0 : stats.weaponEnergyPerShot;
-  const energyBack = mods.energyPerHit * targets.length;
+  const energyBack = mods.energyPerHit * hitCount;
   state.ship.energy = clampEnergy(state.ship.energy - energyCost + energyBack, stats);
 
   // BLOODFIRE: each shot burns a sliver of hull
@@ -69,12 +82,21 @@ export function regenerateEnemies(state: CoreState): void {
 }
 
 /** Enemies shoot back while descending the lane. Shield absorbs first, remainder hits hull. */
-export function fireEnemyWeapons(state: CoreState): void {
+export function fireEnemyWeapons(state: CoreState, stats: EffectiveStats): void {
   for (const enemy of state.enemies) {
     enemy.shootTimer -= 1;
     if (enemy.shootTimer > 0) continue;
     enemy.shootTimer += enemy.ticksBetweenShots;
-    damageShip(state, enemy.shotDamage);
+    const effectiveMissChance = Math.min(1, enemy.missChance + stats.shipEnemyMissBonus);
+    const { damage, wasMiss, wasCrit } = rollShotOutcome(
+      effectiveMissChance, enemy.critChance, enemy.critMult, enemy.shotDamage, state.rng,
+    );
+    if (wasMiss) {
+      state.pendingVisualEvents.push({ kind: 'enemy-miss', enemyId: enemy.id });
+      continue;
+    }
+    if (wasCrit) state.pendingVisualEvents.push({ kind: 'enemy-crit', enemyId: enemy.id });
+    damageShip(state, damage);
   }
 }
 
@@ -162,6 +184,20 @@ function computeSituationalMult(enemy: EnemyState, mods: RunModifiers): number {
   return mult;
 }
 
+function rollShotOutcome(
+  missChance: number,
+  critChance: number,
+  critMult: number,
+  baseDamage: number,
+  rng: () => number,
+): { damage: number; wasMiss: boolean; wasCrit: boolean } {
+  if (missChance <= 0 && critChance <= 0) return { damage: baseDamage, wasMiss: false, wasCrit: false };
+  const r = rng();
+  if (r < missChance) return { damage: 0, wasMiss: true, wasCrit: false };
+  if (r < missChance + critChance) return { damage: baseDamage * critMult, wasMiss: false, wasCrit: true };
+  return { damage: baseDamage, wasMiss: false, wasCrit: false };
+}
+
 function applyRandomness(damage: number, mods: RunModifiers, rng: () => number): number {
   if (mods.shotRandomnessFraction <= 0) return damage;
   // ±N fraction: 0 → (1-N)×, 1 → (1+N)×
@@ -176,9 +212,10 @@ function applyEnemyDeathEffects(
   state.consecutiveKills += 1;
   if (enemy.isBoss && state.bossKillTick === null) state.bossKillTick = state.tick;
 
+  const baseCoins = stats.shipCoinMult !== 1 ? Math.round(enemy.coinReward * stats.shipCoinMult) : enemy.coinReward;
   const coinReward = enemy.blocksConveyor && mods.blockerCoinMult > 1
-    ? Math.round(enemy.coinReward * mods.blockerCoinMult)
-    : enemy.coinReward;
+    ? Math.round(baseCoins * mods.blockerCoinMult)
+    : baseCoins;
   state.stats.coinsEarned += coinReward;
 
   if (mods.coinsEnergyRestore > 0) {

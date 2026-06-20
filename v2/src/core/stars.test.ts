@@ -3,6 +3,7 @@ import { FIXTURE_LOADOUT, FIXTURE_MISSION } from './fixtures';
 import { buildMissionResult } from './result';
 import { createCoreState } from './state';
 import { evaluateStars } from './stars';
+import { totalStarsAvailable } from '../data/missions';
 import type { CoreState, MissionSpec } from './types';
 
 const BOSS_MISSION: MissionSpec = {
@@ -74,6 +75,54 @@ describe('evaluateStars', () => {
     const earned = evaluateStars(state);
     expect(earned).toContain('hull-50');
     expect(earned).not.toContain('hull-90');
+  });
+});
+
+describe('finish-time stars', () => {
+  const FINISH_MISSION: MissionSpec = {
+    ...FIXTURE_MISSION,
+    id: 'finish-fixture',
+    stars: [
+      { id: 'ft-300', family: 'finish-time', threshold: 3000 },
+      { id: 'ft-200', family: 'finish-time', threshold: 2000 },
+    ],
+  };
+
+  function finishState(tick: number): CoreState {
+    const state = createCoreState(FINISH_MISSION, FIXTURE_LOADOUT, 1);
+    state.status = 'victory';
+    state.tick = tick;
+    return state;
+  }
+
+  it('earns finish-time star when tick is at the threshold', () => {
+    expect(evaluateStars(finishState(3000))).toContain('ft-300');
+  });
+
+  it('earns finish-time star when tick is below the threshold', () => {
+    expect(evaluateStars(finishState(2500))).toContain('ft-300');
+  });
+
+  it('does not earn finish-time star when tick exceeds the threshold', () => {
+    expect(evaluateStars(finishState(3001))).not.toContain('ft-300');
+  });
+
+  it('tighter threshold requires a faster run', () => {
+    const earned = evaluateStars(finishState(2100));
+    expect(earned).toContain('ft-300');
+    expect(earned).not.toContain('ft-200');
+  });
+
+  it('defeat earns no finish-time stars', () => {
+    const state = finishState(1000);
+    state.status = 'defeat';
+    expect(evaluateStars(state)).toEqual([]);
+  });
+});
+
+describe('totalStarsAvailable', () => {
+  it('returns 46 stars across the 6 main missions', () => {
+    expect(totalStarsAvailable()).toBe(46);
   });
 });
 

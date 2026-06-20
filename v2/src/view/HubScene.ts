@@ -3,14 +3,13 @@ import { TICKS_PER_SECOND } from '../core/constants';
 import type { LoadoutSnapshot, MissionSpec, StarFamily, StarSpec, WeaponKind } from '../core/types';
 import { ALL_MISSIONS, totalStarsAvailable } from '../data/missions';
 import {
-  ITEMS, SUPPLIES, WEAPON_KINDS, MAX_WEAPON_LEVEL,
-  itemById, STARTER_ITEM_IDS, weaponKindDisplayName, weaponSpecAtLevel,
+  ITEMS, SHIPS, SUPPLIES, WEAPON_KINDS, MAX_WEAPON_LEVEL, WEAPON_STARS,
+  itemById, shipById, weaponKindDisplayName, weaponSpecAtLevel,
 } from '../data/items';
 import type { CatalogItem, SystemKind } from '../data/items';
 import {
-  buildLoadout, buyItem, buySupplyCharge, buyWeaponLevel,
-  equipItem, isMissionUnlocked, loadSave, sellItem,
-  sellSupplyCharge, sellWeaponLevel, totalStars,
+  buildLoadout, buySupplyCharge, isMissionUnlocked, loadSave,
+  persistSave, sellSupplyCharge, switchItem, switchShip, totalStars,
 } from '../save/SaveManager';
 import type { SaveData } from '../save/SaveManager';
 import { cssColor, PALETTE } from './palette';
@@ -18,18 +17,19 @@ import { fontPx, HUB_LEFT_W, LOGICAL_HEIGHT, LOGICAL_WIDTH, px } from './layout'
 import { ShopPreviewPanel } from './ShopPreviewPanel';
 import type { PreviewLayout } from './ShopPreviewPanel';
 import { buildGameTextures, iconTextureForWeaponId } from './textures';
-import { addLabel, addTextButton, UI_FONT } from './widgets';
+import { addLabel, addTextButton, drawDevBorder, UI_FONT } from './widgets';
 import { Sound } from '../audio/SoundManager';
 
+const SHIP_TAB_COLOR = 0x44ffaa;
+
 type NavItem = 'missions' | 'shop' | 'settings' | 'about' | 'manual';
-type ShopTab = SystemKind | 'supplies';
+type ShopTab = SystemKind | 'supplies' | 'ship';
 
 const NAV_Y = 22;
 const CONTENT_TOP = 48;
 const CONTENT_PAD = 10;
-const MISSION_ROW_H = 44;
-const MISSION_LIST_TOP = 66;
-const EXPANSION_H = 150;
+const INFO_PANEL_TOP = 378;
+const INFO_PANEL_H = 152;
 const SHOP_TAB_W = 82;
 const SHOP_ITEM_X = SHOP_TAB_W + 4;
 const SHOP_ITEM_W = HUB_LEFT_W - SHOP_ITEM_X - 4;
@@ -39,24 +39,37 @@ const CONTENT_MID = Math.round(HUB_LEFT_W / 2 + SHOP_TAB_W / 2);
 
 const MISSION_DURATION: Record<string, string> = {
   t1: '~30s', t2: '~1min', t3: '~1min', t4: '~2min',
-  m1: '~5min', m2: '~5min', m3: '~8min', m4: '~8min',
+  m1: '~3min', m2: '~5min', m3: '~8min', m4: '~8min',
   m5: '~12min', m6: '~15min',
 };
 
+const GALAXY_CONNECTIONS: [string, string][] = [
+  ['t1', 't2'], ['t2', 't3'], ['t3', 't4'],
+  ['t1', 'm1'],
+  ['m1', 'm2'], ['m2', 'm3'], ['m3', 'm4'], ['m4', 'm5'], ['m5', 'm6'],
+];
+
+const GALAXY_NODES: Record<string, { x: number; y: number }> = {
+  t1: { x: 110, y: 130 }, t2: { x: 235, y: 200 }, t3: { x: 155, y: 285 }, t4: { x: 305, y: 330 },
+  m1: { x: 450, y: 100 }, m2: { x: 560, y: 185 }, m3: { x: 655, y: 115 },
+  m4: { x: 725, y: 240 }, m5: { x: 800, y: 315 }, m6: { x: 878, y: 185 },
+};
+
 const NAV_ITEMS: { key: NavItem; label: string; color: number }[] = [
-  { key: 'missions', label: 'MISSIONS', color: PALETTE.weaponCyan },
-  { key: 'shop',     label: 'SHOP',     color: PALETTE.motorMagenta },
+  { key: 'missions', label: 'EXPLORE NEARBY SPACE', color: PALETTE.weaponCyan },
+  { key: 'shop',     label: 'SHIP CONFIGURATION',  color: PALETTE.motorMagenta },
   { key: 'settings', label: 'SETTINGS', color: PALETTE.hullWhite },
   { key: 'about',    label: 'ABOUT',    color: PALETTE.shieldBlue },
   { key: 'manual',   label: 'MANUAL',   color: PALETTE.generatorAmber },
 ];
 
 const SHOP_TABS: { key: ShopTab; label: string; color: number }[] = [
-  { key: 'weapon',    label: 'WPN', color: PALETTE.weaponCyan },
-  { key: 'shield',    label: 'SHD', color: PALETTE.shieldBlue },
-  { key: 'generator', label: 'GEN', color: PALETTE.generatorAmber },
-  { key: 'motor',     label: 'MTR', color: PALETTE.motorMagenta },
-  { key: 'supplies',  label: 'SUP', color: PALETTE.hullWhite },
+  { key: 'ship',      label: 'SHIP',      color: SHIP_TAB_COLOR },
+  { key: 'weapon',    label: 'WEAPON',    color: PALETTE.weaponCyan },
+  { key: 'shield',    label: 'SHIELD',    color: PALETTE.shieldBlue },
+  { key: 'generator', label: 'GENERATOR', color: PALETTE.generatorAmber },
+  { key: 'motor',     label: 'MOTOR',     color: PALETTE.motorMagenta },
+  { key: 'supplies',  label: 'SUPPLIES',  color: PALETTE.hullWhite },
 ];
 
 const HUB_PREVIEW_LAYOUT: PreviewLayout = {
@@ -109,33 +122,35 @@ const MANUAL_TEXT = [
 /** Merged hub: mission list on the left, always-on ship preview on the right. */
 export class HubScene extends Phaser.Scene {
   private save!: SaveData;
-  private nav: NavItem = 'missions';
+  private nav: NavItem | null = null;
   private scrollingStars: { rect: Phaser.GameObjects.Rectangle; speed: number }[] = [];
   private contentObjects: Phaser.GameObjects.GameObject[] = [];
   private preview!: ShopPreviewPanel;
-  private readonly navBtns = new Map<NavItem, Phaser.GameObjects.Text>();
 
-  private expandedMissionId: string | null = null;
-  private hintVisible = false;
-  private hintText: Phaser.GameObjects.Text | null = null;
+  private selectedMissionId: string | null = null;
 
   private shopTab: ShopTab = 'weapon';
   private shopSelectedItemId: string | null = null;
   private shopSelectedWeaponKind: WeaponKind | null = null;
+  private shopPlayerStars = 0;
 
   constructor() { super('HubScene'); }
 
   // fallow-ignore-next-line unused-class-member
   create(): void {
     this.save = loadSave();
-    this.nav = 'missions';
-    this.expandedMissionId = null;
-    this.hintVisible = false;
-    this.hintText = null;
+
+    // First-time player: send to welcome mission before the hub is shown
+    if (!this.save.w0Completed) {
+      this.scene.start('CombatScene', { missionId: 'w0' });
+      return;
+    }
+
+    this.nav = null;
+    this.selectedMissionId = null;
     this.shopTab = 'weapon';
     this.shopSelectedItemId = null;
     this.shopSelectedWeaponKind = null;
-    this.navBtns.clear();
     this.contentObjects = [];
     this.scrollingStars = [];
 
@@ -143,14 +158,19 @@ export class HubScene extends Phaser.Scene {
     Sound.attach(this.sound);
     Sound.startMusic();
     this.addStarfield();
+    drawDevBorder(this, this.save);
 
-    this.add.rectangle(px(HUB_LEFT_W), 0, px(1), px(LOGICAL_HEIGHT), 0x333355).setOrigin(0, 0).setDepth(1);
-    this.add.rectangle(0, px(CONTENT_TOP - 4), px(HUB_LEFT_W), px(1), 0x222244).setOrigin(0, 0).setDepth(1);
+    this.add.rectangle(0, px(CONTENT_TOP - 4), px(LOGICAL_WIDTH), px(1), 0x222244).setOrigin(0, 0).setDepth(1);
 
-    this.buildNavRow();
     this.preview = new ShopPreviewPanel(this, HUB_PREVIEW_LAYOUT);
-    this.preview.show(buildLoadout(this.save), null);
-    this.setNav('missions');
+
+    // Post-w0 first load: open the section the player chose
+    const isFirstLoad = this.save.firstBranchChoice !== undefined && totalStars(this.save) === 0;
+    if (isFirstLoad) {
+      this.setNav('missions');
+    } else {
+      this.setNav(null);
+    }
   }
 
   // fallow-ignore-next-line unused-class-member
@@ -162,40 +182,37 @@ export class HubScene extends Phaser.Scene {
     this.preview.update(deltaMs);
   }
 
-  private setNav(nav: NavItem): void {
+  private setNav(nav: NavItem | null): void {
     this.nav = nav;
-    this.updateNavHighlight();
     this.rebuildContent();
-    if (nav !== 'shop') this.preview.show(buildLoadout(this.save), null);
+    this.preview.setVisible(nav === 'shop');
+    if (nav === 'shop') this.preview.show(buildLoadout(this.save), null);
   }
 
-  private buildNavRow(): void {
-    const slotW = (HUB_LEFT_W - CONTENT_PAD * 2) / NAV_ITEMS.length;
-    NAV_ITEMS.forEach((item, i) => {
-      const cx = CONTENT_PAD + slotW * (i + 0.5);
-      const btn = addTextButton(this, {
-        x: px(cx), y: px(NAV_Y),
-        label: item.label, color: item.color, size: 12,
-        onClick: () => { this.setNav(item.key); },
-      });
-      btn.setDepth(5);
-      this.navBtns.set(item.key, btn);
-    });
-  }
-
-  private updateNavHighlight(): void {
-    NAV_ITEMS.forEach((item) => {
-      const btn = this.navBtns.get(item.key);
-      if (btn === undefined) return;
-      btn.setAlpha(item.key === this.nav ? 1 : 0.4);
-    });
-  }
+  private get contentW(): number { return this.nav === 'shop' ? HUB_LEFT_W : LOGICAL_WIDTH; }
 
   private rebuildContent(): void {
     this.contentObjects.forEach((o) => { o.destroy(); });
     this.contentObjects = [];
-    this.hintText = null;
+
+    if (this.nav !== null) {
+      const backBtn = addTextButton(this, {
+        x: px(CONTENT_PAD), y: px(NAV_Y),
+        label: '‹ BACK', color: 0x8888aa, size: 11,
+        onClick: () => { this.setNav(null); },
+      });
+      backBtn.setOrigin(0, 0.5);
+      this.addC(backBtn);
+      const navItem = NAV_ITEMS.find((n) => n.key === this.nav);
+      if (navItem !== undefined) {
+        this.addC(this.add.text(px(LOGICAL_WIDTH / 2), px(NAV_Y), navItem.label, {
+          fontFamily: UI_FONT, fontSize: `${String(fontPx(12))}px`, color: cssColor(navItem.color),
+        }).setOrigin(0.5, 0.5));
+      }
+    }
+
     switch (this.nav) {
+      case null:       this.buildMainMenu(); break;
       case 'missions': this.buildMissionsContent(); break;
       case 'shop':     this.buildShopContent(); break;
       case 'settings': this.buildSettingsContent(); break;
@@ -207,6 +224,19 @@ export class HubScene extends Phaser.Scene {
   private addC<T extends Phaser.GameObjects.GameObject>(obj: T): T {
     this.contentObjects.push(obj);
     return obj;
+  }
+
+  private buildMainMenu(): void {
+    const BTN_GAP = 64;
+    const totalH = (NAV_ITEMS.length - 1) * BTN_GAP;
+    const startY = Math.round((LOGICAL_HEIGHT - totalH) / 2);
+    NAV_ITEMS.forEach((item, i) => {
+      this.addC(addTextButton(this, {
+        x: px(LOGICAL_WIDTH / 2), y: px(startY + i * BTN_GAP),
+        label: item.label, color: item.color, size: 22,
+        onClick: () => { this.setNav(item.key); },
+      }));
+    });
   }
 
   private addStarfield(): void {
@@ -226,7 +256,7 @@ export class HubScene extends Phaser.Scene {
     }
   }
 
-  // ─── Missions ────────────────────────────────────────────────────────────────
+  // ─── Missions (galaxy view) ──────────────────────────────────────────────────
 
   private buildMissionsContent(): void {
     this.addC(addLabel(this, {
@@ -235,161 +265,174 @@ export class HubScene extends Phaser.Scene {
       color: PALETTE.generatorAmber, size: 10,
     }));
 
-    let yBase = MISSION_LIST_TOP;
-    let dividerDone = false;
-    const expandedIdx = ALL_MISSIONS.findIndex((m) => m.id === this.expandedMissionId);
+    const gfx = this.addC(this.add.graphics().setDepth(2));
 
-    ALL_MISSIONS.forEach((mission, index) => {
-      const isTutorial = mission.forcedLoadout !== undefined;
-      if (!dividerDone && !isTutorial) {
-        this.addMissionDivider(yBase - MISSION_ROW_H / 2);
-        dividerDone = true;
-      }
-      this.buildMissionRow(mission, yBase);
-      yBase += MISSION_ROW_H;
-      if (index === expandedIdx) {
-        this.buildMissionExpansion(mission, yBase);
-        yBase += EXPANSION_H;
-      }
+    // Constellation lines
+    for (const [aId, bId] of GALAXY_CONNECTIONS) {
+      const a = GALAXY_NODES[aId];
+      const b = GALAXY_NODES[bId];
+      if (a === undefined || b === undefined) continue;
+      const bothUnlocked = isMissionUnlocked(this.save, aId) && isMissionUnlocked(this.save, bId);
+      gfx.lineStyle(px(0.5), bothUnlocked ? 0x334466 : 0x1a2233, bothUnlocked ? 0.7 : 0.35);
+      gfx.beginPath();
+      gfx.moveTo(px(a.x), px(a.y));
+      gfx.lineTo(px(b.x), px(b.y));
+      gfx.strokePath();
+    }
+
+    ALL_MISSIONS.forEach((mission) => {
+      const pos = GALAXY_NODES[mission.id];
+      if (pos !== undefined) this.buildGalaxyNode(gfx, mission, pos);
     });
+
+    this.addC(this.add.rectangle(0, px(INFO_PANEL_TOP - 1), px(LOGICAL_WIDTH), px(1), 0x222244).setOrigin(0, 0));
+    this.buildMissionInfoPanel();
   }
 
-  private addMissionDivider(y: number): void {
-    const w = HUB_LEFT_W - CONTENT_PAD * 2;
-    this.addC(this.add.rectangle(px(CONTENT_PAD), px(y), px(w), px(1), 0x443322).setOrigin(0, 0.5));
-    this.addC(this.add.text(px(CONTENT_PAD + 2), px(y - 4), 'TRAINING', {
-      fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: cssColor(0x665533),
-    }).setOrigin(0, 1));
-    this.addC(this.add.text(px(CONTENT_PAD + 2), px(y + 4), 'COMBAT MISSIONS', {
-      fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: cssColor(0x334455),
-    }).setOrigin(0, 0));
-  }
-
-  private buildMissionRow(mission: MissionSpec, yLogical: number): void {
+  private buildGalaxyNode(gfx: Phaser.GameObjects.Graphics, mission: MissionSpec, pos: { x: number; y: number }): void {
     const isTutorial = mission.forcedLoadout !== undefined;
     const unlocked = isMissionUnlocked(this.save, mission.id);
-    const isExpanded = mission.id === this.expandedMissionId;
+    const selected = mission.id === this.selectedMissionId;
     const earned = this.save.missionStars[mission.id]?.length ?? 0;
-    const dimAlpha = unlocked ? 1 : 0.45;
-    const nameColor = isTutorial
-      ? (unlocked ? PALETTE.generatorAmber : 0x445544)
-      : (unlocked ? PALETTE.hullWhite : 0x445566);
-    const y = px(yLogical);
+    const nodeColor = isTutorial ? PALETTE.generatorAmber : PALETTE.weaponCyan;
+    const r = isTutorial ? 6 : 8;
 
-    const rowBg = this.add
-      .rectangle(px(CONTENT_PAD), y, px(HUB_LEFT_W - CONTENT_PAD * 2), px(MISSION_ROW_H - 4), isTutorial ? 0x0d0d0a : 0x0a0a18, 0.7)
-      .setOrigin(0, 0.5).setAlpha(dimAlpha);
-    this.addC(rowBg);
+    // Glow layers
+    gfx.fillStyle(nodeColor, unlocked ? (selected ? 0.22 : 0.10) : 0.04);
+    gfx.fillCircle(px(pos.x), px(pos.y), px(r * 3.5));
+    gfx.fillStyle(nodeColor, unlocked ? (selected ? 0.40 : 0.18) : 0.07);
+    gfx.fillCircle(px(pos.x), px(pos.y), px(r * 1.8));
+    // Core
+    gfx.fillStyle(nodeColor, unlocked ? 1.0 : 0.22);
+    gfx.fillCircle(px(pos.x), px(pos.y), px(r));
 
-    const displayName = unlocked ? mission.name : '???';
-    const nameText = this.addC(this.add.text(px(CONTENT_PAD + 8), y, `${isExpanded ? '▶ ' : ''}${displayName}`, {
-      fontFamily: UI_FONT, fontSize: `${String(fontPx(13))}px`, color: cssColor(nameColor),
-    }).setOrigin(0, 0.5).setAlpha(dimAlpha));
-
-    const duration = MISSION_DURATION[mission.id] ?? '';
-    if (duration) {
-      this.addC(this.add.text(px(HUB_LEFT_W * 0.58), y, duration, {
-        fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(0x667788),
-      }).setOrigin(0.5, 0.5).setAlpha(dimAlpha));
+    // Selection ring
+    if (selected) {
+      gfx.lineStyle(px(1.5), nodeColor, 0.9);
+      gfx.strokeCircle(px(pos.x), px(pos.y), px(r + 6));
+      gfx.lineStyle(px(0.5), nodeColor, 0.35);
+      gfx.strokeCircle(px(pos.x), px(pos.y), px(r + 11));
     }
 
-    if (!isTutorial) {
-      const starStr = unlocked ? `★${String(earned)}/${String(mission.stars.length)}` : `${String(mission.starGate)}★`;
-      this.addC(this.add.text(px(HUB_LEFT_W - CONTENT_PAD - 2), y, starStr, {
-        fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`,
-        color: cssColor(unlocked ? PALETTE.generatorAmber : 0x555566),
-      }).setOrigin(1, 0.5).setAlpha(dimAlpha));
+    // Label
+    const labelY = pos.y + r + 10;
+    const labelText = unlocked ? mission.name : '???';
+    const labelColor = !unlocked ? 0x445566 : (selected ? nodeColor : (isTutorial ? 0xaa8833 : 0x99aacc));
+    this.addC(this.add.text(px(pos.x), px(labelY), labelText, {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`, color: cssColor(labelColor),
+    }).setOrigin(0.5, 0).setDepth(3).setAlpha(unlocked ? 1 : 0.45));
+
+    if (!isTutorial && unlocked && mission.stars.length > 0) {
+      this.addC(this.add.text(px(pos.x), px(labelY + 13), `★${String(earned)}/${String(mission.stars.length)}`, {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: cssColor(PALETTE.generatorAmber),
+      }).setOrigin(0.5, 0).setDepth(3).setAlpha(0.75));
     }
 
+    // Hit zone (invisible, larger than the visual dot)
+    const hitR = Math.max(r + 14, 20);
+    const zone = this.addC(
+      this.add.zone(px(pos.x), px(pos.y), px(hitR * 2), px(hitR * 2))
+        .setInteractive({ useHandCursor: unlocked }).setDepth(4),
+    );
     if (unlocked) {
-      rowBg.setInteractive({ useHandCursor: true });
-      rowBg.on('pointerover', () => { nameText.setAlpha(0.7); });
-      rowBg.on('pointerout', () => { nameText.setAlpha(1); });
-      rowBg.on('pointerdown', () => {
-        this.expandedMissionId = isExpanded ? null : mission.id;
-        this.hintVisible = false;
+      zone.on('pointerdown', () => {
+        this.selectedMissionId = selected ? null : mission.id;
         this.rebuildContent();
       });
     }
   }
 
-  private buildMissionExpansion(mission: MissionSpec, yLogical: number): void {
-    const earned = this.save.missionStars[mission.id] ?? [];
-    this.addC(this.add.rectangle(px(CONTENT_PAD), px(yLogical), px(HUB_LEFT_W - CONTENT_PAD * 2), px(EXPANSION_H - 2), 0x0d0d22, 0.97).setOrigin(0, 0));
+  private buildMissionInfoPanel(): void {
+    this.addC(this.add.rectangle(0, px(INFO_PANEL_TOP), px(LOGICAL_WIDTH), px(INFO_PANEL_H), 0x06060f, 0.92).setOrigin(0, 0));
 
-    let cy = yLogical + 8;
-
-    if (mission.forcedLoadout !== undefined) {
-      this.addC(this.add.text(px(CONTENT_PAD + 8), px(cy), 'TRAINING MISSION — preset loadout', {
-        fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(PALETTE.generatorAmber),
-      }).setOrigin(0, 0));
-      cy += 16;
+    if (this.selectedMissionId === null) {
+      this.addC(this.add.text(px(LOGICAL_WIDTH / 2), px(INFO_PANEL_TOP + INFO_PANEL_H / 2), 'Select a mission', {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(11))}px`, color: cssColor(0x445566),
+      }).setOrigin(0.5));
+      return;
     }
 
-    mission.stars.forEach((star) => {
-      const isEarned = earned.includes(star.id);
-      this.addC(this.add.text(px(CONTENT_PAD + 8), px(cy), `${isEarned ? '★' : '☆'}  ${starDescription(star)}`, {
-        fontFamily: UI_FONT, fontSize: `${String(fontPx(11))}px`,
-        color: cssColor(isEarned ? PALETTE.generatorAmber : 0x666688),
-      }).setOrigin(0, 0));
-      cy += 20;
-    });
+    const mission = ALL_MISSIONS.find((m) => m.id === this.selectedMissionId);
+    if (mission === undefined) return;
 
-    cy += 4;
-    const hintBtn = addTextButton(this, {
-      x: px(CONTENT_PAD + 8), y: px(cy),
-      label: this.hintVisible ? 'ⓘ HIDE HINT' : 'ⓘ SHOW HINT',
-      color: 0x8888aa, size: 10,
-      onClick: () => {
-        this.hintVisible = !this.hintVisible;
-        hintBtn.setText(this.hintVisible ? 'ⓘ HIDE HINT' : 'ⓘ SHOW HINT');
-        if (this.hintText !== null) this.hintText.setVisible(this.hintVisible);
-      },
-    });
-    hintBtn.setOrigin(0, 0.5);
-    this.addC(hintBtn);
+    const isTutorial = mission.forcedLoadout !== undefined;
+    const earned = this.save.missionStars[mission.id] ?? [];
+    const nodeColor = isTutorial ? PALETTE.generatorAmber : PALETTE.weaponCyan;
+    const duration = MISSION_DURATION[mission.id] ?? '';
+    const panelX = CONTENT_PAD + 4;
+    const topY = INFO_PANEL_TOP + 16;
 
-    this.hintText = this.addC(this.add.text(px(CONTENT_PAD + 8), px(cy + 20), mission.blurb, {
-      fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`,
-      color: cssColor(0xaaaacc), wordWrap: { width: px(HUB_LEFT_W - CONTENT_PAD * 2 - 16) },
-    }).setOrigin(0, 0).setVisible(this.hintVisible));
+    this.addC(this.add.text(px(panelX), px(topY), mission.name, {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(15))}px`, color: cssColor(nodeColor),
+    }));
+
+    let detailY = topY + 22;
+    if (duration) {
+      this.addC(this.add.text(px(panelX), px(detailY), duration, {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(0x667788),
+      }));
+      detailY += 18;
+    }
+
+    if (isTutorial) {
+      this.addC(this.add.text(px(panelX), px(detailY), 'Training mission — preset loadout', {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(0x887744),
+      }));
+    } else {
+      mission.stars.forEach((star) => {
+        const isEarned = earned.includes(star.id);
+        this.addC(this.add.text(px(panelX), px(detailY), `${isEarned ? '★' : '☆'}  ${starDescription(star)}`, {
+          fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`,
+          color: cssColor(isEarned ? PALETTE.generatorAmber : 0x556677),
+        }));
+        detailY += 18;
+      });
+    }
 
     this.addC(addTextButton(this, {
-      x: px(CONTENT_PAD + 8), y: px(yLogical + EXPANSION_H - 28),
-      label: '▶  START MISSION', color: PALETTE.weaponCyan, size: 13,
+      x: px(Math.round(LOGICAL_WIDTH * 0.76)), y: px(INFO_PANEL_TOP + INFO_PANEL_H / 2),
+      label: '▶  START', color: PALETTE.weaponCyan, size: 14,
       onClick: () => { this.scene.start('CombatScene', { missionId: mission.id }); },
-    }).setOrigin(0, 0.5));
+    }));
   }
 
   // ─── Shop ─────────────────────────────────────────────────────────────────
 
   private buildShopContent(): void {
+    this.shopPlayerStars = totalStars(this.save);
+    this.addC(this.add.rectangle(px(HUB_LEFT_W), 0, px(1), px(LOGICAL_HEIGHT), 0x333355).setOrigin(0, 0).setDepth(1));
     const tabH = (LOGICAL_HEIGHT - CONTENT_TOP) / SHOP_TABS.length;
     SHOP_TABS.forEach((tab, i) => {
       const tabY = CONTENT_TOP + tabH * (i + 0.5);
       const active = tab.key === this.shopTab;
-      const bg = this.addC(this.add.rectangle(px(0), px(tabY), px(SHOP_TAB_W), px(tabH - 2), active ? 0x111128 : 0x080818, 0.95).setOrigin(0, 0.5));
+      const bg = this.addC(
+        this.add.rectangle(px(0), px(tabY), px(SHOP_TAB_W), px(tabH - 2), active ? 0x111128 : 0x080818, 0.95)
+          .setOrigin(0, 0.5).setInteractive({ useHandCursor: true }),
+      );
       if (active) bg.setStrokeStyle(px(1), tab.color, 0.6);
-      const btn = addTextButton(this, {
-        x: px(SHOP_TAB_W / 2), y: px(tabY),
-        label: tab.label, color: active ? tab.color : 0x555577, size: 9,
-        onClick: () => {
-          this.shopTab = tab.key;
-          this.shopSelectedItemId = null;
-          this.shopSelectedWeaponKind = null;
-          this.rebuildContent();
-          this.updatePreview();
-        },
+      bg.on('pointerdown', () => {
+        this.shopTab = tab.key;
+        this.shopSelectedItemId = null;
+        this.shopSelectedWeaponKind = null;
+        this.rebuildContent();
+        this.updatePreview();
       });
-      btn.setAlpha(active ? 1 : 0.5);
-      this.addC(btn);
+      this.addC(
+        this.add.text(px(SHOP_TAB_W / 2), px(tabY), tab.label, {
+          fontFamily: UI_FONT,
+          fontSize: `${String(fontPx(8))}px`,
+          color: cssColor(active ? tab.color : 0x555577),
+        }).setOrigin(0.5).setAlpha(active ? 1 : 0.5),
+      );
     });
 
     this.addC(this.add.rectangle(px(SHOP_TAB_W), px(CONTENT_TOP), px(1), px(LOGICAL_HEIGHT - CONTENT_TOP), 0x333355).setOrigin(0, 0));
     this.addC(this.add.rectangle(px(SHOP_ITEM_X), px(SHOP_ACTION_Y), px(SHOP_ITEM_W), px(1), 0x222244).setOrigin(0, 0));
     this.addC(addLabel(this, { x: px(SHOP_ITEM_X), y: px(CONTENT_TOP + 2), text: `⬤ ${String(this.save.coins)}`, color: PALETTE.generatorAmber, size: 10 }));
 
-    if (this.shopTab === 'supplies') {
+    if (this.shopTab === 'ship') {
+      this.buildShipRows();
+    } else if (this.shopTab === 'supplies') {
       this.buildSupplyRows();
     } else if (this.shopTab === 'weapon') {
       this.buildWeaponRows();
@@ -407,21 +450,23 @@ export class HubScene extends Phaser.Scene {
   }
 
   private buildItemRow(system: SystemKind, itemId: string, item: CatalogItem, yLogical: number): void {
-    const owned = this.save.ownedItemIds.includes(itemId);
+    const starsNeeded = item.starsRequired ?? 0;
+    const locked = starsNeeded > this.shopPlayerStars;
     const equipped = this.save.equipped[system] === itemId;
     const selected = this.shopSelectedItemId === itemId;
-    const unlocked = this.isItemUnlocked(item);
-    const canAfford = owned || (unlocked && this.save.coins >= item.price);
-    const status = !unlocked ? 'LOCKED' : (equipped ? 'EQUIP' : (owned ? 'OWNED' : `${String(item.price)}⬤`));
+    const netCost = item.price - itemById(this.save.equipped[system]).price;
+    const canAfford = equipped || this.save.coins >= netCost;
     const y = px(yLogical + SHOP_ROW_H / 2);
 
     const rowBg = this.add.rectangle(px(SHOP_ITEM_X), y, px(SHOP_ITEM_W), px(SHOP_ROW_H - 4), selected ? 0x16162c : 0x0a0a18)
-      .setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
-    rowBg.on('pointerdown', () => { this.shopSelectedItemId = itemId; this.rebuildContent(); this.updatePreview(); });
-    rowBg.on('pointerover', () => { rowBg.setFillStyle(selected ? 0x1c1c38 : 0x12122a); });
-    rowBg.on('pointerout', () => { rowBg.setFillStyle(selected ? 0x16162c : 0x0a0a18); });
-    if (!unlocked) rowBg.setAlpha(0.25);
-    else if (!canAfford) rowBg.setAlpha(0.35);
+      .setOrigin(0, 0.5);
+    if (!locked) {
+      rowBg.setInteractive({ useHandCursor: true });
+      rowBg.on('pointerdown', () => { this.shopSelectedItemId = itemId; this.rebuildContent(); this.updatePreview(); });
+      rowBg.on('pointerover', () => { rowBg.setFillStyle(selected ? 0x1c1c38 : 0x12122a); });
+      rowBg.on('pointerout', () => { rowBg.setFillStyle(selected ? 0x16162c : 0x0a0a18); });
+    }
+    if (locked || (!equipped && !canAfford)) rowBg.setAlpha(0.35);
     this.addC(rowBg);
 
     const isBranch = item.requires !== undefined;
@@ -431,14 +476,23 @@ export class HubScene extends Phaser.Scene {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(0x444466),
       }).setOrigin(0, 0.5));
     }
-    const nameAlpha = !unlocked ? 0.3 : (!canAfford ? 0.4 : 1);
-    this.addC(this.add.text(px(nameX), y, `${selected ? '▶ ' : ''}${item.name}`, {
+    this.addC(this.add.text(px(nameX), y, item.name, {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(12))}px`,
-      color: cssColor(equipped ? PALETTE.weaponCyan : PALETTE.hullWhite),
-    }).setOrigin(0, 0.5).setAlpha(nameAlpha));
+      color: cssColor(locked ? 0x555577 : (equipped ? PALETTE.weaponCyan : PALETTE.hullWhite)),
+    }).setOrigin(0, 0.5).setAlpha(locked ? 0.5 : (canAfford ? 1 : 0.4)));
 
-    const statusColor = equipped ? PALETTE.weaponCyan : (!unlocked ? 0x444466 : (owned ? PALETTE.hullWhite : PALETTE.generatorAmber));
-    this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_ITEM_W - 4), y, status, {
+    let statusText: string;
+    let statusColor: number;
+    if (locked) {
+      statusText = `★${String(starsNeeded)}`; statusColor = 0x556677;
+    } else if (equipped) {
+      statusText = 'EQUIPPED'; statusColor = PALETTE.weaponCyan;
+    } else if (netCost <= 0) {
+      statusText = netCost < 0 ? `−${String(Math.abs(netCost))}⬤` : 'FREE'; statusColor = PALETTE.shieldBlue;
+    } else {
+      statusText = `${String(netCost)}⬤`; statusColor = canAfford ? PALETTE.generatorAmber : 0x556677;
+    }
+    this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_ITEM_W - 4), y, statusText, {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(statusColor),
     }).setOrigin(1, 0.5));
   }
@@ -450,10 +504,7 @@ export class HubScene extends Phaser.Scene {
     }
     const itemId = this.shopSelectedItemId;
     const item = itemById(itemId);
-    const owned = this.save.ownedItemIds.includes(itemId);
     const equipped = this.save.equipped[system] === itemId;
-    const unlocked = this.isItemUnlocked(item);
-    const canSell = owned && !STARTER_ITEM_IDS.includes(itemId);
 
     this.addC(this.add.text(px(SHOP_ITEM_X), px(SHOP_ACTION_Y + 8), item.blurb, {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`,
@@ -461,71 +512,175 @@ export class HubScene extends Phaser.Scene {
     }));
 
     const btnY = px(SHOP_ACTION_Y + 68);
-    if (!unlocked) {
-      const reqName = item.requires !== undefined ? itemById(item.requires).name : '';
-      this.addC(addLabel(this, { x: px(SHOP_ITEM_X), y: btnY, text: `Requires: ${reqName}`, color: 0x555577, size: 11 }));
-    } else if (!owned && this.save.coins >= item.price) {
+    if (equipped) {
+      this.addC(addLabel(this, { x: px(SHOP_ITEM_X), y: btnY, text: 'EQUIPPED', color: PALETTE.weaponCyan, size: 12 }));
+      return;
+    }
+    const netCost = item.price - itemById(this.save.equipped[system]).price;
+    if (netCost <= 0) {
+      const refund = Math.abs(netCost);
       this.addC(addTextButton(this, {
-        x: px(CONTENT_MID), y: btnY, label: `BUY  ${String(item.price)}⬤`, color: PALETTE.generatorAmber,
-        onClick: () => { this.save = buyItem(this.save, itemId); this.rebuildContent(); this.updatePreview(); },
+        x: px(CONTENT_MID), y: btnY,
+        label: refund > 0 ? `SWITCH  +${String(refund)}⬤ back` : 'SWITCH FREE',
+        color: PALETTE.shieldBlue,
+        onClick: () => { this.save = switchItem(this.save, itemId); this.rebuildContent(); this.updatePreview(); },
       }));
-    } else if (!owned) {
-      this.addC(addLabel(this, { x: px(SHOP_ITEM_X), y: btnY, text: 'Not enough coins', color: PALETTE.enemyOrange, size: 12 }));
+    } else if (this.save.coins >= netCost) {
+      this.addC(addTextButton(this, {
+        x: px(CONTENT_MID), y: btnY, label: `SWITCH  ${String(netCost)}⬤`, color: PALETTE.generatorAmber,
+        onClick: () => { this.save = switchItem(this.save, itemId); this.rebuildContent(); this.updatePreview(); },
+      }));
     } else {
-      const actionX = canSell ? px(SHOP_ITEM_X + 60) : px(CONTENT_MID);
-      if (!equipped) {
-        this.addC(addTextButton(this, {
-          x: actionX, y: btnY, label: 'EQUIP', color: PALETTE.weaponCyan,
-          onClick: () => { this.save = equipItem(this.save, itemId); this.rebuildContent(); this.updatePreview(); },
-        }));
-      } else {
-        this.addC(addLabel(this, { x: actionX - px(canSell ? 30 : 40), y: btnY - px(8), text: 'EQUIPPED', color: PALETTE.weaponCyan, size: 12 }));
-      }
-      if (canSell) {
-        this.addC(addTextButton(this, {
-          x: px(HUB_LEFT_W - 60), y: btnY, label: `SELL  +${String(item.price)}⬤`, color: PALETTE.enemyOrange, size: 11,
-          onClick: () => { this.save = sellItem(this.save, itemId); this.shopSelectedItemId = null; this.rebuildContent(); this.updatePreview(); },
-        }));
-      }
+      this.addC(addLabel(this, { x: px(SHOP_ITEM_X), y: btnY, text: `Need ${String(netCost - this.save.coins)}⬤ more`, color: PALETTE.enemyOrange, size: 12 }));
     }
   }
 
-  private isItemUnlocked(item: CatalogItem): boolean {
-    if (item.requires === undefined) return true;
-    return this.save.ownedItemIds.includes(item.requires);
+  private buildShipRows(): void {
+    Object.entries(SHIPS).forEach(([shipId, ship], index) => {
+      const starsNeeded = ship.starsRequired ?? 0;
+      const locked = starsNeeded > this.shopPlayerStars;
+      const equipped = this.save.equipped.ship === shipId;
+      const selected = this.shopSelectedItemId === shipId;
+      const netCost = ship.price - shipById(this.save.equipped.ship).price;
+      const canAfford = equipped || this.save.coins >= netCost;
+      const y = px(CONTENT_TOP + 22 + index * SHOP_ROW_H + SHOP_ROW_H / 2);
+
+      const rowBg = this.add.rectangle(px(SHOP_ITEM_X), y, px(SHOP_ITEM_W), px(SHOP_ROW_H - 4), selected ? 0x16162c : 0x0a0a18)
+        .setOrigin(0, 0.5);
+      if (!locked) {
+        rowBg.setInteractive({ useHandCursor: true });
+        rowBg.on('pointerdown', () => { this.shopSelectedItemId = shipId; this.rebuildContent(); this.updatePreview(); });
+        rowBg.on('pointerover', () => { rowBg.setFillStyle(selected ? 0x1c1c38 : 0x12122a); });
+        rowBg.on('pointerout', () => { rowBg.setFillStyle(selected ? 0x16162c : 0x0a0a18); });
+      }
+      if (locked || (!equipped && !canAfford)) rowBg.setAlpha(0.35);
+      this.addC(rowBg);
+
+      this.addC(this.add.text(px(SHOP_ITEM_X + 8), y, ship.name, {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(12))}px`,
+        color: cssColor(locked ? 0x555577 : (equipped ? SHIP_TAB_COLOR : PALETTE.hullWhite)),
+      }).setOrigin(0, 0.5).setAlpha(locked ? 0.5 : (canAfford ? 1 : 0.4)));
+
+      this.addC(this.add.text(px(SHOP_ITEM_X + 76), y, `♥${String(ship.hull)}`, {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(0x888899),
+      }).setOrigin(0, 0.5).setAlpha(locked ? 0.3 : (canAfford ? 1 : 0.4)));
+
+      let statusText: string;
+      let statusColor: number;
+      if (locked) {
+        statusText = `★${String(starsNeeded)}`; statusColor = 0x556677;
+      } else if (equipped) {
+        statusText = 'EQUIPPED'; statusColor = SHIP_TAB_COLOR;
+      } else if (netCost <= 0) {
+        statusText = netCost < 0 ? `−${String(Math.abs(netCost))}⬤` : 'FREE'; statusColor = PALETTE.shieldBlue;
+      } else {
+        statusText = `${String(netCost)}⬤`; statusColor = canAfford ? PALETTE.generatorAmber : 0x556677;
+      }
+      this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_ITEM_W - 4), y, statusText, {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(statusColor),
+      }).setOrigin(1, 0.5));
+    });
+    this.buildShipActions();
+  }
+
+  private buildShipActions(): void {
+    if (this.shopSelectedItemId === null || SHIPS[this.shopSelectedItemId] === undefined) {
+      this.addC(addLabel(this, { x: px(SHOP_ITEM_X), y: px(SHOP_ACTION_Y + 28), text: 'Tap a ship to see details.', color: 0x666688, size: 11 }));
+      return;
+    }
+    const shipId = this.shopSelectedItemId;
+    const ship = shipById(shipId);
+    const equipped = this.save.equipped.ship === shipId;
+
+    this.addC(this.add.text(px(SHOP_ITEM_X), px(SHOP_ACTION_Y + 8), ship.passiveDescription, {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`,
+      color: cssColor(0x8888aa), wordWrap: { width: px(SHOP_ITEM_W) },
+    }));
+
+    const btnY = px(SHOP_ACTION_Y + 68);
+    if (equipped) {
+      this.addC(addLabel(this, { x: px(SHOP_ITEM_X), y: btnY, text: 'EQUIPPED', color: SHIP_TAB_COLOR, size: 12 }));
+      return;
+    }
+    const netCost = ship.price - shipById(this.save.equipped.ship).price;
+    if (netCost <= 0) {
+      const refund = Math.abs(netCost);
+      this.addC(addTextButton(this, {
+        x: px(CONTENT_MID), y: btnY,
+        label: refund > 0 ? `SWITCH  +${String(refund)}⬤ back` : 'SWITCH FREE',
+        color: PALETTE.shieldBlue,
+        onClick: () => { this.save = switchShip(this.save, shipId); this.rebuildContent(); this.updatePreview(); },
+      }));
+    } else if (this.save.coins >= netCost) {
+      this.addC(addTextButton(this, {
+        x: px(CONTENT_MID), y: btnY, label: `SWITCH  ${String(netCost)}⬤`, color: PALETTE.generatorAmber,
+        onClick: () => { this.save = switchShip(this.save, shipId); this.rebuildContent(); this.updatePreview(); },
+      }));
+    } else {
+      this.addC(addLabel(this, { x: px(SHOP_ITEM_X), y: btnY, text: `Need ${String(netCost - this.save.coins)}⬤ more`, color: PALETTE.enemyOrange, size: 12 }));
+    }
   }
 
   private buildWeaponRows(): void {
     WEAPON_KINDS.forEach((kind, index) => {
-      const highestOwned = this.highestOwnedLevel(kind);
-      const equippedThisKind = this.save.equipped.weapon.startsWith(`${kind}-`);
+      const kindMinStars = WEAPON_STARS[kind][0];
+      const kindLocked = kindMinStars > this.shopPlayerStars;
+      const equippedLevel = this.equippedLevelForKind(kind);
+      const equippedThisKind = equippedLevel > 0;
       const selected = this.shopSelectedWeaponKind === kind;
       const y = px(CONTENT_TOP + 22 + index * SHOP_ROW_H + SHOP_ROW_H / 2);
-      const iconId = highestOwned > 0 ? `${kind}-${String(highestOwned)}` : `${kind}-1`;
+      const iconId = equippedThisKind ? `${kind}-${String(equippedLevel)}` : `${kind}-1`;
+
+      const targetLevel = equippedThisKind ? equippedLevel : this.bestAffordableLevelForKind(kind);
+      const canAffordKind = equippedThisKind || targetLevel !== null;
 
       const rowBg = this.add.rectangle(px(SHOP_ITEM_X), y, px(SHOP_ITEM_W), px(SHOP_ROW_H - 4), selected ? 0x16162c : 0x0a0a18)
-        .setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
-      rowBg.on('pointerdown', () => { this.shopSelectedWeaponKind = kind; this.rebuildContent(); this.updatePreview(); });
-      rowBg.on('pointerover', () => { rowBg.setFillStyle(selected ? 0x1c1c38 : 0x12122a); });
-      rowBg.on('pointerout', () => { rowBg.setFillStyle(selected ? 0x16162c : 0x0a0a18); });
-      if (highestOwned === 0) rowBg.setAlpha(0.35);
+        .setOrigin(0, 0.5);
+      if (!kindLocked && canAffordKind) {
+        rowBg.setInteractive({ useHandCursor: true });
+        rowBg.on('pointerdown', () => { this.shopSelectedWeaponKind = kind; this.rebuildContent(); this.updatePreview(); });
+        rowBg.on('pointerover', () => { rowBg.setFillStyle(selected ? 0x1c1c38 : 0x12122a); });
+        rowBg.on('pointerout', () => { rowBg.setFillStyle(selected ? 0x16162c : 0x0a0a18); });
+      }
+      if (kindLocked) rowBg.setAlpha(0.35);
       this.addC(rowBg);
 
       this.addC(this.add.image(px(SHOP_ITEM_X + 18), y, iconTextureForWeaponId(iconId))
         .setOrigin(0.5).setBlendMode(Phaser.BlendModes.ADD)
-        .setScale(0.55 + Math.max(0, highestOwned - 1) * 0.04)
-        .setAlpha(highestOwned === 0 ? 0.3 : 1));
+        .setScale(0.55 + Math.max(0, equippedLevel - 1) * 0.04)
+        .setAlpha(kindLocked ? 0.15 : (canAffordKind ? (equippedThisKind ? 1 : 0.5) : 0.2)));
 
-      this.addC(this.add.text(px(SHOP_ITEM_X + 38), y, `${selected ? '▶ ' : ''}${weaponKindDisplayName(kind)}`, {
+      const nameLabel = equippedThisKind
+        ? `${weaponKindDisplayName(kind)} Lv${String(equippedLevel)}`
+        : targetLevel !== null && targetLevel > 1
+          ? `${weaponKindDisplayName(kind)} Lv${String(targetLevel)}`
+          : weaponKindDisplayName(kind);
+      this.addC(this.add.text(px(SHOP_ITEM_X + 38), y, nameLabel, {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(12))}px`,
-        color: cssColor(equippedThisKind ? PALETTE.weaponCyan : PALETTE.hullWhite),
-      }).setOrigin(0, 0.5).setAlpha(highestOwned === 0 ? 0.4 : 1));
+        color: cssColor(kindLocked ? 0x555577 : (equippedThisKind ? PALETTE.weaponCyan : PALETTE.hullWhite)),
+      }).setOrigin(0, 0.5).setAlpha(kindLocked ? 0.5 : (canAffordKind ? (equippedThisKind ? 1 : 0.6) : 0.25)));
 
-      const dots = Array.from({ length: MAX_WEAPON_LEVEL }, (_, i) => i < highestOwned ? '●' : '○').join('');
-      this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_ITEM_W - 4), y, dots, {
-        fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`,
-        color: cssColor(highestOwned > 0 ? PALETTE.weaponCyan : 0x555577),
-      }).setOrigin(1, 0.5).setAlpha(highestOwned === 0 ? 0.4 : 1));
+      if (kindLocked) {
+        this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_ITEM_W - 4), y, `★${String(kindMinStars)}`, {
+          fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(0x556677),
+        }).setOrigin(1, 0.5));
+      } else if (equippedThisKind) {
+        const dots = Array.from({ length: MAX_WEAPON_LEVEL }, (_, i) => i < equippedLevel ? '●' : '○').join('');
+        this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_ITEM_W - 4), y, dots, {
+          fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(PALETTE.weaponCyan),
+        }).setOrigin(1, 0.5));
+      } else if (targetLevel !== null) {
+        const netCost = itemById(`${kind}-${String(targetLevel)}`).price - itemById(this.save.equipped.weapon).price;
+        const label = netCost <= 0 ? (netCost < 0 ? `−${String(Math.abs(netCost))}⬤` : 'FREE') : `${String(netCost)}⬤`;
+        const color = netCost <= 0 ? PALETTE.shieldBlue : PALETTE.generatorAmber;
+        this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_ITEM_W - 4), y, label, {
+          fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(color),
+        }).setOrigin(1, 0.5).setAlpha(0.7));
+      } else {
+        this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_ITEM_W - 4), y, 'CAN\'T AFFORD', {
+          fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`, color: cssColor(0x445566),
+        }).setOrigin(1, 0.5).setAlpha(0.6));
+      }
     });
     this.buildWeaponActions();
   }
@@ -536,59 +691,45 @@ export class HubScene extends Phaser.Scene {
       return;
     }
     const kind = this.shopSelectedWeaponKind;
-    const highestOwned = this.highestOwnedLevel(kind);
-    if (highestOwned === 0) { this.buildWeaponFirstBuy(kind); return; }
+    const equippedLevel = this.equippedLevelForKind(kind);
+    if (equippedLevel === 0) { this.buildWeaponKindSwitch(kind); return; }
 
-    const nextLevel = highestOwned + 1;
-    const hasUpgrade = nextLevel <= MAX_WEAPON_LEVEL;
-    const equippedId = this.save.equipped.weapon;
-    const equippedThisKind = equippedId.startsWith(`${kind}-`);
-    const equippedLevel = equippedThisKind ? parseInt(equippedId.split('-')[1] ?? '1', 10) : 0;
-    const isFreeStarter = itemById(`${kind}-1`).price === 0 && highestOwned === 1;
-    const canSell = !isFreeStarter;
-
+    const nextLevel = equippedLevel + 1;
+    const hasUpgrade = equippedLevel < MAX_WEAPON_LEVEL;
+    const upgradeStarsNeeded = WEAPON_STARS[kind][equippedLevel] ?? Infinity;
+    const upgradeLocked = hasUpgrade && upgradeStarsNeeded > this.shopPlayerStars;
+    const hasDowngrade = equippedLevel > 1;
     const headerY = px(SHOP_ACTION_Y + 6);
     const midX = px(SHOP_ITEM_X + Math.round(SHOP_ITEM_W / 2));
     const colW = px(Math.round(SHOP_ITEM_W / 2) - 6);
-    const badge = equippedThisKind && equippedLevel === highestOwned ? '✓ EQUIP' : '';
 
-    this.addWeaponStatBlock(kind, highestOwned, { x: px(SHOP_ITEM_X), topY: headerY }, colW, badge);
-    if (hasUpgrade) {
+    this.addWeaponStatBlock(kind, equippedLevel, { x: px(SHOP_ITEM_X), topY: headerY }, colW, '✓ EQUIP');
+    if (hasUpgrade && !upgradeLocked) {
       this.addWeaponStatBlock(kind, nextLevel, { x: midX, topY: headerY }, colW, '');
+    } else if (upgradeLocked) {
+      this.addC(addLabel(this, { x: midX, y: headerY + px(4), text: `★${String(upgradeStarsNeeded)} to unlock Lv${String(nextLevel)}`, color: 0x556677, size: 10 }));
     } else {
       this.addC(addLabel(this, { x: midX, y: headerY + px(4), text: 'MAX LEVEL', color: PALETTE.weaponCyan, size: 10 }));
     }
 
     const btnY = px(SHOP_ACTION_Y + 68);
-    if (canSell) {
-      const refund = itemById(`${kind}-${String(highestOwned)}`).price;
+    if (hasDowngrade) {
+      const downCost = itemById(`${kind}-${String(equippedLevel)}`).price - itemById(`${kind}-${String(equippedLevel - 1)}`).price;
       this.addC(addTextButton(this, {
         x: px(SHOP_ITEM_X + 60), y: btnY,
-        label: `▼ SELL +${String(refund)}⬤`, color: PALETTE.enemyOrange, size: 11,
-        onClick: () => { this.save = sellWeaponLevel(this.save, kind); this.rebuildContent(); this.updatePreview(); },
+        label: `▼ LV${String(equippedLevel - 1)}  +${String(downCost)}⬤`, color: PALETTE.shieldBlue, size: 11,
+        onClick: () => { this.save = switchItem(this.save, `${kind}-${String(equippedLevel - 1)}`); this.rebuildContent(); this.updatePreview(); },
       }));
     }
-
-    if (hasUpgrade) {
-      const nextItem = itemById(`${kind}-${String(nextLevel)}`);
+    if (hasUpgrade && !upgradeLocked) {
+      const upgradeCost = itemById(`${kind}-${String(nextLevel)}`).price - itemById(`${kind}-${String(equippedLevel)}`).price;
       const upgradeBtn = addTextButton(this, {
-        x: canSell ? px(HUB_LEFT_W - 80) : px(CONTENT_MID), y: btnY,
-        label: `▲ Lv${String(nextLevel)} ${String(nextItem.price)}⬤`, color: PALETTE.generatorAmber, size: 11,
-        onClick: () => {
-          this.save = buyWeaponLevel(this.save, kind, nextLevel);
-          this.save = equipItem(this.save, `${kind}-${String(nextLevel)}`);
-          this.rebuildContent();
-          this.updatePreview();
-        },
+        x: hasDowngrade ? px(HUB_LEFT_W - 80) : px(CONTENT_MID), y: btnY,
+        label: `▲ LV${String(nextLevel)}  ${String(upgradeCost)}⬤`, color: PALETTE.generatorAmber, size: 11,
+        onClick: () => { this.save = switchItem(this.save, `${kind}-${String(nextLevel)}`); this.rebuildContent(); this.updatePreview(); },
       });
-      if (this.save.coins < nextItem.price) upgradeBtn.setAlpha(0.4);
+      if (this.save.coins < upgradeCost) upgradeBtn.setAlpha(0.4);
       this.addC(upgradeBtn);
-    } else if (!equippedThisKind || equippedLevel < highestOwned) {
-      this.addC(addTextButton(this, {
-        x: canSell ? px(HUB_LEFT_W - 80) : px(CONTENT_MID), y: btnY,
-        label: `EQUIP Lv${String(highestOwned)}`, color: PALETTE.weaponCyan, size: 11,
-        onClick: () => { this.save = equipItem(this.save, `${kind}-${String(highestOwned)}`); this.rebuildContent(); this.updatePreview(); },
-      }));
     }
   }
 
@@ -598,7 +739,7 @@ export class HubScene extends Phaser.Scene {
     maxWidth: number, badge: string,
   ): void {
     const spec = weaponSpecAtLevel(kind, level);
-    const tgt = spec.maxTargets === Infinity ? '∞' : String(spec.maxTargets);
+    const targets = spec.maxTargets === Infinity ? '∞' : String(spec.maxTargets);
     const hColor = badge ? PALETTE.weaponCyan : PALETTE.generatorAmber;
     this.addC(this.add.text(pos.x, pos.topY, `Lv${String(level)}${badge ? `  ${badge}` : ''}`, {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(hColor),
@@ -606,33 +747,38 @@ export class HubScene extends Phaser.Scene {
     this.addC(this.add.text(pos.x, pos.topY + px(14), `${String(spec.damagePerShot)}dmg  ${String(spec.ticksBetweenShots)}t`, {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`, color: cssColor(0x8888aa), wordWrap: { width: maxWidth },
     }));
-    this.addC(this.add.text(pos.x, pos.topY + px(26), `${tgt}tgt  ${String(spec.energyPerShot)}nrg`, {
+    this.addC(this.add.text(pos.x, pos.topY + px(26), `${targets} targets  ${String(spec.energyPerShot)} energy`, {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`, color: cssColor(0x8888aa), wordWrap: { width: maxWidth },
     }));
   }
 
-  private buildWeaponFirstBuy(kind: WeaponKind): void {
-    const spec = weaponSpecAtLevel(kind, 1);
-    const item = itemById(`${kind}-1`);
-    const tgt = spec.maxTargets === Infinity ? '∞' : String(spec.maxTargets);
+  private buildWeaponKindSwitch(kind: WeaponKind): void {
+    const targetLevel = this.bestAffordableLevelForKind(kind);
+    if (targetLevel === null) return; // row is greyed — no action panel
+    const spec = weaponSpecAtLevel(kind, targetLevel);
+    const targetItemId = `${kind}-${String(targetLevel)}`;
+    const netCost = itemById(targetItemId).price - itemById(this.save.equipped.weapon).price;
+    const targets = spec.maxTargets === Infinity ? '∞' : String(spec.maxTargets);
     this.addC(this.add.text(px(SHOP_ITEM_X), px(SHOP_ACTION_Y + 10),
-      `Lv1: ${String(spec.damagePerShot)}dmg  ${String(spec.ticksBetweenShots)}t  ${tgt}tgt  ${String(spec.energyPerShot)}nrg`, {
+      `Lv${String(targetLevel)}: ${String(spec.damagePerShot)}dmg  ${String(spec.ticksBetweenShots)}t  ${targets} targets  ${String(spec.energyPerShot)} energy`, {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`,
         color: cssColor(0x8888aa), wordWrap: { width: px(SHOP_ITEM_W) },
       }));
-    if (this.save.coins >= item.price) {
+    const btnY = px(SHOP_ACTION_Y + 68);
+    if (netCost <= 0) {
+      const refund = Math.abs(netCost);
       this.addC(addTextButton(this, {
-        x: px(CONTENT_MID), y: px(SHOP_ACTION_Y + 68),
-        label: `BUY Lv1  ${String(item.price)}⬤`, color: PALETTE.generatorAmber,
-        onClick: () => {
-          this.save = buyWeaponLevel(this.save, kind, 1);
-          this.save = equipItem(this.save, `${kind}-1`);
-          this.rebuildContent();
-          this.updatePreview();
-        },
+        x: px(CONTENT_MID), y: btnY,
+        label: refund > 0 ? `SWITCH  +${String(refund)}⬤ back` : 'SWITCH FREE',
+        color: PALETTE.shieldBlue,
+        onClick: () => { this.save = switchItem(this.save, targetItemId); this.rebuildContent(); this.updatePreview(); },
       }));
     } else {
-      this.addC(addLabel(this, { x: px(SHOP_ITEM_X), y: px(SHOP_ACTION_Y + 68), text: 'Not enough coins', color: PALETTE.enemyOrange, size: 12 }));
+      this.addC(addTextButton(this, {
+        x: px(CONTENT_MID), y: btnY,
+        label: `SWITCH  ${String(netCost)}⬤`, color: PALETTE.generatorAmber,
+        onClick: () => { this.save = switchItem(this.save, targetItemId); this.rebuildContent(); this.updatePreview(); },
+      }));
     }
   }
 
@@ -676,19 +822,37 @@ export class HubScene extends Phaser.Scene {
     this.addC(addLabel(this, { x: px(SHOP_ITEM_X), y: px(SHOP_ACTION_Y + 28), text: 'Charges refill free before every mission.', color: 0x8888aa, size: 11 }));
   }
 
-  private highestOwnedLevel(kind: WeaponKind): number {
-    for (let lv = MAX_WEAPON_LEVEL; lv >= 1; lv--) {
-      if (this.save.ownedItemIds.includes(`${kind}-${String(lv)}`)) return lv;
+  private equippedLevelForKind(kind: WeaponKind): number {
+    if (!this.save.equipped.weapon.startsWith(`${kind}-`)) return 0;
+    const level = parseInt(this.save.equipped.weapon.split('-')[1] ?? '0', 10);
+    return isNaN(level) ? 0 : level;
+  }
+
+  // Returns the highest level of `kind` the player can afford AND has stars for when
+  // switching from the current weapon, capped at the currently equipped level. null = none accessible.
+  private bestAffordableLevelForKind(kind: WeaponKind): number | null {
+    const currentPrice = itemById(this.save.equipped.weapon).price;
+    const parts = this.save.equipped.weapon.split('-');
+    const currentLevel = parseInt(parts[parts.length - 1] ?? '1', 10) || 1;
+    for (let lv = currentLevel; lv >= 1; lv--) {
+      if ((WEAPON_STARS[kind][lv - 1] ?? 0) > this.shopPlayerStars) continue;
+      const netCost = itemById(`${kind}-${String(lv)}`).price - currentPrice;
+      if (netCost <= 0 || this.save.coins >= netCost) return lv;
     }
-    return 0;
+    return null;
   }
 
   private prospectiveLoadout(current: LoadoutSnapshot): LoadoutSnapshot | null {
+    if (this.shopTab === 'ship') {
+      if (this.shopSelectedItemId === null || SHIPS[this.shopSelectedItemId] === undefined) return null;
+      if (this.save.equipped.ship === this.shopSelectedItemId) return null;
+      return { ...current, ship: shipById(this.shopSelectedItemId) };
+    }
     if (this.shopTab === 'weapon') {
       if (this.shopSelectedWeaponKind === null) return null;
       const kind = this.shopSelectedWeaponKind;
-      const highestOwned = this.highestOwnedLevel(kind);
-      const previewLevel = highestOwned > 0 ? highestOwned : 1;
+      const equippedLevel = this.equippedLevelForKind(kind);
+      const previewLevel = equippedLevel > 0 ? equippedLevel : 1;
       const spec = weaponSpecAtLevel(kind, previewLevel);
       if (current.weapon?.id === spec.id) return null;
       return { ...current, weapon: spec };
@@ -717,6 +881,7 @@ export class HubScene extends Phaser.Scene {
     const sfxMuted = Sound.isSfxMuted();
     const musicLabel = (): string => `MUSIC  ${Sound.isMusicMuted() ? 'OFF' : 'ON'}`;
     const sfxLabel = (): string => `SFX    ${Sound.isSfxMuted() ? 'OFF' : 'ON'}`;
+    const devLabel = (): string => `DEV MODE  ${this.save.devMode === false ? 'OFF' : 'ON'}`;
 
     const musicBtn = addTextButton(this, {
       x: baseX, y: px(CONTENT_TOP + 36), label: musicLabel(),
@@ -741,19 +906,65 @@ export class HubScene extends Phaser.Scene {
     });
     sfxBtn.setOrigin(0, 0.5);
     this.addC(sfxBtn);
+
+    const devOn = this.save.devMode !== false;
+    const devBtn = addTextButton(this, {
+      x: baseX, y: px(CONTENT_TOP + 140), label: devLabel(),
+      color: devOn ? PALETTE.generatorAmber : 0x666688, size: 14,
+      onClick: () => {
+        this.save = { ...this.save, devMode: this.save.devMode !== false ? false : true };
+        persistSave(this.save);
+        this.scene.restart();
+      },
+    });
+    devBtn.setOrigin(0, 0.5);
+    this.addC(devBtn);
+
+    if (devOn) {
+      const coinsBtn = addTextButton(this, {
+        x: baseX, y: px(CONTENT_TOP + 192), label: 'ADD 999999 COINS',
+        color: PALETTE.generatorAmber, size: 14,
+        onClick: () => {
+          this.save = { ...this.save, coins: this.save.coins + 999999 };
+          persistSave(this.save);
+          this.scene.restart();
+        },
+      });
+      coinsBtn.setOrigin(0, 0.5);
+      this.addC(coinsBtn);
+
+      const starsBtn = addTextButton(this, {
+        x: baseX, y: px(CONTENT_TOP + 244), label: 'UNLOCK ALL STARS',
+        color: PALETTE.generatorAmber, size: 14,
+        onClick: () => {
+          const allStars: Record<string, string[]> = {};
+          for (const mission of ALL_MISSIONS) {
+            if (mission.stars.length > 0) {
+              allStars[mission.id] = mission.stars.map((s) => s.id);
+            }
+          }
+          this.save = { ...this.save, missionStars: allStars };
+          persistSave(this.save);
+          this.scene.restart();
+        },
+      });
+      starsBtn.setOrigin(0, 0.5);
+      this.addC(starsBtn);
+    }
   }
 
   private buildTextContent(body: string): void {
     this.addC(this.add.text(px(CONTENT_PAD), px(CONTENT_TOP + 8), body, {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(11))}px`,
       color: cssColor(0xaaaacc), lineSpacing: px(4),
-      wordWrap: { width: px(HUB_LEFT_W - CONTENT_PAD * 2) },
+      wordWrap: { width: px(this.contentW - CONTENT_PAD * 2) },
     }));
   }
 }
 
 function starDescription(star: StarSpec): string {
   const DESCRIPTIONS: Record<StarFamily, (threshold: number) => string> = {
+    'finish-time':     (t) => `Finish in ${String(Math.round(t / TICKS_PER_SECOND))}s`,
     'hull-above':      (t) => `Finish hull > ${String(Math.round(t * 100))}%`,
     'all-kills':       () => 'No enemy reaches your ship',
     'shield-unbroken': () => 'Shield never breaks',

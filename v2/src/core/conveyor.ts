@@ -1,5 +1,6 @@
 import { COLLISION_DAMAGE_MULTIPLIER, SHIELD_BURST_RETURN } from './constants';
 import { damageShip } from './combat';
+import type { EffectiveStats } from './stats';
 import type { CoreState } from './types';
 
 /**
@@ -8,7 +9,7 @@ import type { CoreState } from './types';
  * If the shield absorbs any of the collision damage it bursts back, dealing a fraction of
  * the absorbed amount to all remaining live enemies.
  */
-export function advanceEnemies(state: CoreState): void {
+export function advanceEnemies(state: CoreState, stats: EffectiveStats): void {
   const survivors = [];
   let totalBurst = 0;
   for (const enemy of state.enemies) {
@@ -17,8 +18,9 @@ export function advanceEnemies(state: CoreState): void {
       survivors.push(enemy);
       continue;
     }
+    const collisionDamage = enemy.shotDamage * COLLISION_DAMAGE_MULTIPLIER * stats.shipCollisionDamageMult;
     const shieldBefore = state.ship.shield;
-    damageShip(state, enemy.shotDamage * COLLISION_DAMAGE_MULTIPLIER);
+    damageShip(state, collisionDamage);
     totalBurst += (shieldBefore - state.ship.shield) * SHIELD_BURST_RETURN;
     state.stats.collisions += 1;
   }

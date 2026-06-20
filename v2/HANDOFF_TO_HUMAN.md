@@ -214,23 +214,22 @@ simulation, call `resolveForcedLoadout(mission.forcedLoadout)` inside `tools/sim
 
 ---
 
-## 6. ⚠️ Known balance debt (your tuning pass)
+## 6. Tutorial balance — fixed
 
-The tutorial smoke-test in `src/core/regen.test.ts` now asserts only the **engine**
-invariant (every mission *terminates* within 2000 ticks — no stuck runs). It deliberately
-does **not** assert victory, because:
+All four tutorials (`t1`–`t4`) now clear in victory with their forced loadouts. The test in
+`src/core/regen.test.ts` asserts `state.status === 'victory'` for each; it will catch any
+future regression.
 
-- **`t1` (Shield Basics, weapon = none)** and **`t2` (Weapon Systems, pulse-laser-1)** do
-  **not** currently clear with their designed forced loadouts under greedy picks. They
-  resolve to `defeat`.
-- `t3` and `t4` do clear.
+Changes made:
+- **`t1`**: `GUARDIAN_SLOW.hp` 40 → 25, `missChance` 0 → 0.9. Guardians now mostly miss
+  during their approach so hull pressure stays low; the 7th guardian is killed by
+  accumulated burst damage (demonstrating the mechanic) before reaching the ship.
+- **`t2`**: waves 3 and 4 reduced from `count: 12, spacing: 5` to `count: 8, spacing: 10`.
+  Arrival rate (8.3 ticks) now matches the post-card kill time (~10 ticks), so the dense
+  wall is tight but beatable with `w-dmg-30`.
 
-This is a **balance** problem, not a code bug, so it was left for you. When you've tuned
-t1/t2 to win (via `missions.ts` waves, `items.ts` stats, or `constants.ts`), restore the
-stronger assertion: change `expect(state.status).not.toBe('running')` back to
-`expect(state.status).toBe('victory')` in that test, and it will guard clearability forever.
-
-Verify your tuning with: `pnpm sim -- --mission t2 --runs 500 --strategy greedy` (and t1).
+Run `pnpm sim -- --mission t1 --runs 500 --strategy greedy` (and t2) to measure clear-rate
+and tune further if you want the difficulty tighter.
 
 ---
 

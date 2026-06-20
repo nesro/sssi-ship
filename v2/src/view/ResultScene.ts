@@ -2,9 +2,10 @@ import Phaser from 'phaser';
 import { TICKS_PER_SECOND } from '../core/constants';
 import type { MissionResult } from '../core/result';
 import { missionById } from '../data/missions';
+import { loadSave, persistSave } from '../save/SaveManager';
 import { cssColor, PALETTE } from './palette';
 import { fontPx, px, SCREEN_WIDTH } from './layout';
-import { addLabel, addTextButton, UI_FONT } from './widgets';
+import { addLabel, addTextButton, drawDevBorder, UI_FONT } from './widgets';
 
 export interface ResultSceneData {
   result: MissionResult;
@@ -19,6 +20,7 @@ export class ResultScene extends Phaser.Scene {
 
   // fallow-ignore-next-line unused-class-member
   create(data: ResultSceneData): void {
+    drawDevBorder(this, loadSave());
     const { result, newStarIds } = data;
     const mission = missionById(result.missionId);
     const victory = result.status === 'victory';
@@ -54,6 +56,33 @@ export class ResultScene extends Phaser.Scene {
     });
 
     const buttonY = px(460);
+
+    if (result.missionId === 'w0' && victory) {
+      const save = loadSave();
+      addLabel(this, {
+        x: SCREEN_WIDTH / 2, y: px(390),
+        text: 'WHERE DO YOU WANT TO START?',
+        color: PALETTE.generatorAmber, size: 14,
+      });
+      addTextButton(this, {
+        x: SCREEN_WIDTH / 2 - px(140), y: buttonY, label: 'TUTORIAL',
+        color: PALETTE.generatorAmber, size: 16,
+        onClick: () => {
+          persistSave({ ...save, firstBranchChoice: 'tutorial' });
+          this.scene.start('HubScene');
+        },
+      });
+      addTextButton(this, {
+        x: SCREEN_WIDTH / 2 + px(140), y: buttonY, label: 'EXPLORE',
+        color: PALETTE.weaponCyan, size: 16,
+        onClick: () => {
+          persistSave({ ...save, firstBranchChoice: 'missions' });
+          this.scene.start('HubScene');
+        },
+      });
+      return;
+    }
+
     addTextButton(this, {
       x: SCREEN_WIDTH / 2 - px(160), y: buttonY, label: 'RETRY',
       color: PALETTE.weaponCyan,

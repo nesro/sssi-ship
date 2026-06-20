@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { damageShip, fireEnemyWeapons, fireShipWeapon } from './combat';
-import { FIXTURE_LOADOUT, FIXTURE_MISSION, FIXTURE_WEAPON, makeFixtureEnemy } from './fixtures';
+import { FIXTURE_LOADOUT, FIXTURE_MISSION, FIXTURE_SHIP, FIXTURE_WEAPON, makeFixtureEnemy } from './fixtures';
 import { computeEffectiveStats } from './stats';
 import { createCoreState } from './state';
-import type { CoreState } from './types';
+import type { CoreState, LoadoutSnapshot } from './types';
 
 function freshState(): CoreState {
   return createCoreState(FIXTURE_MISSION, FIXTURE_LOADOUT, 1);
@@ -150,9 +150,70 @@ describe('fireEnemyWeapons', () => {
     const state = freshState();
     state.ship.shield = 20; // shield starts at 0 by design; set explicitly for this test
     state.enemies = [makeFixtureEnemy({ shootTimer: 1, shotDamage: 5 })];
-    fireEnemyWeapons(state);
+    fireEnemyWeapons(state, statsOf(state));
     expect(state.ship.shield).toBe(15);
     expect(state.ship.hull).toBe(state.ship.maxHull);
+  });
+});
+
+describe('ship hull from spec', () => {
+  it('createCoreState sets hull and maxHull from the ship spec', () => {
+    const loadout: LoadoutSnapshot = { ...FIXTURE_LOADOUT, ship: { ...FIXTURE_SHIP, hull: 150 } };
+    const state = createCoreState(FIXTURE_MISSION, loadout, 1);
+    expect(state.ship.hull).toBe(150);
+    expect(state.ship.maxHull).toBe(150);
+  });
+});
+
+describe('ship passives', () => {
+  it('Interceptor: enemy shots always miss when missChance + shipEnemyMissBonus >= 1', () => {
+    const loadout: LoadoutSnapshot = {
+      ...FIXTURE_LOADOUT,
+      ship: { ...FIXTURE_SHIP, passiveKind: 'enemy-miss-bonus', passiveValue: 0.1 },
+    };
+    const state = createCoreState(FIXTURE_MISSION, loadout, 1);
+    state.enemies = [makeFixtureEnemy({ missChance: 0.9, shootTimer: 1, shotDamage: 10 })];
+    const stats = statsOf(state);
+    expect(stats.shipEnemyMissBonus).toBe(0.1);
+    fireEnemyWeapons(state, stats);
+    // effectiveMissChance = min(1, 0.9 + 0.1) = 1.0 → every shot misses
+    expect(state.ship.hull).toBe(state.ship.maxHull);
+    expect(state.ship.shield).toBe(0);
+  });
+
+  it('Salvager: coin reward is +50% on kill', () => {
+    const loadout: LoadoutSnapshot = {
+      ...FIXTURE_LOADOUT,
+      ship: { ...FIXTURE_SHIP, passiveKind: 'coin-bonus', passiveValue: 1.5 },
+    };
+    const state = createCoreState(FIXTURE_MISSION, loadout, 1);
+    state.enemies = [makeFixtureEnemy({ hp: 5, coinReward: 10 })];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    expect(state.stats.kills).toBe(1);
+    expect(state.stats.coinsEarned).toBe(15); // Math.round(10 * 1.5)
+  });
+
+  it('Warship: crit deals ×3 instead of the weapon spec critMult of ×2', () => {
+    const loadout: LoadoutSnapshot = {
+      ...FIXTURE_LOADOUT,
+      ship: { ...FIXTURE_SHIP, passiveKind: 'crit-mult-override', passiveValue: 3.0 },
+      weapon: { ...FIXTURE_WEAPON, critChance: 1.0, missChance: 0 }, // always crits
+    };
+    const state = createCoreState(FIXTURE_MISSION, loadout, 1);
+    state.enemies = [makeFixtureEnemy({ hp: 1000, distance: 50 })];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    expect(state.stats.damageDealt).toBe(FIXTURE_WEAPON.damagePerShot * 3); // 30, not 20
+  });
+
+  it('Reactor: generator capacity is base × 1.5 in EffectiveStats', () => {
+    const loadout: LoadoutSnapshot = {
+      ...FIXTURE_LOADOUT,
+      ship: { ...FIXTURE_SHIP, passiveKind: 'generator-capacity-bonus', passiveValue: 1.5 },
+    };
+    const stats = computeEffectiveStats(loadout, freshState().modifiers);
+    expect(stats.generatorCapacity).toBe(FIXTURE_LOADOUT.generator.capacity * 1.5);
   });
 });
 

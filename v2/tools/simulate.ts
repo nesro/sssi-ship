@@ -14,9 +14,11 @@ import { ALL_CARDS, cardById } from '../src/data/cards';
 import { ALL_MISSIONS, missionById } from '../src/data/missions';
 import { STARTER_LOADOUT } from '../src/data/loadouts';
 import {
+  DEFAULT_SHIP_ID,
   generatorSpecById,
   motorSpecById,
   shieldSpecById,
+  shipById,
   weaponSpecById,
 } from '../src/data/items';
 
@@ -31,6 +33,7 @@ interface CliOptions {
 const LOADOUTS: Record<CliOptions['loadout'], LoadoutSnapshot> = {
   starter: STARTER_LOADOUT,
   mid: {
+    ship: shipById(DEFAULT_SHIP_ID),
     weapon: weaponSpecById('pulse-laser-2'),
     shield: shieldSpecById('shield-2'),
     generator: generatorSpecById('generator-2'),
@@ -38,6 +41,7 @@ const LOADOUTS: Record<CliOptions['loadout'], LoadoutSnapshot> = {
     supplies: [],
   },
   full: {
+    ship: shipById(DEFAULT_SHIP_ID),
     weapon: weaponSpecById('lance-1'),
     shield: shieldSpecById('shield-3'),
     generator: generatorSpecById('generator-3'),

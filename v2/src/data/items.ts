@@ -2,6 +2,7 @@ import type {
   GeneratorSpec,
   MotorSpec,
   ShieldSpec,
+  ShipSpec,
   SupplySpec,
   WeaponKind,
   WeaponSpec,
@@ -13,10 +14,10 @@ import type {
 export type SystemKind = 'weapon' | 'shield' | 'generator' | 'motor';
 
 export type CatalogItem =
-  | { system: 'weapon'; name: string; price: number; blurb: string; spec: WeaponSpec; requires?: string }
-  | { system: 'shield'; name: string; price: number; blurb: string; spec: ShieldSpec; requires?: string }
-  | { system: 'generator'; name: string; price: number; blurb: string; spec: GeneratorSpec; requires?: string }
-  | { system: 'motor'; name: string; price: number; blurb: string; spec: MotorSpec; requires?: string };
+  | { system: 'weapon'; name: string; price: number; starsRequired?: number; blurb: string; spec: WeaponSpec; requires?: string }
+  | { system: 'shield'; name: string; price: number; starsRequired?: number; blurb: string; spec: ShieldSpec; requires?: string }
+  | { system: 'generator'; name: string; price: number; starsRequired?: number; blurb: string; spec: GeneratorSpec; requires?: string }
+  | { system: 'motor'; name: string; price: number; starsRequired?: number; blurb: string; spec: MotorSpec; requires?: string };
 
 // ---------- Weapon level system ----------
 
@@ -37,6 +38,14 @@ const WEAPON_BASE: Record<WeaponKind, {
   ion:     { displayName: 'Ion Lance',    blurb: 'Heavy single hits. Feed it energy.',       damage: 28, ticks: 7, energy: 14, targets: 1,        falloff: 1.0 },
   scatter: { displayName: 'Scatter Beam', blurb: 'Pierces multiple enemies. Crowd killer.',  damage: 7,  ticks: 5, energy: 9,  targets: 3,        falloff: 0.7 },
   nova:    { displayName: 'Nova Wave',    blurb: 'Hits every enemy. Swarm destroyer.',       damage: 3,  ticks: 9, energy: 16, targets: Infinity, falloff: 1.0 },
+};
+
+/** Stars required per weapon kind and level (index = level − 1). See docs/plans/star-progression.md. */
+export const WEAPON_STARS: Record<WeaponKind, [number, number, number, number, number]> = {
+  pulse:   [0,  4,  10, 18, 28],
+  ion:     [10, 18, 28, 38, 38],
+  scatter: [10, 18, 28, 38, 38],
+  nova:    [18, 28, 38, 38, 38],
 };
 
 /** Coin cost per level (index = level − 1). Pulse level 1 is free (starter). */
@@ -60,6 +69,9 @@ export function weaponSpecAtLevel(kind: WeaponKind, level: number): WeaponSpec {
     energyPerShot: Math.round(base.energy * Math.pow(1.15, t) * 10) / 10,
     maxTargets: kind === 'nova' ? Infinity : base.targets + maxT,
     falloffPerTarget: base.falloff,
+    critChance: 0,
+    missChance: 0,
+    critMult: 2.0,
   };
 }
 
@@ -84,6 +96,7 @@ const WEAPON_ITEMS: Record<string, CatalogItem> = Object.fromEntries(
         system: 'weapon' as const,
         name: weaponDisplayName(kind, level),
         price: WEAPON_PRICES[kind][i] ?? 0,
+        starsRequired: WEAPON_STARS[kind][i] ?? 0,
         blurb: base.blurb,
         spec: weaponSpecAtLevel(kind, level),
       }];
@@ -101,24 +114,24 @@ export const ITEMS: Record<string, CatalogItem> = {
     spec: { id: 'shield-1', capacity: 30, pulseShieldFraction: 0.08 },
   },
   'shield-2': {
-    system: 'shield', name: 'Barricade', price: 250, requires: 'shield-1',
+    system: 'shield', name: 'Barricade', price: 250, starsRequired: 4, requires: 'shield-1',
     blurb: 'Wall path. Thick cap, heavier recharge.',
     spec: { id: 'shield-2', capacity: 70, pulseShieldFraction: 0.10 },
   },
   'shield-3': {
-    system: 'shield', name: 'Fortress', price: 900, requires: 'shield-2',
+    system: 'shield', name: 'Fortress', price: 900, starsRequired: 18, requires: 'shield-2',
     blurb: 'Wall path. Near-invulnerable cap. Recharge is a commitment.',
     spec: { id: 'shield-3', capacity: 120, pulseShieldFraction: 0.12 },
   },
 
   // ── Shield: Reflex path (low capacity, cheap rapid recharge) ─────────────────
   'shield-reflex-2': {
-    system: 'shield', name: 'Reflex Shield', price: 200, requires: 'shield-1',
+    system: 'shield', name: 'Reflex Shield', price: 200, starsRequired: 4, requires: 'shield-1',
     blurb: 'Reflex path. Breaks easily, snaps back instantly.',
     spec: { id: 'shield-reflex-2', capacity: 22, pulseShieldFraction: 0.35 },
   },
   'shield-reflex-3': {
-    system: 'shield', name: 'Phase Cloak', price: 700, requires: 'shield-reflex-2',
+    system: 'shield', name: 'Phase Cloak', price: 700, starsRequired: 18, requires: 'shield-reflex-2',
     blurb: 'Reflex path. Minimal cap, nearly free to maintain. Syncs with SHATTERED CORE.',
     spec: { id: 'shield-reflex-3', capacity: 18, pulseShieldFraction: 0.50 },
   },
@@ -130,24 +143,24 @@ export const ITEMS: Record<string, CatalogItem> = {
     spec: { id: 'generator-1', outputPerTick: 2, capacity: 50, pulseDrainFraction: 0.50 },
   },
   'generator-2': {
-    system: 'generator', name: 'Overdrive Core', price: 300, requires: 'generator-1',
+    system: 'generator', name: 'Overdrive Core', price: 300, starsRequired: 4, requires: 'generator-1',
     blurb: 'Torrent path. High output, small buffer — great for fast weapons.',
     spec: { id: 'generator-2', outputPerTick: 5, capacity: 40, pulseDrainFraction: 0.60 },
   },
   'generator-3': {
-    system: 'generator', name: 'Quantum Reactor', price: 1000, requires: 'generator-2',
+    system: 'generator', name: 'Quantum Reactor', price: 1000, starsRequired: 18, requires: 'generator-2',
     blurb: 'Torrent path. Absurd output. Battery barely matters.',
     spec: { id: 'generator-3', outputPerTick: 9, capacity: 40, pulseDrainFraction: 0.65 },
   },
 
   // ── Generator: Reserve path (moderate output, massive battery) ───────────────
   'generator-reserve-2': {
-    system: 'generator', name: 'Reservoir', price: 280, requires: 'generator-1',
+    system: 'generator', name: 'Reservoir', price: 280, starsRequired: 4, requires: 'generator-1',
     blurb: 'Reserve path. Steady trickle, huge tank — great for ion and nova.',
     spec: { id: 'generator-reserve-2', outputPerTick: 2.5, capacity: 130, pulseDrainFraction: 0.28 },
   },
   'generator-reserve-3': {
-    system: 'generator', name: 'Singularity Bank', price: 950, requires: 'generator-reserve-2',
+    system: 'generator', name: 'Singularity Bank', price: 950, starsRequired: 18, requires: 'generator-reserve-2',
     blurb: 'Reserve path. Enormous bank. Fire in bursts. Pairs perfectly with FULL CHARGE.',
     spec: { id: 'generator-reserve-3', outputPerTick: 3, capacity: 220, pulseDrainFraction: 0.22 },
   },
@@ -159,31 +172,29 @@ export const ITEMS: Record<string, CatalogItem> = {
     spec: { id: 'motor-1', timelineMultiplier: 1, powerDrawPerTick: 0.3 },
   },
   'motor-2': {
-    system: 'motor', name: 'Surge Motor', price: 400, requires: 'motor-1',
-    blurb: 'Rush path. Waves arrive 35% sooner. Time-star bait.',
-    spec: { id: 'motor-2', timelineMultiplier: 1.35, powerDrawPerTick: 0.8 },
+    system: 'motor', name: 'Surge Motor', price: 400, starsRequired: 4, requires: 'motor-1',
+    blurb: 'Rush path. Waves arrive twice as fast. Time-star goldmine — if you survive.',
+    spec: { id: 'motor-2', timelineMultiplier: 2.0, powerDrawPerTick: 1.2 },
   },
   'motor-3': {
-    system: 'motor', name: 'Comet Drive', price: 1100, requires: 'motor-2',
-    blurb: 'Rush path. 70% faster missions. Hope your generator agrees.',
-    spec: { id: 'motor-3', timelineMultiplier: 1.7, powerDrawPerTick: 1.5 },
+    system: 'motor', name: 'Comet Drive', price: 1100, starsRequired: 18, requires: 'motor-2',
+    blurb: 'Rush path. 3.5× timeline. Enemies erupt before you breathe. You were warned.',
+    spec: { id: 'motor-3', timelineMultiplier: 3.5, powerDrawPerTick: 2.5 },
   },
 
   // ── Motor: Tactical path (normal speed, extra card offers) ───────────────────
   'motor-tactical-2': {
-    system: 'motor', name: 'Tactical Engine', price: 350, requires: 'motor-1',
+    system: 'motor', name: 'Tactical Engine', price: 350, starsRequired: 4, requires: 'motor-1',
     blurb: 'Tactical path. Same pace, sips power, +1 bonus card per support call.',
     spec: { id: 'motor-tactical-2', timelineMultiplier: 1, powerDrawPerTick: 0.1, bonusCardsPerSupportCall: 1 },
   },
   'motor-tactical-3': {
-    system: 'motor', name: 'Strategic Drive', price: 900, requires: 'motor-tactical-2',
+    system: 'motor', name: 'Strategic Drive', price: 900, starsRequired: 18, requires: 'motor-tactical-2',
     blurb: 'Tactical path. Slight speed boost, +2 bonus cards per call, +2 rerolls/mission.',
     spec: { id: 'motor-tactical-3', timelineMultiplier: 1.1, powerDrawPerTick: 0.15, bonusCardsPerSupportCall: 2, bonusRerollsPerMission: 2 },
   },
 };
 
-// pulse-1 is the only free starter weapon; all other weapon types must be purchased
-export const STARTER_ITEM_IDS = ['pulse-1', 'shield-1', 'generator-1', 'motor-1'];
 
 export function itemById(id: string): CatalogItem {
   const item = ITEMS[id];
@@ -250,4 +261,42 @@ export function supplyById(id: string): SupplyCatalogEntry {
   const entry = SUPPLIES[id];
   if (entry === undefined) throw new Error(`Unknown supply "${id}"`);
   return entry;
+}
+
+// ---------- Ships ----------
+
+export const DEFAULT_SHIP_ID = 'ship-interceptor';
+
+export const SHIPS: Record<string, ShipSpec> = {
+  'ship-interceptor': {
+    id: 'ship-interceptor', name: 'Interceptor', hull: 80, price: 0,
+    passiveKind: 'enemy-miss-bonus', passiveValue: 0.10,
+    passiveDescription: 'Enemies miss +10% more often',
+  },
+  'ship-tanker': {
+    id: 'ship-tanker', name: 'Tanker', hull: 150, price: 1200, starsRequired: 18,
+    passiveKind: 'collision-reduction', passiveValue: 0.5,
+    passiveDescription: 'Collision damage −50%',
+  },
+  'ship-salvager': {
+    id: 'ship-salvager', name: 'Salvager', hull: 100, price: 900, starsRequired: 4,
+    passiveKind: 'coin-bonus', passiveValue: 1.5,
+    passiveDescription: '+50% coins from kills',
+  },
+  'ship-reactor': {
+    id: 'ship-reactor', name: 'Reactor', hull: 90, price: 1000, starsRequired: 18,
+    passiveKind: 'generator-capacity-bonus', passiveValue: 1.5,
+    passiveDescription: 'Generator capacity +50%',
+  },
+  'ship-warship': {
+    id: 'ship-warship', name: 'Warship', hull: 110, price: 1400, starsRequired: 38,
+    passiveKind: 'crit-mult-override', passiveValue: 3.0,
+    passiveDescription: 'Crits deal ×3 instead of ×2',
+  },
+};
+
+export function shipById(id: string): ShipSpec {
+  const ship = SHIPS[id];
+  if (ship === undefined) throw new Error(`Unknown ship "${id}"`);
+  return ship;
 }

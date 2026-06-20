@@ -17,6 +17,14 @@ export interface EffectiveStats {
   generatorPulseDrain: number;
   motorTimelineMultiplier: number;
   motorDraw: number;
+  /** Interceptor: added to each enemy's missChance when rolling their shots. */
+  shipEnemyMissBonus: number;
+  /** Tanker: multiplied with collision damage (0.5 = half; 1.0 = no change). */
+  shipCollisionDamageMult: number;
+  /** Salvager: multiplied with coin rewards on kill (1.5 = +50%; 1.0 = no change). */
+  shipCoinMult: number;
+  /** Warship: overrides player weapon critMult when non-null. */
+  shipCritMultOverride: number | null;
 }
 
 export function defaultModifiers(): RunModifiers {
@@ -75,8 +83,9 @@ export function computeEffectiveStats(
   mods: RunModifiers,
   damageBoostMult = 1,
 ): EffectiveStats {
-  const { weapon, shield, generator, motor } = loadout;
-  const generatorCapacity = generator.capacity + mods.generatorCapacityBonus;
+  const { ship, weapon, shield, generator, motor } = loadout;
+  const reactorMult = ship.passiveKind === 'generator-capacity-bonus' ? ship.passiveValue : 1;
+  const generatorCapacity = generator.capacity * reactorMult + mods.generatorCapacityBonus;
   return {
     weaponEquipped: weapon !== null,
     weaponDamage: weapon !== null ? weapon.damagePerShot * mods.weaponDamageMult * damageBoostMult : 0,
@@ -91,6 +100,10 @@ export function computeEffectiveStats(
     generatorPulseDrain: generator.pulseDrainFraction * generatorCapacity,
     motorTimelineMultiplier: motor.timelineMultiplier * mods.motorTimelineMult,
     motorDraw: motor.powerDrawPerTick * mods.motorDrawMult,
+    shipEnemyMissBonus: ship.passiveKind === 'enemy-miss-bonus' ? ship.passiveValue : 0,
+    shipCollisionDamageMult: ship.passiveKind === 'collision-reduction' ? ship.passiveValue : 1,
+    shipCoinMult: ship.passiveKind === 'coin-bonus' ? ship.passiveValue : 1,
+    shipCritMultOverride: ship.passiveKind === 'crit-mult-override' ? ship.passiveValue : null,
   };
 }
 

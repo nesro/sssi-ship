@@ -7,9 +7,20 @@ import type {
   EnemyState,
   LoadoutSnapshot,
   MissionSpec,
+  ShipSpec,
 } from './types';
 
 const seconds = (n: number): number => n * TICKS_PER_SECOND;
+
+export const FIXTURE_SHIP: ShipSpec = {
+  id: 'fix-ship',
+  name: 'Test Ship',
+  hull: 100,
+  price: 0,
+  passiveKind: 'enemy-miss-bonus',
+  passiveValue: 0,
+  passiveDescription: 'No passive',
+};
 
 export const FIXTURE_WEAPON: NonNullable<LoadoutSnapshot['weapon']> = {
   id: 'fix-laser',
@@ -19,9 +30,13 @@ export const FIXTURE_WEAPON: NonNullable<LoadoutSnapshot['weapon']> = {
   energyPerShot: 6,
   maxTargets: 1,
   falloffPerTarget: 1,
+  critChance: 0,
+  missChance: 0,
+  critMult: 2.0,
 };
 
 export const FIXTURE_LOADOUT: LoadoutSnapshot = {
+  ship: FIXTURE_SHIP,
   weapon: FIXTURE_WEAPON,
   shield: { id: 'fix-shield', capacity: 30, pulseShieldFraction: 0.1 },
   generator: { id: 'fix-generator', outputPerTick: 2, capacity: 50, pulseDrainFraction: 0.5 },
@@ -37,6 +52,9 @@ export const FIXTURE_FODDER: EnemySpec = {
   ticksBetweenShots: seconds(2),
   blocksConveyor: false,
   coinReward: 5,
+  critChance: 0,
+  missChance: 0,
+  critMult: 2.0,
 };
 
 export const FIXTURE_BLOCKER: EnemySpec = {
@@ -47,6 +65,9 @@ export const FIXTURE_BLOCKER: EnemySpec = {
   ticksBetweenShots: seconds(1.5),
   blocksConveyor: true,
   coinReward: 25,
+  critChance: 0,
+  missChance: 0,
+  critMult: 2.0,
 };
 
 export const FIXTURE_MISSION: MissionSpec = {
@@ -86,6 +107,9 @@ export function makeFixtureEnemy(overrides: Partial<EnemyState>): EnemyState {
     coinReward: 5,
     isBoss: false,
     regenPerTick: 0,
+    critChance: 0,
+    missChance: 0,
+    critMult: 2.0,
     ...overrides,
   };
 }

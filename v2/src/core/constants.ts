@@ -17,9 +17,6 @@ export const SHIELD_BURST_RETURN = 0.6;
 /** Conveyor lane length in abstract distance units. Ship sits at 0; enemies spawn at the end. */
 export const LANE_LENGTH = 100;
 
-/** Ship hull is fixed in week 1; hull upgrades are a shop concern for later weeks. */
-export const SHIP_MAX_HULL = 100;
-
 /** Spawn spacing jitter fraction; seeded, so replays still reproduce exactly. */
 export const SPAWN_JITTER = 0.1;
 

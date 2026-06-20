@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { cssColor } from './palette';
-import { fontPx, px } from './layout';
+import { fontPx, px, SCREEN_WIDTH, SCREEN_HEIGHT } from './layout';
+import type { SaveData } from '../save/SaveManager';
 
 export const UI_FONT = 'Menlo, Consolas, monospace';
 
@@ -50,6 +51,14 @@ export function addLabel(scene: Phaser.Scene, options: LabelOptions): Phaser.Gam
     fontSize: `${String(fontPx(options.size ?? 15))}px`,
     color: cssColor(options.color),
   });
+}
+
+/** 1px white border around the full canvas — visible when devMode is on. */
+export function drawDevBorder(scene: Phaser.Scene, save: SaveData): void {
+  if (save.devMode === false) return;
+  const g = scene.add.graphics().setDepth(99);
+  g.lineStyle(px(1), 0xffffff, 1);
+  g.strokeRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
 }
 
 /** Dimmed full-screen backdrop used by modal overlays. */

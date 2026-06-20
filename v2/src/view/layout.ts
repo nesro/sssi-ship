@@ -9,16 +9,14 @@ export const DPR = Math.max(1, Math.round((globalThis.devicePixelRatio || 1) * 1
 export const SCREEN_WIDTH = LOGICAL_WIDTH * DPR;
 export const SCREEN_HEIGHT = LOGICAL_HEIGHT * DPR;
 
-/** Width of the left panel (vertical stat bars) in logical units. */
-export const LEFT_PANEL_W = 90;
-/** Width of the right panel (supplies + info) in logical units. */
-export const RIGHT_PANEL_W = 90;
+/** Width of the left info panel (stat bars + stats) in logical units. */
+export const LEFT_PANEL_W = 260;
+/** Width of the right button panel (supplies + exit) in logical units. */
+export const RIGHT_PANEL_W = 260;
 /** X coordinate where the game field starts. */
 export const GAME_X = LEFT_PANEL_W;
-/** Width of the game field in logical units (960 − 90 − 90 = 780). */
+/** Width of the game field in logical units (~46% of screen). */
 export const GAME_WIDTH = LOGICAL_WIDTH - LEFT_PANEL_W - RIGHT_PANEL_W;
-/** @deprecated use LEFT_PANEL_W */
-export const PANEL_WIDTH = LEFT_PANEL_W;
 
 /** Width of each half in the hub (menu+shop) screen. */
 export const HUB_LEFT_W = 480;

@@ -18,7 +18,8 @@ import type { CoreState } from './types';
  * advancing. Resolve the offer (resolveCardAction) to resume.
  */
 export function advanceTick(state: CoreState): void {
-  if (state.status !== 'running' || state.pendingOffer !== null) return;
+  if (state.status !== 'running' || state.pendingOffer !== null || state.pendingNarrator !== null) return;
+  state.pendingVisualEvents = [];
   state.tick += 1;
 
   // Effective stats fold loadout + cards + timed boosts once per tick — phases share it.
@@ -28,13 +29,26 @@ export function advanceTick(state: CoreState): void {
   advanceTimeline(state, stats);
   regenerateEnemies(state);
   fireShipWeapon(state, stats);
-  fireEnemyWeapons(state);
-  advanceEnemies(state);
+  fireEnemyWeapons(state, stats);
+  advanceEnemies(state, stats);
   pulseShield(state, stats);
   pruneExpiredEffects(state);
   maybeTriggerBonusCall(state);
 
   resolveOutcome(state);
+  checkNarratorEvents(state);
+}
+
+function checkNarratorEvents(state: CoreState): void {
+  const events = state.mission.narratorEvents;
+  if (events === undefined || state.status !== 'running') return;
+  for (const event of events) {
+    if (state.timelineTick >= event.atTimelineTick && !state.firedNarratorTicks.includes(event.atTimelineTick)) {
+      state.pendingNarrator = [...event.lines];
+      state.firedNarratorTicks.push(event.atTimelineTick);
+      return;
+    }
+  }
 }
 
 /** Blocker deaths queue bonus support calls; fire one as soon as no offer is pending. */

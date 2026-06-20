@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { CARD_ACTION_REROLL, CARD_ACTION_SKIP } from '../core/constants';
+import { CARD_ACTION_REROLL } from '../core/constants';
 import type { CardOffer, CoreState } from '../core/types';
 import { cardById } from '../data/cards';
 import { cssColor, PALETTE } from './palette';
@@ -94,30 +94,35 @@ export class CardOverlay {
       })
       .setOrigin(0.5)
       .setDepth(DEPTH + 2);
-    this.objects.push(panel, name, description);
+    const iconCX = x - width / 2 + px(26);
+    const iconCY = y - height / 2 + px(30);
+    const iconGfx = this.scene.add.graphics().setDepth(DEPTH + 2).setBlendMode(Phaser.BlendModes.ADD);
+    iconGfx.fillStyle(color, 0.08);
+    iconGfx.fillCircle(iconCX, iconCY, px(20));
+    iconGfx.fillStyle(color, 0.22);
+    iconGfx.fillCircle(iconCX, iconCY, px(12));
+    iconGfx.fillStyle(color, 0.80);
+    iconGfx.fillCircle(iconCX, iconCY, px(7));
+    const SYSTEM_CHARS: Record<string, string> = { weapon: 'W', shield: 'S', generator: 'G', motor: 'M' };
+    const iconText = this.scene.add.text(iconCX, iconCY, SYSTEM_CHARS[card.system] ?? '?', {
+      fontFamily: UI_FONT,
+      fontSize: `${String(fontPx(11))}px`,
+      color: cssColor(color),
+    }).setOrigin(0.5, 0.45).setDepth(DEPTH + 3);
+    this.objects.push(panel, name, description, iconGfx, iconText);
   }
 
   private addFooterButtons(state: CoreState): void {
+    if (state.rerollsLeft <= 0) return;
     const totalH = 3 * px(CARD_HEIGHT_LOGICAL) + 2 * px(CARD_GAP_LOGICAL);
     const y = SCREEN_HEIGHT / 2 + totalH / 2 + px(40);
-    if (state.rerollsLeft > 0) {
-      this.objects.push(
-        addTextButton(this.scene, {
-          x: SCREEN_WIDTH / 2 - px(90),
-          y,
-          label: `REROLL (${String(state.rerollsLeft)})`,
-          color: PALETTE.generatorAmber,
-          onClick: () => { this.onAction(CARD_ACTION_REROLL); },
-        }).setDepth(DEPTH + 2),
-      );
-    }
     this.objects.push(
       addTextButton(this.scene, {
-        x: SCREEN_WIDTH / 2 + px(90),
+        x: SCREEN_WIDTH / 2,
         y,
-        label: 'SKIP',
-        color: PALETTE.hullWhite,
-        onClick: () => { this.onAction(CARD_ACTION_SKIP); },
+        label: `REROLL (${String(state.rerollsLeft)})`,
+        color: PALETTE.generatorAmber,
+        onClick: () => { this.onAction(CARD_ACTION_REROLL); },
       }).setDepth(DEPTH + 2),
     );
   }

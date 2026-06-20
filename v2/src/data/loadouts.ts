@@ -1,14 +1,17 @@
 import type { ForcedLoadout, LoadoutSnapshot, SupplyLoadout } from '../core/types';
 import {
+  DEFAULT_SHIP_ID,
   generatorSpecById,
   motorSpecById,
   shieldSpecById,
+  shipById,
   supplyById,
   weaponSpecById,
 } from './items';
 
 /** The rig every new save starts with — built from the catalog, never duplicated. */
 export const STARTER_LOADOUT: LoadoutSnapshot = {
+  ship: shipById(DEFAULT_SHIP_ID),
   weapon: weaponSpecById('pulse-1'),
   shield: shieldSpecById('shield-1'),
   generator: generatorSpecById('generator-1'),
@@ -29,6 +32,7 @@ export function resolveForcedLoadout(forced: ForcedLoadout): LoadoutSnapshot {
     }
   }
   return {
+    ship: shipById(forced.shipId ?? DEFAULT_SHIP_ID),
     weapon: forced.weaponId !== null ? weaponSpecById(forced.weaponId) : null,
     shield: shieldSpecById(forced.shieldId),
     generator: generatorSpecById(forced.generatorId),

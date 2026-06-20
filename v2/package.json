@@ -11,7 +11,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "sim": "tsx tools/simulate.ts"
+    "sim": "tsx tools/simulate.ts",
+    "balance": "tsx tools/balance-sweep.ts"
   },
   "dependencies": {
     "@capacitor/android": "^7.2.0",
