@@ -1,8 +1,8 @@
-import { createCardOffer } from './cards';
+import { createAbilityOffer } from './cards';
 import { fireEnemyWeapons, fireShipWeapon, regenerateEnemies } from './combat';
 import { advanceEnemies } from './conveyor';
 import { pulseShield, regenerateEnergy } from './energy';
-import { activeDamageMult, computeEffectiveStats } from './stats';
+import { activeDamageMult, activeFireRateMult, activeGeneratorMult, computeEffectiveStats } from './stats';
 import { pruneExpiredEffects } from './supplies';
 import { advanceTimeline } from './timeline';
 import type { CoreState } from './types';
@@ -14,8 +14,8 @@ import type { CoreState } from './types';
  * energy → timeline/spawns → enemy regen → ship fire → enemy fire → movement →
  * shield pulse → prune effects → bonus calls → outcome.
  *
- * While a card offer is pending the sim is paused: this function returns without
- * advancing. Resolve the offer (resolveCardAction) to resume.
+ * While an ability offer is pending the sim is paused: this function returns without
+ * advancing. Resolve the offer (resolveAbilityAction) to resume.
  */
 export function advanceTick(state: CoreState): void {
   if (state.status !== 'running' || state.pendingOffer !== null || state.pendingNarrator !== null) return;
@@ -23,9 +23,12 @@ export function advanceTick(state: CoreState): void {
   state.tick += 1;
 
   // Effective stats fold loadout + cards + timed boosts once per tick — phases share it.
-  const stats = computeEffectiveStats(state.loadout, state.modifiers, activeDamageMult(state));
+  const stats = computeEffectiveStats(state.loadout, state.modifiers, activeDamageMult(state), activeFireRateMult(state), activeGeneratorMult(state));
 
   regenerateEnergy(state, stats);
+  for (const slot of state.equippedAbilities) {
+    if (slot.cooldownLeft > 0) slot.cooldownLeft -= 1;
+  }
   advanceTimeline(state, stats);
   regenerateEnemies(state);
   fireShipWeapon(state, stats);
@@ -54,12 +57,12 @@ function checkNarratorEvents(state: CoreState): void {
 /** Blocker deaths queue bonus support calls; fire one as soon as no offer is pending. */
 function maybeTriggerBonusCall(state: CoreState): void {
   if (state.bonusCallsPending <= 0 || state.pendingOffer !== null) return;
-  if (state.cardPool.length === 0) {
+  if (state.abilityPool.length === 0) {
     state.bonusCallsPending = 0;
     return;
   }
   state.bonusCallsPending -= 1;
-  state.pendingOffer = createCardOffer(state);
+  state.pendingOffer = createAbilityOffer(state);
 }
 
 function resolveOutcome(state: CoreState): void {

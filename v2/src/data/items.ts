@@ -202,6 +202,19 @@ export function itemById(id: string): CatalogItem {
   return item;
 }
 
+/** Returns all ancestor item IDs for a given item, walking the requires chain upward. */
+export function requiresAncestors(itemId: string): string[] {
+  const ancestors: string[] = [];
+  let current = itemId;
+  for (;;) {
+    const item = ITEMS[current];
+    if (item === undefined || item.requires === undefined) break;
+    ancestors.push(item.requires);
+    current = item.requires;
+  }
+  return ancestors;
+}
+
 export function weaponSpecById(id: string): WeaponSpec {
   const item = itemById(id);
   if (item.system !== 'weapon') throw new Error(`Item "${id}" is not a weapon`);

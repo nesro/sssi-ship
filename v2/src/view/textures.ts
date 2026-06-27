@@ -108,6 +108,7 @@ export function laserTextureForWeaponId(weaponId: string): string {
   if (kind === 'ion')     return TEXTURE_KEYS.laserIon;
   if (kind === 'scatter') return upgraded ? TEXTURE_KEYS.laserScatter2 : TEXTURE_KEYS.laserScatter1;
   if (kind === 'nova')    return upgraded ? TEXTURE_KEYS.laserNova2    : TEXTURE_KEYS.laserNova1;
+  console.warn(`Unknown weapon kind "${kind}" in laserTextureForWeaponId — falling back to pulse1`);
   return TEXTURE_KEYS.laserPulse1;
 }
 
@@ -119,6 +120,7 @@ export function iconTextureForWeaponId(weaponId: string): string {
   if (kind === 'ion')     return TEXTURE_KEYS.iconIon;
   if (kind === 'scatter') return upgraded ? TEXTURE_KEYS.iconScatter2 : TEXTURE_KEYS.iconScatter1;
   if (kind === 'nova')    return upgraded ? TEXTURE_KEYS.iconNova2    : TEXTURE_KEYS.iconNova1;
+  console.warn(`Unknown weapon kind "${kind}" in iconTextureForWeaponId — falling back to pulse1`);
   return TEXTURE_KEYS.iconPulse1;
 }
 

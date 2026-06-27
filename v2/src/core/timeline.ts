@@ -1,5 +1,5 @@
 import { LANE_LENGTH, SPAWN_JITTER } from './constants';
-import { createCardOffer } from './cards';
+import { createAbilityOffer } from './cards';
 import type { EffectiveStats } from './stats';
 import type { CoreState, EnemySpec, SpawnEvent } from './types';
 
@@ -25,12 +25,12 @@ export function advanceTimeline(state: CoreState, stats: EffectiveStats): void {
 
 /** The helper ship flies by at designed timeline points and offers cards (§3.6). */
 function maybeTriggerSupportCall(state: CoreState): void {
-  if (state.pendingOffer !== null || state.cardPool.length === 0) return;
+  if (state.pendingOffer !== null || state.abilityPool.length === 0) return;
   const calls = state.mission.supportCallTicks;
   const next = calls[state.supportCallsDone];
   if (next !== undefined && state.timelineTick >= next) {
     state.supportCallsDone += 1;
-    state.pendingOffer = createCardOffer(state);
+    state.pendingOffer = createAbilityOffer(state);
     // Tactical motor: each scheduled call queues N extra bonus offers
     const bonus = state.loadout.motor.bonusCardsPerSupportCall ?? 0;
     if (bonus > 0) state.bonusCallsPending += bonus;

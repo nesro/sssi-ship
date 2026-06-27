@@ -117,8 +117,8 @@ if (this.save.firstBranchChoice && this.save.completedMissions?.length === 1) {
 - [ ] Test plan approved by user
 
 **Guardrails**
-- [ ] `pendingNarrator` cleared on mission exit/abandon (no stuck state)
-- [ ] No swallowed exceptions in narrator tick check
+- [x] `pendingNarrator` cleared on mission exit/abandon — `createCoreState` always initializes `pendingNarrator: null`; each mission start creates a fresh state, so no carry-over is possible
+- [x] No swallowed exceptions in narrator tick check — `checkNarratorEvents` is pure data iteration with no try/catch needed
 
 **File hygiene**
-- [ ] No hardcoded narrator text in view layer — all strings in mission spec
+- [x] No hardcoded narrator text in view layer — all strings live in `W0_NARRATOR_EVENTS` in `src/data/missions.ts`

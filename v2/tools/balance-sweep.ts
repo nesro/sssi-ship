@@ -19,8 +19,8 @@ import { runMission } from '../src/core/replay';
 import type { RunPolicies } from '../src/core/replay';
 import { buildMissionResult } from '../src/core/result';
 import { mulberry32 } from '../src/core/rng';
-import type { CardOffer, CoreState, LoadoutSnapshot } from '../src/core/types';
-import { ALL_CARDS, cardById } from '../src/data/cards';
+import type { AbilityOffer, CoreState, LoadoutSnapshot } from '../src/core/types';
+import { ALL_ABILITIES, abilityById } from '../src/data/cards';
 import { ALL_MISSIONS } from '../src/data/missions';
 import {
   DEFAULT_SHIP_ID,
@@ -58,21 +58,21 @@ const LOADOUTS: Record<string, LoadoutSnapshot> = {
 
 function randomPolicies(seed: number): RunPolicies {
   const rng = mulberry32(seed ^ 0x5f3759df);
-  return { cardPool: ALL_CARDS, pickCard: () => Math.floor(rng() * 3) };
+  return { abilityPool: ALL_ABILITIES, pickAbility: () => Math.floor(rng() * 3) };
 }
 
 function greedyPolicies(): RunPolicies {
-  const priorities: Record<string, number> = { weapon: 0, generator: 1, shield: 2, motor: 3 };
-  const pickCard = (_state: CoreState, offer: CardOffer): number => {
+  const priorities: Record<string, number> = { nexus: 0, quantum: 1, aegis: 2, comet: 3 };
+  const pickAbility = (_state: CoreState, offer: AbilityOffer): number => {
     let best = 0;
     let bestRank = Number.POSITIVE_INFINITY;
-    offer.cardIds.forEach((cardId, i) => {
-      const rank = priorities[cardById(cardId).system] ?? 9;
+    offer.abilityIds.forEach((cardId, i) => {
+      const rank = priorities[abilityById(cardId).company] ?? 9;
       if (rank < bestRank) { bestRank = rank; best = i; }
     });
     return best;
   };
-  return { cardPool: ALL_CARDS, pickCard };
+  return { abilityPool: ALL_ABILITIES, pickAbility };
 }
 
 // ── Stats accumulator ────────────────────────────────────────────────────────

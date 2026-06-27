@@ -1,12 +1,12 @@
 import { CARD_ACTION_SKIP } from './constants';
-import { resolveCardAction } from './cards';
+import { resolveAbilityAction } from './cards';
 import { resolveNarrator } from './narrator';
 import { createCoreState } from './state';
 import { applyBoost } from './supplies';
 import { advanceTick } from './tick';
 import type {
-  CardDefinition,
-  CardOffer,
+  AbilityDefinition,
+  AbilityOffer,
   CoreState,
   LoadoutSnapshot,
   MissionSpec,
@@ -30,15 +30,15 @@ const REPLAY_VERSION = 1;
 const DEFAULT_MAX_TICKS = 6000;
 
 /** Decides one card action per pending offer; defaults to skipping every offer. */
-export type CardPolicy = (state: CoreState, offer: CardOffer) => number;
+export type PickPolicy = (state: CoreState, offer: AbilityOffer) => number;
 
 /** Returns a supply slot to tap before the next tick, or null. Defaults to never. */
 export type BoostPolicy = (state: CoreState) => number | null;
 
 export interface RunPolicies {
-  pickCard?: CardPolicy;
+  pickAbility?: PickPolicy;
   useBoost?: BoostPolicy;
-  cardPool?: CardDefinition[];
+  abilityPool?: AbilityDefinition[];
   maxTicks?: number;
 }
 
@@ -55,14 +55,14 @@ export function runMission(
   policies: RunPolicies = {},
 ): MissionRunResult {
   const maxTicks = policies.maxTicks ?? DEFAULT_MAX_TICKS;
-  const pickCard = policies.pickCard ?? (() => CARD_ACTION_SKIP);
+  const pickAbility = policies.pickAbility ?? (() => CARD_ACTION_SKIP);
   const useBoost = policies.useBoost ?? (() => null);
-  const state = createCoreState(mission, loadout, seed, policies.cardPool ?? []);
+  const state = createCoreState(mission, loadout, seed, policies.abilityPool ?? []);
 
   while (state.status === 'running' && state.tick < maxTicks) {
     if (state.pendingNarrator !== null) { resolveNarrator(state); continue; }
     if (state.pendingOffer !== null) {
-      resolveCardAction(state, pickCard(state, state.pendingOffer));
+      resolveAbilityAction(state, pickAbility(state, state.pendingOffer));
       continue;
     }
     const slot = useBoost(state);
@@ -83,7 +83,7 @@ function buildReplayRecord(state: CoreState): ReplayRecord {
     missionId: state.mission.id,
     seed: state.seed,
     loadout: state.loadout,
-    cardPicks: [...state.cardActions],
+    cardPicks: [...state.abilityActions],
     boostTaps: [...state.boostTaps],
     resultHash: hashCoreState(state),
   };
@@ -93,21 +93,21 @@ function buildReplayRecord(state: CoreState): ReplayRecord {
 export function verifyReplay(
   record: ReplayRecord,
   mission: MissionSpec,
-  cardPool: CardDefinition[] = [],
+  abilityPool: AbilityDefinition[] = [],
 ): boolean {
   if (record.missionId !== mission.id) {
     throw new Error(`Replay is for mission "${record.missionId}", got "${mission.id}"`);
   }
   const rerun = runMission(mission, record.loadout, record.seed, {
-    cardPool,
-    pickCard: replayCardPolicy(record),
+    abilityPool,
+    pickAbility: replayCardPolicy(record),
     useBoost: replayBoostPolicy(record),
   });
   return rerun.replay.resultHash === record.resultHash;
 }
 
 /** Replays the recorded card-action stream in order; skips if the record runs dry. */
-function replayCardPolicy(record: ReplayRecord): CardPolicy {
+function replayCardPolicy(record: ReplayRecord): PickPolicy {
   let cursor = 0;
   return () => record.cardPicks[cursor++] ?? CARD_ACTION_SKIP;
 }
@@ -133,7 +133,10 @@ export function hashCoreState(state: CoreState): string {
     status: state.status,
     ship: state.ship,
     stats: state.stats,
-    pickedCardIds: state.pickedCardIds,
+    pickedAbilityIds: state.pickedAbilityIds,
+    autoFireEnabled: state.autoFireEnabled,
+    autoShieldEnabled: state.autoShieldEnabled,
+    equippedAbilities: state.equippedAbilities,
     shieldBroke: state.shieldBroke,
     bossKillTick: state.bossKillTick,
     spawnedCount: state.spawnedCount,

@@ -1,13 +1,16 @@
 import Phaser from 'phaser';
-import { resolveCardAction } from '../core/cards';
+import { resolveAbilityAction } from '../core/cards';
+import { activateAbility, toggleAutoFire, toggleAutoShield } from '../core/combat';
 import { resolveNarrator } from '../core/narrator';
 import { LANE_LENGTH, MS_PER_TICK } from '../core/constants';
 import { buildMissionResult } from '../core/result';
 import { createCoreState } from '../core/state';
 import { applyBoost } from '../core/supplies';
 import { advanceTick } from '../core/tick';
-import type { CoreState, EnemyState } from '../core/types';
-import { ALL_CARDS, cardById } from '../data/cards';
+import type { CoreState, EnemyState, LoadoutSnapshot } from '../core/types';
+import type { AbilityDefinition } from '../core/types';
+import { ALL_ABILITIES, abilityById } from '../data/cards';
+import { ALL_NEW_ABILITIES } from '../data/abilities';
 import { missionById } from '../data/missions';
 import { getStoryLine } from '../data/story';
 import { resolveForcedLoadout } from '../data/loadouts';
@@ -19,7 +22,7 @@ import { CombatHud } from './CombatHud';
 import { NarratorBar } from './NarratorBar';
 import { SupplyButtons } from './SupplyButtons';
 import { cssColor, PALETTE } from './palette';
-import { fontPx, GAME_WIDTH, GAME_X, LEFT_PANEL_W, LOGICAL_HEIGHT, LOGICAL_WIDTH, px, RIGHT_PANEL_W, SHIP_GUN_X_OFFSET, SHIP_GUN_Y_OFFSET } from './layout';
+import { fontPx, GAME_WIDTH, GAME_X, LEFT_PANEL_W, LOGICAL_HEIGHT, LOGICAL_WIDTH, px, SHIP_GUN_X_OFFSET, SHIP_GUN_Y_OFFSET } from './layout';
 import { buildGameTextures, laserTextureForWeaponId, splitWeaponId, textureForEnemyKind, textureForShipId } from './textures';
 import { drawMotorHousing, drawThruster, renderGunIndicator, tickLaserBolts, tickMuzzleFlashes, THRUSTER_PARAMS } from './shipRenderers';
 import type { LaserBolt, MuzzleFlash } from './shipRenderers';
@@ -97,10 +100,19 @@ export class CombatScene extends Phaser.Scene {
   private floatingTexts: FloatingText[] = [];
   private shieldPulseRings: ShieldPulseRing[] = [];
   private shieldHitFlash = 0;
-  /** "CARDS" header — made visible after the first card is picked. */
+  /** "ABILITIES" header — shown after first ability is picked. */
   private cardsHeader!: Phaser.GameObjects.Text;
-  /** Per-card name + description rows, appended as cards are picked. */
-  private cardEntries: Array<{ name: Phaser.GameObjects.Text; desc: Phaser.GameObjects.Text }> = [];
+  /** Ability name + description labels — rebuilt on every new pick. */
+  private cardEntries: Phaser.GameObjects.Text[] = [];
+  /** Toggle button labels for auto-fire and auto-shield in the left panel. */
+  private autoFireLabel!: Phaser.GameObjects.Text;
+  private autoShieldLabel!: Phaser.GameObjects.Text;
+  /** Ability bar slots: up to 3 active ability buttons. */
+  private abilitySlots: Array<{
+    bg: Phaser.GameObjects.Rectangle;
+    nameText: Phaser.GameObjects.Text;
+    cooldownText: Phaser.GameObjects.Text;
+  }> = [];
   private exitConfirmObjects: Phaser.GameObjects.GameObject[] = [];
   private narratorModalObjects: Phaser.GameObjects.GameObject[] = [];
   private narratorLineIdx = 0;
@@ -121,7 +133,7 @@ export class CombatScene extends Phaser.Scene {
     const loadout = mission.forcedLoadout !== undefined
       ? resolveForcedLoadout(mission.forcedLoadout)
       : buildLoadout(this.save);
-    this.core = createCoreState(mission, loadout, seed, ALL_CARDS);
+    this.core = createCoreState(mission, loadout, seed, abilityPoolForLoadout(loadout));
     this.motorLevel = motorLevelFromId(loadout.motor.id);
 
     Sound.attach(this.sound);
@@ -129,17 +141,25 @@ export class CombatScene extends Phaser.Scene {
     buildGameTextures(this);
     drawDevBorder(this, this.save);
 
-    // Panel dividers
-    this.add.rectangle(px(LEFT_PANEL_W), 0, px(1), px(LOGICAL_HEIGHT), 0x333355).setOrigin(0, 0).setDepth(1);
-    this.add.rectangle(px(GAME_X + GAME_WIDTH), 0, px(1), px(LOGICAL_HEIGHT), 0x333355).setOrigin(0, 0).setDepth(1);
+    // Left panel background
+    this.add.rectangle(0, 0, px(LEFT_PANEL_W), px(LOGICAL_HEIGHT), 0x04040f, 0.82).setOrigin(0, 0).setDepth(0);
+    // Panel divider
+    this.add.rectangle(px(LEFT_PANEL_W), 0, px(2), px(LOGICAL_HEIGHT), 0x445577).setOrigin(0, 0).setDepth(1);
 
-    // Right panel center X (reused for cards header, mission name, card entries)
-    const infoX = px(LOGICAL_WIDTH - RIGHT_PANEL_W / 2);
+    // Mission name at top of game field
+    this.add
+      .text(px(GAME_X + GAME_WIDTH / 2), px(10), mission.name.toUpperCase(), {
+        fontFamily: UI_FONT,
+        fontSize: `${String(fontPx(9))}px`,
+        color: '#aabbcc',
+      })
+      .setOrigin(0.5, 0)
+      .setDepth(10);
 
-    // "CARDS" header — shown after first pick
-    this.cardsHeader = this.add.text(infoX, px(22), '', {
+    // "ABILITIES" header — shown after first pick; in left panel below ability slots
+    this.cardsHeader = this.add.text(px(LEFT_PANEL_W / 2), px(400), '', {
       fontFamily: UI_FONT,
-      fontSize: `${String(fontPx(9))}px`,
+      fontSize: `${String(fontPx(8))}px`,
       color: '#445566',
       align: 'center',
     }).setOrigin(0.5, 0).setDepth(10);
@@ -149,10 +169,13 @@ export class CombatScene extends Phaser.Scene {
     this.supplyButtons = new SupplyButtons(this, this.core, (slot) => { this.handleBoostTap(slot); });
     this.narrator = new NarratorBar(this);
 
-    const exitX = px(LOGICAL_WIDTH - RIGHT_PANEL_W / 2);
-    const exitY = px(466);
+    this.buildToggleButtons();
+    this.buildAbilitySlots();
+
+    const exitX = px(LEFT_PANEL_W / 2);
+    const exitY = px(928);
     const exitBg = this.add
-      .rectangle(exitX, exitY, px(RIGHT_PANEL_W - 20), px(30), 0x110a14, 0.9)
+      .rectangle(exitX, exitY, px(LEFT_PANEL_W - 16), px(24), 0x110a14, 0.9)
       .setStrokeStyle(px(1), 0x443355)
       .setDepth(10)
       .setInteractive({ useHandCursor: true });
@@ -208,16 +231,6 @@ export class CombatScene extends Phaser.Scene {
     this.narratorBossShown = false;
     this.narratorModalObjects = [];
     this.narratorLineIdx = 0;
-
-    // Mission name at top of right panel
-    this.add
-      .text(px(LOGICAL_WIDTH - RIGHT_PANEL_W / 2), px(8), mission.name, {
-        fontFamily: UI_FONT,
-        fontSize: `${String(fontPx(8))}px`,
-        color: '#888899',
-      })
-      .setOrigin(0.5, 0)
-      .setDepth(10);
 
     this.addStarfield();
 
@@ -463,42 +476,144 @@ export class CombatScene extends Phaser.Scene {
     this.updateFloatingTexts(deltaMs);
     this.hud.update(this.core, boss, progressFrac);
     this.supplyButtons.update(this.core);
+    this.updateAbilityBar();
     this.narrator.update(deltaMs);
     this.maybeFinish();
   }
 
   private handleCardAction(action: number): void {
-    const prevCount = this.core.pickedCardIds.length;
-    resolveCardAction(this.core, action);
-    if (this.core.pickedCardIds.length > prevCount) {
-      const newId = this.core.pickedCardIds[this.core.pickedCardIds.length - 1];
-      if (newId !== undefined) {
-        if (this.cardEntries.length === 0) this.cardsHeader.setText('CARDS');
-        this.addCardToDisplay(cardById(newId));
-      }
+    const prevCount = this.core.pickedAbilityIds.length;
+    resolveAbilityAction(this.core, action);
+    if (this.core.pickedAbilityIds.length > prevCount) {
+      if (prevCount === 0) this.cardsHeader.setText('ABILITIES');
+      this.rebuildCardDisplay();
     }
     if (this.core.pendingOffer === null) this.cardOverlay.hide();
     else this.cardOverlay.show(this.core.pendingOffer, this.core);
   }
 
-  private addCardToDisplay(card: ReturnType<typeof cardById>): void {
-    const infoX = px(LOGICAL_WIDTH - RIGHT_PANEL_W / 2);
-    const nameY = 38 + this.cardEntries.length * 42;
-    const nameText = this.add.text(infoX, px(nameY), card.name, {
-      fontFamily: UI_FONT,
-      fontSize: `${String(fontPx(12))}px`,
-      color: cardSystemColor(card.system),
-      align: 'center',
-      wordWrap: { width: px(RIGHT_PANEL_W - 20) },
-    }).setOrigin(0.5, 0).setDepth(10);
-    const descText = this.add.text(infoX, px(nameY + 16), card.description, {
-      fontFamily: UI_FONT,
-      fontSize: `${String(fontPx(10))}px`,
-      color: '#778899',
-      align: 'center',
-      wordWrap: { width: px(RIGHT_PANEL_W - 20) },
-    }).setOrigin(0.5, 0).setDepth(10);
-    this.cardEntries.push({ name: nameText, desc: descText });
+  /**
+   * Rebuilds the picked-card list from scratch on every new pick.
+   * ≤6 cards → single column, fontPx(9), 14px row height.
+   * ≤6 cards: single column, name fontPx(9) + full description fontPx(8), 24px rows.
+   * 7+ cards: two columns, name fontPx(8) + single-line description fontPx(7), 20px rows.
+   * 20 cards in 2-col = 10 rows × 20px = 200px, fits in the 206px slot above BOOST.
+   */
+  private rebuildCardDisplay(): void {
+    for (const t of this.cardEntries) t.destroy();
+    this.cardEntries = [];
+
+    const total = this.core.pickedAbilityIds.length;
+    if (total === 0) return;
+
+    const useTwoCols = total > 6;
+    const cols   = useTwoCols ? 2 : 1;
+    const namePx = useTwoCols ? 7 : 8;
+    const descPx = useTwoCols ? 6 : 7;
+    const rowH   = useTwoCols ? 16 : 20;
+    const colW   = (LEFT_PANEL_W - 6) / cols;
+    const startX = 3;
+    const startY = 412;
+
+    this.core.pickedAbilityIds.forEach((abilityId, i) => {
+      const ability = abilityById(abilityId);
+      const col    = i % cols;
+      const row    = Math.floor(i / cols);
+      const textX  = startX + (col + 0.5) * colW;
+      const nameY  = startY + row * rowH;
+      const descY  = nameY + namePx + 2;
+
+      const nameT = this.add.text(px(textX), px(nameY), ability.name, {
+        fontFamily: UI_FONT,
+        fontSize: `${String(fontPx(namePx))}px`,
+        color: abilityCompanyColor(ability.company),
+        align: 'center',
+      }).setOrigin(0.5, 0).setDepth(10);
+
+      const descT = this.add.text(px(textX), px(descY), ability.description, {
+        fontFamily: UI_FONT,
+        fontSize: `${String(fontPx(descPx))}px`,
+        color: '#668899',
+        align: 'center',
+        wordWrap: { width: px(colW - 4) },
+      }).setOrigin(0.5, 0).setDepth(10);
+      if (useTwoCols) descT.setMaxLines(1);
+
+      this.cardEntries.push(nameT, descT);
+    });
+  }
+
+  private buildToggleButtons(): void {
+    const cx = px(LEFT_PANEL_W / 2);
+    const btnW = px(LEFT_PANEL_W - 16);
+    const btnH = px(14);
+
+    const fireBg = this.add.rectangle(cx, px(300), btnW, btnH, 0x0a0a1a)
+      .setStrokeStyle(px(1), 0x225533)
+      .setDepth(10)
+      .setInteractive({ useHandCursor: true });
+    fireBg.on('pointerdown', () => { toggleAutoFire(this.core); });
+    this.autoFireLabel = this.add.text(cx, px(300), 'AUTO-FIRE  ON', {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#44ff66',
+    }).setOrigin(0.5).setDepth(11);
+
+    const shieldBg = this.add.rectangle(cx, px(318), btnW, btnH, 0x0a0a1a)
+      .setStrokeStyle(px(1), 0x223355)
+      .setDepth(10)
+      .setInteractive({ useHandCursor: true });
+    shieldBg.on('pointerdown', () => { toggleAutoShield(this.core); });
+    this.autoShieldLabel = this.add.text(cx, px(318), 'AUTO-SHIELD  ON', {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#4488ff',
+    }).setOrigin(0.5).setDepth(11);
+  }
+
+  private buildAbilitySlots(): void {
+    const cx = px(LEFT_PANEL_W / 2);
+    const slotW = px(LEFT_PANEL_W - 16);
+    const slotH = px(16);
+
+    for (let i = 0; i < 3; i++) {
+      const y = px(342 + i * 22);
+      const bg = this.add.rectangle(cx, y, slotW, slotH, 0x080818)
+        .setStrokeStyle(px(1), 0x334455)
+        .setDepth(10)
+        .setInteractive({ useHandCursor: true });
+      const idx = i;
+      bg.on('pointerdown', () => { activateAbility(this.core, idx); });
+      const nameText = this.add.text(cx, y - px(2), '—', {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#334455',
+      }).setOrigin(0.5).setDepth(11);
+      const cooldownText = this.add.text(cx, y + px(5), '', {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(6))}px`, color: '#556677',
+      }).setOrigin(0.5).setDepth(11);
+      this.abilitySlots.push({ bg, nameText, cooldownText });
+    }
+  }
+
+  private updateAbilityBar(): void {
+    this.autoFireLabel.setText(`AUTO-FIRE  ${this.core.autoFireEnabled ? 'ON' : 'OFF'}`);
+    this.autoFireLabel.setColor(this.core.autoFireEnabled ? '#44ff66' : '#664422');
+    this.autoShieldLabel.setText(`AUTO-SHIELD  ${this.core.autoShieldEnabled ? 'ON' : 'OFF'}`);
+    this.autoShieldLabel.setColor(this.core.autoShieldEnabled ? '#4488ff' : '#334466');
+
+    this.abilitySlots.forEach((slot, i) => {
+      const equipped = this.core.equippedAbilities[i];
+      if (equipped === undefined) {
+        slot.nameText.setText('—').setColor('#334455');
+        slot.cooldownText.setText('');
+        slot.bg.setFillStyle(0x080818);
+        return;
+      }
+      const def = abilityById(equipped.abilityId);
+      slot.nameText.setText(def.name).setColor(abilityCompanyColor(def.company));
+      if (equipped.cooldownLeft > 0) {
+        slot.cooldownText.setText(`CD ${String(equipped.cooldownLeft)}`);
+        slot.bg.setFillStyle(0x0a0a12);
+      } else {
+        slot.cooldownText.setText('READY');
+        slot.bg.setFillStyle(0x0a1a0a);
+      }
+    });
   }
 
   private handleBoostTap(slot: number): void {
@@ -567,7 +682,7 @@ export class CombatScene extends Phaser.Scene {
   }
 
   private hideNarratorModal(): void {
-    this.narratorModalObjects.forEach((o) => { o.destroy(); });
+    this.narratorModalObjects.forEach((o) => { o.removeInteractive(); o.destroy(); });
     this.narratorModalObjects = [];
   }
 
@@ -798,13 +913,13 @@ export class CombatScene extends Phaser.Scene {
     if (this.core.status === 'running' || this.finished) return;
     this.finished = true;
     const result = buildMissionResult(this.core);
-    const { newStarIds } = applyMissionResult(this.save, result);
+    const { save, newStarIds } = applyMissionResult(this.save, result);
     if (this.core.status === 'victory') {
       Sound.victory();
-      this.time.delayedCall(600, () => { this.scene.start('ResultScene', { result, newStarIds }); });
+      this.time.delayedCall(600, () => { this.scene.start('ResultScene', { result, newStarIds, save }); });
     } else {
       this.playDeathAnimation();
-      this.time.delayedCall(1400, () => { this.scene.start('ResultScene', { result, newStarIds }); });
+      this.time.delayedCall(1400, () => { this.scene.start('ResultScene', { result, newStarIds, save }); });
     }
   }
 
@@ -828,7 +943,7 @@ export class CombatScene extends Phaser.Scene {
   }
 
   private hideExitConfirm(): void {
-    this.exitConfirmObjects.forEach((obj) => { obj.destroy(); });
+    this.exitConfirmObjects.forEach((obj) => { obj.removeInteractive(); obj.destroy(); });
     this.exitConfirmObjects = [];
   }
 
@@ -864,11 +979,18 @@ function motorLevelFromId(motorId: string): 1 | 2 | 3 {
   return 1;
 }
 
-/** Maps a card's system to its palette color string for the name label. */
-function cardSystemColor(system: string): string {
-  if (system === 'weapon') return cssColor(PALETTE.weaponCyan);
-  if (system === 'shield') return cssColor(PALETTE.shieldBlue);
-  if (system === 'generator') return cssColor(PALETTE.generatorAmber);
-  if (system === 'motor') return cssColor(PALETTE.motorMagenta);
+function abilityCompanyColor(company: string): string {
+  if (company === 'nexus')   return cssColor(PALETTE.weaponCyan);
+  if (company === 'aegis')   return cssColor(PALETTE.shieldBlue);
+  if (company === 'quantum') return cssColor(PALETTE.generatorAmber);
+  if (company === 'comet')   return cssColor(PALETTE.motorMagenta);
   return '#aabbcc';
+}
+
+/** Filters the global ability list to companies whose equipment is in the loadout.
+ *  Nexus (weapon) is excluded when no weapon is equipped (e.g. tutorial t1). */
+function abilityPoolForLoadout(loadout: LoadoutSnapshot): AbilityDefinition[] {
+  const all = [...ALL_ABILITIES, ...ALL_NEW_ABILITIES];
+  if (loadout.weapon !== null) return all;
+  return all.filter((a) => a.company !== 'nexus');
 }

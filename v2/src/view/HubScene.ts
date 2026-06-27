@@ -8,7 +8,7 @@ import {
 } from '../data/items';
 import type { CatalogItem, SystemKind } from '../data/items';
 import {
-  buildLoadout, buySupplyCharge, isMissionUnlocked, loadSave,
+  buildLoadout, buySupplyCharge, isMissionUnlocked, isOwned, loadSave,
   persistSave, sellSupplyCharge, switchItem, switchShip, totalStars,
 } from '../save/SaveManager';
 import type { SaveData } from '../save/SaveManager';
@@ -21,6 +21,13 @@ import { addLabel, addTextButton, drawDevBorder, UI_FONT } from './widgets';
 import { Sound } from '../audio/SoundManager';
 
 const SHIP_TAB_COLOR = 0x44ffaa;
+
+const SYSTEM_COMPANY: Record<SystemKind, { name: string; color: number }> = {
+  weapon:    { name: 'NEXUS ARMAMENTS', color: PALETTE.weaponCyan },
+  shield:    { name: 'AEGIS DEFENSE',   color: PALETTE.shieldBlue },
+  generator: { name: 'QUANTUM POWER',   color: PALETTE.generatorAmber },
+  motor:     { name: 'COMET DRIVE',     color: PALETTE.motorMagenta },
+};
 
 type NavItem = 'missions' | 'shop' | 'settings' | 'about' | 'manual';
 type ShopTab = SystemKind | 'supplies' | 'ship';
@@ -49,10 +56,11 @@ const GALAXY_CONNECTIONS: [string, string][] = [
   ['m1', 'm2'], ['m2', 'm3'], ['m3', 'm4'], ['m4', 'm5'], ['m5', 'm6'],
 ];
 
+// Galaxy node positions scaled to portrait 540px width (from 960px landscape × 0.5625).
 const GALAXY_NODES: Record<string, { x: number; y: number }> = {
-  t1: { x: 110, y: 130 }, t2: { x: 235, y: 200 }, t3: { x: 155, y: 285 }, t4: { x: 305, y: 330 },
-  m1: { x: 450, y: 100 }, m2: { x: 560, y: 185 }, m3: { x: 655, y: 115 },
-  m4: { x: 725, y: 240 }, m5: { x: 800, y: 315 }, m6: { x: 878, y: 185 },
+  t1: { x: 62,  y: 130 }, t2: { x: 133, y: 200 }, t3: { x: 87,  y: 285 }, t4: { x: 172, y: 330 },
+  m1: { x: 253, y: 100 }, m2: { x: 315, y: 185 }, m3: { x: 369, y: 115 },
+  m4: { x: 408, y: 240 }, m5: { x: 450, y: 315 }, m6: { x: 494, y: 185 },
 };
 
 const NAV_ITEMS: { key: NavItem; label: string; color: number }[] = [
@@ -72,10 +80,11 @@ const SHOP_TABS: { key: ShopTab; label: string; color: number }[] = [
   { key: 'supplies',  label: 'SUPPLIES',  color: PALETTE.hullWhite },
 ];
 
+// Portrait: preview panel sits below the shop action area (y ≥ 540)
 const HUB_PREVIEW_LAYOUT: PreviewLayout = {
-  shipX: 720, shipY: 185,
-  barsLeftX: 556, barsTopY: 295, barWidth: 310,
-  dpsX: 720, dpsY: 370,
+  shipX: 430, shipY: 598,
+  barsLeftX: 300, barsTopY: 652, barWidth: 210,
+  dpsX: 430, dpsY: 720,
 };
 
 const ABOUT_TEXT = [
@@ -99,23 +108,29 @@ const ABOUT_TEXT = [
 const MANUAL_TEXT = [
   'GENERATOR & SHIELD',
   'Your generator charges up to 100%.',
-  'When it hits 100% it fires a pulse:',
-  'your shield gains energy and the generator',
-  'drops to ~50%. This repeats — so shield',
-  'builds up gradually.',
+  'When full, it pulses: shield gains energy,',
+  'generator drops to ~50%. Repeats.',
   '',
   'WEAPONS & ENERGY',
-  'Every shot costs energy. If you run low,',
-  'the fire rate slows (brownout).',
+  'Every shot costs energy. Running low',
+  'slows fire rate (brownout).',
+  '',
+  'SUPPORT COMPANIES',
+  'Mid-mission: a ship offers 3 ability cards.',
+  'Weapons → Nexus Armaments (damage/fire).',
+  'Shields → Aegis Defense (hull/shield).',
+  'Generators → Quantum Power (energy).',
+  'Motors → Comet Drive (speed/burst).',
+  'Pick passives (instant boost) or actives',
+  '(stored in ability bar, costs energy).',
   '',
   'SHOP',
-  'Buy and equip weapons, shields, generators',
-  'and motors. Live preview shows stat impact.',
+  'Equip items; live preview shows impact.',
   'Supplies refill free before every mission.',
   '',
   'MISSIONS & STARS',
-  'Tutorial missions use a preset loadout.',
-  'Each combat mission awards up to 3 stars.',
+  'Tutorials use a preset loadout.',
+  'Combat missions award up to 3 stars.',
   'Stars unlock harder missions.',
 ].join('\n');
 
@@ -192,7 +207,7 @@ export class HubScene extends Phaser.Scene {
   private get contentW(): number { return this.nav === 'shop' ? HUB_LEFT_W : LOGICAL_WIDTH; }
 
   private rebuildContent(): void {
-    this.contentObjects.forEach((o) => { o.destroy(); });
+    this.contentObjects.forEach((o) => { o.removeInteractive(); o.destroy(); });
     this.contentObjects = [];
 
     if (this.nav !== null) {
@@ -452,21 +467,24 @@ export class HubScene extends Phaser.Scene {
   private buildItemRow(system: SystemKind, itemId: string, item: CatalogItem, yLogical: number): void {
     const starsNeeded = item.starsRequired ?? 0;
     const locked = starsNeeded > this.shopPlayerStars;
+    const requiresParentId = item.requires;
+    const requiresGated = requiresParentId !== undefined && !isOwned(this.save, requiresParentId);
     const equipped = this.save.equipped[system] === itemId;
+    const owned = !equipped && isOwned(this.save, itemId);
     const selected = this.shopSelectedItemId === itemId;
-    const netCost = item.price - itemById(this.save.equipped[system]).price;
-    const canAfford = equipped || this.save.coins >= netCost;
+    const cost = owned ? 0 : Math.max(0, item.price - itemById(this.save.equipped[system]).price);
+    const canAfford = equipped || owned || this.save.coins >= cost;
     const y = px(yLogical + SHOP_ROW_H / 2);
 
     const rowBg = this.add.rectangle(px(SHOP_ITEM_X), y, px(SHOP_ITEM_W), px(SHOP_ROW_H - 4), selected ? 0x16162c : 0x0a0a18)
       .setOrigin(0, 0.5);
-    if (!locked) {
+    if (!locked && !requiresGated) {
       rowBg.setInteractive({ useHandCursor: true });
       rowBg.on('pointerdown', () => { this.shopSelectedItemId = itemId; this.rebuildContent(); this.updatePreview(); });
       rowBg.on('pointerover', () => { rowBg.setFillStyle(selected ? 0x1c1c38 : 0x12122a); });
       rowBg.on('pointerout', () => { rowBg.setFillStyle(selected ? 0x16162c : 0x0a0a18); });
     }
-    if (locked || (!equipped && !canAfford)) rowBg.setAlpha(0.35);
+    if (locked || requiresGated || (!equipped && !owned && !canAfford)) rowBg.setAlpha(0.35);
     this.addC(rowBg);
 
     const isBranch = item.requires !== undefined;
@@ -478,19 +496,23 @@ export class HubScene extends Phaser.Scene {
     }
     this.addC(this.add.text(px(nameX), y, item.name, {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(12))}px`,
-      color: cssColor(locked ? 0x555577 : (equipped ? PALETTE.weaponCyan : PALETTE.hullWhite)),
-    }).setOrigin(0, 0.5).setAlpha(locked ? 0.5 : (canAfford ? 1 : 0.4)));
+      color: cssColor(locked || requiresGated ? 0x555577 : (equipped ? PALETTE.weaponCyan : PALETTE.hullWhite)),
+    }).setOrigin(0, 0.5).setAlpha(locked || requiresGated ? 0.5 : (canAfford ? 1 : 0.4)));
 
     let statusText: string;
     let statusColor: number;
     if (locked) {
       statusText = `★${String(starsNeeded)}`; statusColor = 0x556677;
+    } else if (requiresGated) {
+      statusText = `Need ${itemById(requiresParentId).name}`; statusColor = 0x556677;
     } else if (equipped) {
       statusText = 'EQUIPPED'; statusColor = PALETTE.weaponCyan;
-    } else if (netCost <= 0) {
-      statusText = netCost < 0 ? `−${String(Math.abs(netCost))}⬤` : 'FREE'; statusColor = PALETTE.shieldBlue;
+    } else if (owned) {
+      statusText = 'OWNED'; statusColor = PALETTE.shieldBlue;
+    } else if (cost === 0) {
+      statusText = 'FREE'; statusColor = PALETTE.shieldBlue;
     } else {
-      statusText = `${String(netCost)}⬤`; statusColor = canAfford ? PALETTE.generatorAmber : 0x556677;
+      statusText = `${String(cost)}⬤`; statusColor = canAfford ? PALETTE.generatorAmber : 0x556677;
     }
     this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_ITEM_W - 4), y, statusText, {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(statusColor),
@@ -510,28 +532,39 @@ export class HubScene extends Phaser.Scene {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`,
       color: cssColor(0x8888aa), wordWrap: { width: px(SHOP_ITEM_W) },
     }));
+    const company = SYSTEM_COMPANY[system];
+    this.addC(this.add.text(px(SHOP_ITEM_X), px(SHOP_ACTION_Y + 46), `⬡ ${company.name}`, {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`,
+      color: cssColor(company.color),
+    }).setAlpha(0.7));
 
     const btnY = px(SHOP_ACTION_Y + 68);
     if (equipped) {
       this.addC(addLabel(this, { x: px(SHOP_ITEM_X), y: btnY, text: 'EQUIPPED', color: PALETTE.weaponCyan, size: 12 }));
       return;
     }
-    const netCost = item.price - itemById(this.save.equipped[system]).price;
-    if (netCost <= 0) {
-      const refund = Math.abs(netCost);
+    const requiresParentId = item.requires;
+    if (requiresParentId !== undefined && !isOwned(this.save, requiresParentId)) {
+      this.addC(addLabel(this, { x: px(SHOP_ITEM_X), y: btnY, text: `Need "${itemById(requiresParentId).name}" first`, color: 0x556677, size: 11 }));
+      return;
+    }
+    const owned = isOwned(this.save, itemId);
+    const cost = owned ? 0 : Math.max(0, item.price - itemById(this.save.equipped[system]).price);
+    const doSwitch = (): void => { this.save = switchItem(this.save, itemId); this.rebuildContent(); this.updatePreview(); };
+    if (owned || cost === 0) {
       this.addC(addTextButton(this, {
         x: px(CONTENT_MID), y: btnY,
-        label: refund > 0 ? `SWITCH  +${String(refund)}⬤ back` : 'SWITCH FREE',
+        label: owned ? 'EQUIP FREE' : 'BUY FREE',
         color: PALETTE.shieldBlue,
-        onClick: () => { this.save = switchItem(this.save, itemId); this.rebuildContent(); this.updatePreview(); },
+        onClick: doSwitch,
       }));
-    } else if (this.save.coins >= netCost) {
+    } else if (this.save.coins >= cost) {
       this.addC(addTextButton(this, {
-        x: px(CONTENT_MID), y: btnY, label: `SWITCH  ${String(netCost)}⬤`, color: PALETTE.generatorAmber,
-        onClick: () => { this.save = switchItem(this.save, itemId); this.rebuildContent(); this.updatePreview(); },
+        x: px(CONTENT_MID), y: btnY, label: `BUY & EQUIP  ${String(cost)}⬤`, color: PALETTE.generatorAmber,
+        onClick: doSwitch,
       }));
     } else {
-      this.addC(addLabel(this, { x: px(SHOP_ITEM_X), y: btnY, text: `Need ${String(netCost - this.save.coins)}⬤ more`, color: PALETTE.enemyOrange, size: 12 }));
+      this.addC(addLabel(this, { x: px(SHOP_ITEM_X), y: btnY, text: `Need ${String(cost - this.save.coins)}⬤ more`, color: PALETTE.enemyOrange, size: 12 }));
     }
   }
 
@@ -540,9 +573,10 @@ export class HubScene extends Phaser.Scene {
       const starsNeeded = ship.starsRequired ?? 0;
       const locked = starsNeeded > this.shopPlayerStars;
       const equipped = this.save.equipped.ship === shipId;
+      const owned = !equipped && isOwned(this.save, shipId);
       const selected = this.shopSelectedItemId === shipId;
-      const netCost = ship.price - shipById(this.save.equipped.ship).price;
-      const canAfford = equipped || this.save.coins >= netCost;
+      const cost = owned ? 0 : Math.max(0, ship.price - shipById(this.save.equipped.ship).price);
+      const canAfford = equipped || owned || this.save.coins >= cost;
       const y = px(CONTENT_TOP + 22 + index * SHOP_ROW_H + SHOP_ROW_H / 2);
 
       const rowBg = this.add.rectangle(px(SHOP_ITEM_X), y, px(SHOP_ITEM_W), px(SHOP_ROW_H - 4), selected ? 0x16162c : 0x0a0a18)
@@ -553,7 +587,7 @@ export class HubScene extends Phaser.Scene {
         rowBg.on('pointerover', () => { rowBg.setFillStyle(selected ? 0x1c1c38 : 0x12122a); });
         rowBg.on('pointerout', () => { rowBg.setFillStyle(selected ? 0x16162c : 0x0a0a18); });
       }
-      if (locked || (!equipped && !canAfford)) rowBg.setAlpha(0.35);
+      if (locked || (!equipped && !owned && !canAfford)) rowBg.setAlpha(0.35);
       this.addC(rowBg);
 
       this.addC(this.add.text(px(SHOP_ITEM_X + 8), y, ship.name, {
@@ -571,10 +605,12 @@ export class HubScene extends Phaser.Scene {
         statusText = `★${String(starsNeeded)}`; statusColor = 0x556677;
       } else if (equipped) {
         statusText = 'EQUIPPED'; statusColor = SHIP_TAB_COLOR;
-      } else if (netCost <= 0) {
-        statusText = netCost < 0 ? `−${String(Math.abs(netCost))}⬤` : 'FREE'; statusColor = PALETTE.shieldBlue;
+      } else if (owned) {
+        statusText = 'OWNED'; statusColor = PALETTE.shieldBlue;
+      } else if (cost === 0) {
+        statusText = 'FREE'; statusColor = PALETTE.shieldBlue;
       } else {
-        statusText = `${String(netCost)}⬤`; statusColor = canAfford ? PALETTE.generatorAmber : 0x556677;
+        statusText = `${String(cost)}⬤`; statusColor = canAfford ? PALETTE.generatorAmber : 0x556677;
       }
       this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_ITEM_W - 4), y, statusText, {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(statusColor),
@@ -602,22 +638,23 @@ export class HubScene extends Phaser.Scene {
       this.addC(addLabel(this, { x: px(SHOP_ITEM_X), y: btnY, text: 'EQUIPPED', color: SHIP_TAB_COLOR, size: 12 }));
       return;
     }
-    const netCost = ship.price - shipById(this.save.equipped.ship).price;
-    if (netCost <= 0) {
-      const refund = Math.abs(netCost);
+    const owned = isOwned(this.save, shipId);
+    const cost = owned ? 0 : Math.max(0, ship.price - shipById(this.save.equipped.ship).price);
+    const doSwitch = (): void => { this.save = switchShip(this.save, shipId); this.rebuildContent(); this.updatePreview(); };
+    if (owned || cost === 0) {
       this.addC(addTextButton(this, {
         x: px(CONTENT_MID), y: btnY,
-        label: refund > 0 ? `SWITCH  +${String(refund)}⬤ back` : 'SWITCH FREE',
+        label: owned ? 'EQUIP FREE' : 'BUY FREE',
         color: PALETTE.shieldBlue,
-        onClick: () => { this.save = switchShip(this.save, shipId); this.rebuildContent(); this.updatePreview(); },
+        onClick: doSwitch,
       }));
-    } else if (this.save.coins >= netCost) {
+    } else if (this.save.coins >= cost) {
       this.addC(addTextButton(this, {
-        x: px(CONTENT_MID), y: btnY, label: `SWITCH  ${String(netCost)}⬤`, color: PALETTE.generatorAmber,
-        onClick: () => { this.save = switchShip(this.save, shipId); this.rebuildContent(); this.updatePreview(); },
+        x: px(CONTENT_MID), y: btnY, label: `BUY & EQUIP  ${String(cost)}⬤`, color: PALETTE.generatorAmber,
+        onClick: doSwitch,
       }));
     } else {
-      this.addC(addLabel(this, { x: px(SHOP_ITEM_X), y: btnY, text: `Need ${String(netCost - this.save.coins)}⬤ more`, color: PALETTE.enemyOrange, size: 12 }));
+      this.addC(addLabel(this, { x: px(SHOP_ITEM_X), y: btnY, text: `Need ${String(cost - this.save.coins)}⬤ more`, color: PALETTE.enemyOrange, size: 12 }));
     }
   }
 
@@ -626,13 +663,16 @@ export class HubScene extends Phaser.Scene {
       const kindMinStars = WEAPON_STARS[kind][0];
       const kindLocked = kindMinStars > this.shopPlayerStars;
       const equippedLevel = this.equippedLevelForKind(kind);
+      const ownedLevel = this.ownedLevelForKind(kind);
       const equippedThisKind = equippedLevel > 0;
+      const ownedThisKind = ownedLevel > 0 && !equippedThisKind;
+      const displayLevel = equippedLevel > 0 ? equippedLevel : ownedLevel;
       const selected = this.shopSelectedWeaponKind === kind;
       const y = px(CONTENT_TOP + 22 + index * SHOP_ROW_H + SHOP_ROW_H / 2);
-      const iconId = equippedThisKind ? `${kind}-${String(equippedLevel)}` : `${kind}-1`;
+      const iconId = displayLevel > 0 ? `${kind}-${String(displayLevel)}` : `${kind}-1`;
 
-      const targetLevel = equippedThisKind ? equippedLevel : this.bestAffordableLevelForKind(kind);
-      const canAffordKind = equippedThisKind || targetLevel !== null;
+      const targetLevel = (equippedThisKind || ownedThisKind) ? displayLevel : this.bestAffordableLevelForKind(kind);
+      const canAffordKind = equippedThisKind || ownedThisKind || targetLevel !== null;
 
       const rowBg = this.add.rectangle(px(SHOP_ITEM_X), y, px(SHOP_ITEM_W), px(SHOP_ROW_H - 4), selected ? 0x16162c : 0x0a0a18)
         .setOrigin(0, 0.5);
@@ -647,18 +687,18 @@ export class HubScene extends Phaser.Scene {
 
       this.addC(this.add.image(px(SHOP_ITEM_X + 18), y, iconTextureForWeaponId(iconId))
         .setOrigin(0.5).setBlendMode(Phaser.BlendModes.ADD)
-        .setScale(0.55 + Math.max(0, equippedLevel - 1) * 0.04)
-        .setAlpha(kindLocked ? 0.15 : (canAffordKind ? (equippedThisKind ? 1 : 0.5) : 0.2)));
+        .setScale(0.55 + Math.max(0, displayLevel - 1) * 0.04)
+        .setAlpha(kindLocked ? 0.15 : (canAffordKind ? ((equippedThisKind || ownedThisKind) ? 1 : 0.5) : 0.2)));
 
-      const nameLabel = equippedThisKind
-        ? `${weaponKindDisplayName(kind)} Lv${String(equippedLevel)}`
+      const nameLabel = displayLevel > 0
+        ? `${weaponKindDisplayName(kind)} Lv${String(displayLevel)}`
         : targetLevel !== null && targetLevel > 1
           ? `${weaponKindDisplayName(kind)} Lv${String(targetLevel)}`
           : weaponKindDisplayName(kind);
       this.addC(this.add.text(px(SHOP_ITEM_X + 38), y, nameLabel, {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(12))}px`,
         color: cssColor(kindLocked ? 0x555577 : (equippedThisKind ? PALETTE.weaponCyan : PALETTE.hullWhite)),
-      }).setOrigin(0, 0.5).setAlpha(kindLocked ? 0.5 : (canAffordKind ? (equippedThisKind ? 1 : 0.6) : 0.25)));
+      }).setOrigin(0, 0.5).setAlpha(kindLocked ? 0.5 : (canAffordKind ? ((equippedThisKind || ownedThisKind) ? 1 : 0.6) : 0.25)));
 
       if (kindLocked) {
         this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_ITEM_W - 4), y, `★${String(kindMinStars)}`, {
@@ -669,10 +709,15 @@ export class HubScene extends Phaser.Scene {
         this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_ITEM_W - 4), y, dots, {
           fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(PALETTE.weaponCyan),
         }).setOrigin(1, 0.5));
+      } else if (ownedThisKind) {
+        const dots = Array.from({ length: MAX_WEAPON_LEVEL }, (_, i) => i < ownedLevel ? '●' : '○').join('');
+        this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_ITEM_W - 4), y, dots, {
+          fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(PALETTE.shieldBlue),
+        }).setOrigin(1, 0.5));
       } else if (targetLevel !== null) {
-        const netCost = itemById(`${kind}-${String(targetLevel)}`).price - itemById(this.save.equipped.weapon).price;
-        const label = netCost <= 0 ? (netCost < 0 ? `−${String(Math.abs(netCost))}⬤` : 'FREE') : `${String(netCost)}⬤`;
-        const color = netCost <= 0 ? PALETTE.shieldBlue : PALETTE.generatorAmber;
+        const cost = Math.max(0, itemById(`${kind}-${String(targetLevel)}`).price - itemById(this.save.equipped.weapon).price);
+        const label = cost === 0 ? 'FREE' : `${String(cost)}⬤`;
+        const color = cost === 0 ? PALETTE.shieldBlue : PALETTE.generatorAmber;
         this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_ITEM_W - 4), y, label, {
           fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(color),
         }).setOrigin(1, 0.5).setAlpha(0.7));
@@ -692,7 +737,9 @@ export class HubScene extends Phaser.Scene {
     }
     const kind = this.shopSelectedWeaponKind;
     const equippedLevel = this.equippedLevelForKind(kind);
-    if (equippedLevel === 0) { this.buildWeaponKindSwitch(kind); return; }
+    const ownedLevel = this.ownedLevelForKind(kind);
+    if (equippedLevel === 0 && ownedLevel === 0) { this.buildWeaponKindSwitch(kind); return; }
+    if (equippedLevel === 0 && ownedLevel > 0) { this.buildWeaponKindReequip(kind, ownedLevel); return; }
 
     const nextLevel = equippedLevel + 1;
     const hasUpgrade = equippedLevel < MAX_WEAPON_LEVEL;
@@ -703,7 +750,7 @@ export class HubScene extends Phaser.Scene {
     const midX = px(SHOP_ITEM_X + Math.round(SHOP_ITEM_W / 2));
     const colW = px(Math.round(SHOP_ITEM_W / 2) - 6);
 
-    this.addWeaponStatBlock(kind, equippedLevel, { x: px(SHOP_ITEM_X), topY: headerY }, colW, '✓ EQUIP');
+    this.addWeaponStatBlock(kind, equippedLevel, { x: px(SHOP_ITEM_X), topY: headerY }, colW, '✓ EQUIPPED');
     if (hasUpgrade && !upgradeLocked) {
       this.addWeaponStatBlock(kind, nextLevel, { x: midX, topY: headerY }, colW, '');
     } else if (upgradeLocked) {
@@ -714,10 +761,10 @@ export class HubScene extends Phaser.Scene {
 
     const btnY = px(SHOP_ACTION_Y + 68);
     if (hasDowngrade) {
-      const downCost = itemById(`${kind}-${String(equippedLevel)}`).price - itemById(`${kind}-${String(equippedLevel - 1)}`).price;
+      const downLabel = isOwned(this.save, `${kind}-${String(equippedLevel - 1)}`) ? `▼ LV${String(equippedLevel - 1)}  FREE` : `▼ LV${String(equippedLevel - 1)}`;
       this.addC(addTextButton(this, {
         x: px(SHOP_ITEM_X + 60), y: btnY,
-        label: `▼ LV${String(equippedLevel - 1)}  +${String(downCost)}⬤`, color: PALETTE.shieldBlue, size: 11,
+        label: downLabel, color: PALETTE.shieldBlue, size: 11,
         onClick: () => { this.save = switchItem(this.save, `${kind}-${String(equippedLevel - 1)}`); this.rebuildContent(); this.updatePreview(); },
       }));
     }
@@ -752,33 +799,70 @@ export class HubScene extends Phaser.Scene {
     }));
   }
 
+  /** Shown when player owns a weapon kind but currently has a different kind equipped. */
+  private buildWeaponKindReequip(kind: WeaponKind, ownedLevel: number): void {
+    const headerY = px(SHOP_ACTION_Y + 6);
+    const midX = px(SHOP_ITEM_X + Math.round(SHOP_ITEM_W / 2));
+    const colW = px(Math.round(SHOP_ITEM_W / 2) - 6);
+    this.addWeaponStatBlock(kind, ownedLevel, { x: px(SHOP_ITEM_X), topY: headerY }, colW, 'OWNED');
+
+    const nextLevel = ownedLevel + 1;
+    const hasUpgrade = ownedLevel < MAX_WEAPON_LEVEL;
+    const upgradeStarsNeeded = WEAPON_STARS[kind][ownedLevel] ?? Infinity;
+    const upgradeLocked = hasUpgrade && upgradeStarsNeeded > this.shopPlayerStars;
+    if (hasUpgrade && !upgradeLocked) {
+      this.addWeaponStatBlock(kind, nextLevel, { x: midX, topY: headerY }, colW, '');
+    } else if (upgradeLocked) {
+      this.addC(addLabel(this, { x: midX, y: headerY + px(4), text: `★${String(upgradeStarsNeeded)} to unlock Lv${String(nextLevel)}`, color: 0x556677, size: 10 }));
+    } else {
+      this.addC(addLabel(this, { x: midX, y: headerY + px(4), text: 'MAX LEVEL', color: PALETTE.weaponCyan, size: 10 }));
+    }
+
+    const btnY = px(SHOP_ACTION_Y + 68);
+    const equipItemId = `${kind}-${String(ownedLevel)}`;
+    this.addC(addTextButton(this, {
+      x: hasUpgrade && !upgradeLocked ? px(SHOP_ITEM_X + 60) : px(CONTENT_MID), y: btnY,
+      label: 'EQUIP FREE', color: PALETTE.shieldBlue, size: 11,
+      onClick: () => { this.save = switchItem(this.save, equipItemId); this.rebuildContent(); this.updatePreview(); },
+    }));
+    if (hasUpgrade && !upgradeLocked) {
+      const upgradeCost = Math.max(0, itemById(`${kind}-${String(nextLevel)}`).price - itemById(this.save.equipped.weapon).price);
+      const upgradeBtn = addTextButton(this, {
+        x: px(HUB_LEFT_W - 80), y: btnY,
+        label: upgradeCost === 0 ? `▲ LV${String(nextLevel)}  FREE` : `▲ LV${String(nextLevel)}  ${String(upgradeCost)}⬤`,
+        color: PALETTE.generatorAmber, size: 11,
+        onClick: () => { this.save = switchItem(this.save, `${kind}-${String(nextLevel)}`); this.rebuildContent(); this.updatePreview(); },
+      });
+      if (this.save.coins < upgradeCost) upgradeBtn.setAlpha(0.4);
+      this.addC(upgradeBtn);
+    }
+  }
+
   private buildWeaponKindSwitch(kind: WeaponKind): void {
     const targetLevel = this.bestAffordableLevelForKind(kind);
     if (targetLevel === null) return; // row is greyed — no action panel
     const spec = weaponSpecAtLevel(kind, targetLevel);
     const targetItemId = `${kind}-${String(targetLevel)}`;
-    const netCost = itemById(targetItemId).price - itemById(this.save.equipped.weapon).price;
+    const cost = Math.max(0, itemById(targetItemId).price - itemById(this.save.equipped.weapon).price);
     const targets = spec.maxTargets === Infinity ? '∞' : String(spec.maxTargets);
     this.addC(this.add.text(px(SHOP_ITEM_X), px(SHOP_ACTION_Y + 10),
       `Lv${String(targetLevel)}: ${String(spec.damagePerShot)}dmg  ${String(spec.ticksBetweenShots)}t  ${targets} targets  ${String(spec.energyPerShot)} energy`, {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`,
         color: cssColor(0x8888aa), wordWrap: { width: px(SHOP_ITEM_W) },
       }));
+    const doSwitch = (): void => { this.save = switchItem(this.save, targetItemId); this.rebuildContent(); this.updatePreview(); };
     const btnY = px(SHOP_ACTION_Y + 68);
-    if (netCost <= 0) {
-      const refund = Math.abs(netCost);
+    if (cost === 0) {
+      this.addC(addTextButton(this, {
+        x: px(CONTENT_MID), y: btnY, label: 'BUY FREE', color: PALETTE.shieldBlue, onClick: doSwitch,
+      }));
+    } else if (this.save.coins >= cost) {
       this.addC(addTextButton(this, {
         x: px(CONTENT_MID), y: btnY,
-        label: refund > 0 ? `SWITCH  +${String(refund)}⬤ back` : 'SWITCH FREE',
-        color: PALETTE.shieldBlue,
-        onClick: () => { this.save = switchItem(this.save, targetItemId); this.rebuildContent(); this.updatePreview(); },
+        label: `BUY & EQUIP  ${String(cost)}⬤`, color: PALETTE.generatorAmber, onClick: doSwitch,
       }));
     } else {
-      this.addC(addTextButton(this, {
-        x: px(CONTENT_MID), y: btnY,
-        label: `SWITCH  ${String(netCost)}⬤`, color: PALETTE.generatorAmber,
-        onClick: () => { this.save = switchItem(this.save, targetItemId); this.rebuildContent(); this.updatePreview(); },
-      }));
+      this.addC(addLabel(this, { x: px(SHOP_ITEM_X), y: btnY, text: `Need ${String(cost - this.save.coins)}⬤ more`, color: PALETTE.enemyOrange, size: 12 }));
     }
   }
 
@@ -824,8 +908,17 @@ export class HubScene extends Phaser.Scene {
 
   private equippedLevelForKind(kind: WeaponKind): number {
     if (!this.save.equipped.weapon.startsWith(`${kind}-`)) return 0;
-    const level = parseInt(this.save.equipped.weapon.split('-')[1] ?? '0', 10);
+    const parts = this.save.equipped.weapon.split('-');
+    const level = parseInt(parts[parts.length - 1] ?? '0', 10);
     return isNaN(level) ? 0 : level;
+  }
+
+  /** Returns the highest level of `kind` in `ownedItems`, 0 if none owned. */
+  private ownedLevelForKind(kind: WeaponKind): number {
+    for (let lv = MAX_WEAPON_LEVEL; lv >= 1; lv--) {
+      if (isOwned(this.save, `${kind}-${String(lv)}`)) return lv;
+    }
+    return 0;
   }
 
   // Returns the highest level of `kind` the player can afford AND has stars for when

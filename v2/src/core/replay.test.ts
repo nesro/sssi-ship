@@ -4,7 +4,7 @@ import { FIXTURE_LOADOUT, FIXTURE_MISSION } from './fixtures';
 import { hashCoreState, runMission, verifyReplay } from './replay';
 import { createCoreState } from './state';
 import { advanceTick } from './tick';
-import { ALL_CARDS } from '../data/cards';
+import { ALL_ABILITIES } from '../data/cards';
 import type { MissionSpec, SupplyLoadout } from './types';
 
 const MISSION_WITH_CALLS: MissionSpec = {
@@ -61,10 +61,10 @@ describe('runMission', () => {
 describe('verifyReplay with cards and boosts', () => {
   const loadout = { ...FIXTURE_LOADOUT, supplies: TEST_SUPPLIES };
   const policies = {
-    cardPool: ALL_CARDS,
-    // Reroll the first offer, then always pick the first card.
-    pickCard: (state: { cardActions: number[] }) =>
-      state.cardActions.length === 0 ? CARD_ACTION_REROLL : 0,
+    abilityPool: ALL_ABILITIES,
+    // Reroll the first offer, then always pick the first ability.
+    pickAbility: (state: { abilityActions: number[] }) =>
+      state.abilityActions.length === 0 ? CARD_ACTION_REROLL : 0,
     // Tap the damage boost at tick 60.
     useBoost: (state: { tick: number }) => (state.tick === 60 ? 0 : null),
   };
@@ -74,13 +74,13 @@ describe('verifyReplay with cards and boosts', () => {
     expect(replay.cardPicks).toContain(CARD_ACTION_REROLL);
     expect(replay.cardPicks.filter((a) => a >= 0).length).toBeGreaterThan(0);
     expect(replay.boostTaps).toEqual([{ tick: 60, slot: 0 }]);
-    expect(state.pickedCardIds.length).toBeGreaterThan(0);
-    expect(verifyReplay(replay, MISSION_WITH_CALLS, ALL_CARDS)).toBe(true);
+    expect(state.pickedAbilityIds.length).toBeGreaterThan(0);
+    expect(verifyReplay(replay, MISSION_WITH_CALLS, ALL_ABILITIES)).toBe(true);
   });
 
   it('a tampered hash fails verification', () => {
     const { replay } = runMission(MISSION_WITH_CALLS, loadout, 99, policies);
-    expect(verifyReplay({ ...replay, resultHash: 'deadbeef' }, MISSION_WITH_CALLS, ALL_CARDS)).toBe(
+    expect(verifyReplay({ ...replay, resultHash: 'deadbeef' }, MISSION_WITH_CALLS, ALL_ABILITIES)).toBe(
       false,
     );
   });

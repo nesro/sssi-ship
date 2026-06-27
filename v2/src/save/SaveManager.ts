@@ -5,6 +5,7 @@ import {
   generatorSpecById,
   itemById,
   motorSpecById,
+  requiresAncestors,
   shieldSpecById,
   shipById,
   supplyById,
@@ -18,6 +19,8 @@ export interface SaveData {
   /** supplyId → owned charges (auto-refill every mission; never consumed permanently). */
   ownedSupplyCharges: Record<string, number>;
   equipped: { ship: string; weapon: string; shield: string; generator: string; motor: string };
+  /** Item IDs permanently owned — once bought, free to re-equip at any time. */
+  ownedItems: string[];
   /** missionId → star ids earned across all runs (best benchmarks; never decreases). */
   missionStars: Record<string, string[]>;
   /** Absent or true = dev border visible; explicit false = hidden. */
@@ -28,8 +31,10 @@ export interface SaveData {
   firstBranchChoice?: 'tutorial' | 'missions';
 }
 
-const SAVE_VERSION = 4;
+const SAVE_VERSION = 5;
 const STORAGE_KEY = 'nesro-nova-v2-save';
+
+const DEFAULT_EQUIPPED_ITEMS = [DEFAULT_SHIP_ID, 'pulse-1', 'shield-1', 'generator-1', 'motor-1'];
 
 export function defaultSave(): SaveData {
   return {
@@ -43,25 +48,36 @@ export function defaultSave(): SaveData {
       generator: 'generator-1',
       motor: 'motor-1',
     },
+    ownedItems: [...DEFAULT_EQUIPPED_ITEMS],
     missionStars: {},
   };
 }
 
-/** Loads the save; migrates v2/v3 (keeping coins/equipped/stars/supplies), resets anything older. */
+/** True when the given item or ship id has been permanently purchased. */
+export function isOwned(save: SaveData, id: string): boolean {
+  return save.ownedItems.includes(id);
+}
+
+/** Loads the save; migrates v2–v4 (keeping coins/equipped/stars/supplies/owned), resets anything older. */
 export function loadSave(): SaveData {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (raw === null) return defaultSave();
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     if (parsed['version'] === SAVE_VERSION) return parsed as unknown as SaveData;
-    if (parsed['version'] === 3 || parsed['version'] === 2) {
-      const oldEquipped = (parsed['equipped'] as Omit<SaveData['equipped'], 'ship'> | undefined) ?? defaultSave().equipped;
+    if (parsed['version'] === 4 || parsed['version'] === 3 || parsed['version'] === 2) {
+      const oldEquipped: SaveData['equipped'] = parsed['version'] === 4
+        ? ((parsed['equipped'] as SaveData['equipped'] | undefined) ?? defaultSave().equipped)
+        : { ship: DEFAULT_SHIP_ID, ...((parsed['equipped'] as Omit<SaveData['equipped'], 'ship'> | undefined) ?? defaultSave().equipped) };
+      const equippedIds = [oldEquipped.ship, oldEquipped.weapon, oldEquipped.shield, oldEquipped.generator, oldEquipped.motor];
+      const withAncestors = equippedIds.flatMap((id) => [id, ...requiresAncestors(id)]);
       const migrated: SaveData = {
         ...defaultSave(),
         coins: typeof parsed['coins'] === 'number' ? parsed['coins'] : 0,
-        equipped: { ship: DEFAULT_SHIP_ID, ...oldEquipped },
+        equipped: oldEquipped,
         missionStars: (parsed['missionStars'] as SaveData['missionStars'] | undefined) ?? {},
         ownedSupplyCharges: (parsed['ownedSupplyCharges'] as SaveData['ownedSupplyCharges'] | undefined) ?? {},
+        ownedItems: [...new Set([...DEFAULT_EQUIPPED_ITEMS, ...withAncestors])],
       };
       persistSave(migrated);
       return migrated;
@@ -137,44 +153,50 @@ export function applyMissionResult(save: SaveData, result: MissionResult): Appli
 }
 
 /**
- * Replaces the currently equipped item in a slot with a new one, charging (or refunding)
- * the price difference (Model A). Any item can replace any other in the same system — no gates.
- * Net cost is negative when switching to a cheaper item; coins increase accordingly.
+ * Equips an item, buying it if not already owned.
+ * Cost = max(0, newPrice − currentPrice): upgrading costs the difference; re-equipping
+ * an owned item or switching to a cheaper tier is always free. No refunds — items are
+ * permanent once bought.
  */
 export function switchItem(save: SaveData, itemId: string): SaveData {
   const item = itemById(itemId);
   const currentId = save.equipped[item.system];
   if (currentId === itemId) return save;
-  const currentItem = itemById(currentId);
-  const netCost = item.price - currentItem.price;
-  if (save.coins < netCost) {
-    throw new Error(`Not enough coins to switch to "${itemId}" (need ${String(netCost)}, have ${String(save.coins)})`);
+  if (item.requires !== undefined && !save.ownedItems.includes(item.requires)) {
+    throw new Error(`Cannot buy "${itemId}": must own "${item.requires}" first`);
+  }
+  const alreadyOwned = save.ownedItems.includes(itemId);
+  const cost = alreadyOwned ? 0 : Math.max(0, item.price - itemById(currentId).price);
+  if (save.coins < cost) {
+    throw new Error(`Not enough coins to buy "${itemId}" (need ${String(cost)}, have ${String(save.coins)})`);
   }
   const next: SaveData = {
     ...save,
-    coins: save.coins - netCost,
+    coins: save.coins - cost,
     equipped: { ...save.equipped, [item.system]: itemId },
+    ownedItems: alreadyOwned ? save.ownedItems : [...save.ownedItems, itemId],
   };
   persistSave(next);
   return next;
 }
 
 /**
- * Replaces the equipped ship, charging (or refunding) the price difference.
- * Ships live in a separate catalog (SHIPS) so they get their own switch function.
+ * Equips a ship, buying it if not already owned.
+ * Same ownership model as switchItem: cost = max(0, newPrice − currentPrice), no refunds.
  */
 export function switchShip(save: SaveData, shipId: string): SaveData {
   const ship = shipById(shipId);
   if (save.equipped.ship === shipId) return save;
-  const currentShip = shipById(save.equipped.ship);
-  const netCost = ship.price - currentShip.price;
-  if (save.coins < netCost) {
-    throw new Error(`Not enough coins to switch to "${shipId}" (need ${String(netCost)}, have ${String(save.coins)})`);
+  const alreadyOwned = save.ownedItems.includes(shipId);
+  const cost = alreadyOwned ? 0 : Math.max(0, ship.price - shipById(save.equipped.ship).price);
+  if (save.coins < cost) {
+    throw new Error(`Not enough coins to buy "${shipId}" (need ${String(cost)}, have ${String(save.coins)})`);
   }
   const next: SaveData = {
     ...save,
-    coins: save.coins - netCost,
+    coins: save.coins - cost,
     equipped: { ...save.equipped, ship: shipId },
+    ownedItems: alreadyOwned ? save.ownedItems : [...save.ownedItems, shipId],
   };
   persistSave(next);
   return next;

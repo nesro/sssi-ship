@@ -1,14 +1,14 @@
 import { REROLLS_PER_MISSION } from './constants';
 import { mulberry32 } from './rng';
 import { computeEffectiveStats, defaultModifiers } from './stats';
-import type { CardDefinition, CoreState, LoadoutSnapshot, MissionSpec } from './types';
+import type { AbilityDefinition, CoreState, LoadoutSnapshot, MissionSpec } from './types';
 
 /** Builds the initial core state for a mission run. Pure given (mission, loadout, seed). */
 export function createCoreState(
   mission: MissionSpec,
   loadout: LoadoutSnapshot,
   seed: number,
-  cardPool: CardDefinition[] = [],
+  abilityPool: AbilityDefinition[] = [],
 ): CoreState {
   const modifiers = defaultModifiers();
   const stats = computeEffectiveStats(loadout, modifiers);
@@ -33,11 +33,14 @@ export function createCoreState(
     rng: mulberry32(seed),
     loadout,
     mission,
-    cardPool,
+    abilityPool,
     modifiers,
-    pickedCardIds: [],
-    cardActions: [],
+    pickedAbilityIds: [],
+    abilityActions: [],
     pendingOffer: null,
+    autoFireEnabled: true,
+    autoShieldEnabled: true,
+    equippedAbilities: [],
     rerollsLeft: REROLLS_PER_MISSION + (loadout.motor.bonusRerollsPerMission ?? 0),
     supportCallsDone: 0,
     bonusCallsPending: 0,

@@ -82,6 +82,8 @@ export function computeEffectiveStats(
   loadout: LoadoutSnapshot,
   mods: RunModifiers,
   damageBoostMult = 1,
+  fireRateBoostMult = 1,
+  generatorBoostMult = 1,
 ): EffectiveStats {
   const { ship, weapon, shield, generator, motor } = loadout;
   const reactorMult = ship.passiveKind === 'generator-capacity-bonus' ? ship.passiveValue : 1;
@@ -89,13 +91,13 @@ export function computeEffectiveStats(
   return {
     weaponEquipped: weapon !== null,
     weaponDamage: weapon !== null ? weapon.damagePerShot * mods.weaponDamageMult * damageBoostMult : 0,
-    weaponInterval: weapon !== null ? weapon.ticksBetweenShots * mods.fireIntervalMult : 0,
+    weaponInterval: weapon !== null ? weapon.ticksBetweenShots * mods.fireIntervalMult / fireRateBoostMult : 0,
     weaponEnergyPerShot: weapon !== null ? weapon.energyPerShot * mods.weaponEnergyMult : 0,
     weaponMaxTargets: weapon !== null ? weapon.maxTargets + mods.extraPierce : 0,
     weaponFalloff: weapon !== null ? weapon.falloffPerTarget : 1,
     shieldCapacity: (shield.capacity + mods.shieldCapacityBonus) * mods.shieldCapacityMult,
     shieldPulseFraction: shield.pulseShieldFraction * mods.shieldPulseMult,
-    generatorOutput: generator.outputPerTick + mods.generatorOutputBonus,
+    generatorOutput: (generator.outputPerTick + mods.generatorOutputBonus) * generatorBoostMult,
     generatorCapacity,
     generatorPulseDrain: generator.pulseDrainFraction * generatorCapacity,
     motorTimelineMultiplier: motor.timelineMultiplier * mods.motorTimelineMult,
@@ -107,11 +109,34 @@ export function computeEffectiveStats(
   };
 }
 
-/** Product of live damage-boost effects (reserve supplies) at the current tick. */
+/** Product of live damage-boost effects at the current tick. */
 export function activeDamageMult(state: CoreState): number {
   let mult = 1;
   for (const effect of state.activeEffects) {
-    if (effect.expiresAtTick > state.tick) mult *= effect.multiplier;
+    if (effect.kind === 'damage-mult' && effect.expiresAtTick > state.tick) mult *= effect.multiplier;
   }
   return mult;
+}
+
+/** Product of live fire-rate-boost effects at the current tick (>1 = faster fire). */
+export function activeFireRateMult(state: CoreState): number {
+  let mult = 1;
+  for (const effect of state.activeEffects) {
+    if (effect.kind === 'fire-rate-mult' && effect.expiresAtTick > state.tick) mult *= effect.multiplier;
+  }
+  return mult;
+}
+
+/** Product of live generator-output-boost effects at the current tick. */
+export function activeGeneratorMult(state: CoreState): number {
+  let mult = 1;
+  for (const effect of state.activeEffects) {
+    if (effect.kind === 'generator-mult' && effect.expiresAtTick > state.tick) mult *= effect.multiplier;
+  }
+  return mult;
+}
+
+/** True when the ship has an active invulnerability effect. */
+export function isInvulnerable(state: CoreState): boolean {
+  return state.activeEffects.some((e) => e.kind === 'invulnerable' && e.expiresAtTick > state.tick);
 }

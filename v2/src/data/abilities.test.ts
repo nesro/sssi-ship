@@ -1,0 +1,116 @@
+import { describe, expect, it } from 'vitest';
+import { ALL_NEW_ABILITIES } from './abilities';
+import { abilityById } from './cards';
+import { defaultModifiers } from '../core/stats';
+
+function applyAbility(id: string) {
+  const ability = abilityById(id);
+  if (ability.apply === undefined) throw new Error(`${id} has no apply function`);
+  return ability.apply(defaultModifiers());
+}
+
+// ── abilityById covers ALL_NEW_ABILITIES after the cards.ts fix ────────────────
+
+describe('abilityById: covers new company abilities', () => {
+  it('looks up every new ability without throwing', () => {
+    for (const ability of ALL_NEW_ABILITIES) {
+      expect(() => abilityById(ability.id)).not.toThrow();
+      expect(abilityById(ability.id).id).toBe(ability.id);
+    }
+  });
+});
+
+// ── Nexus passives ─────────────────────────────────────────────────────────────
+
+describe('Nexus passive abilities: apply() modifies correct modifier', () => {
+  it('armourBreaker: highHpEnemyDamageMult × 1.5', () => {
+    const base = defaultModifiers().highHpEnemyDamageMult;
+    expect(applyAbility('nexus-armour-breaker').highHpEnemyDamageMult).toBeCloseTo(base * 1.5);
+  });
+
+  it('blockerBane: blockerDamageMult × 1.6', () => {
+    const base = defaultModifiers().blockerDamageMult;
+    expect(applyAbility('nexus-blocker-bane').blockerDamageMult).toBeCloseTo(base * 1.6);
+  });
+
+  it('shrapnelKill: killExplosionDamage + 8', () => {
+    const base = defaultModifiers().killExplosionDamage;
+    expect(applyAbility('nexus-shrapnel').killExplosionDamage).toBeCloseTo(base + 8);
+  });
+});
+
+// ── Aegis passives ─────────────────────────────────────────────────────────────
+
+describe('Aegis passive abilities: apply() modifies correct modifier', () => {
+  it('hullRecovery: hullPerKill + 1', () => {
+    const base = defaultModifiers().hullPerKill;
+    expect(applyAbility('aegis-hull-recovery').hullPerKill).toBeCloseTo(base + 1);
+  });
+
+  it('shieldResonance: shieldPulseMult × 1.4', () => {
+    const base = defaultModifiers().shieldPulseMult;
+    expect(applyAbility('aegis-shield-resonance').shieldPulseMult).toBeCloseTo(base * 1.4);
+  });
+
+  it('guardianSync: shieldActiveDmgBonus + 25', () => {
+    const base = defaultModifiers().shieldActiveDmgBonus;
+    expect(applyAbility('aegis-guardian-sync').shieldActiveDmgBonus).toBeCloseTo(base + 25);
+  });
+});
+
+// ── Quantum passives ───────────────────────────────────────────────────────────
+
+describe('Quantum passive abilities: apply() modifies correct modifier', () => {
+  it('efficiencyCore: weaponEnergyMult × 0.8', () => {
+    const base = defaultModifiers().weaponEnergyMult;
+    expect(applyAbility('quantum-efficiency-core').weaponEnergyMult).toBeCloseTo(base * 0.8);
+  });
+
+  it('pulseAmplifier: energyPerPulse + 5', () => {
+    const base = defaultModifiers().energyPerPulse;
+    expect(applyAbility('quantum-pulse-amplifier').energyPerPulse).toBeCloseTo(base + 5);
+  });
+
+  it('fullChargeBonus: fullEnergyDmgBonus + 30', () => {
+    const base = defaultModifiers().fullEnergyDmgBonus;
+    expect(applyAbility('quantum-full-charge').fullEnergyDmgBonus).toBeCloseTo(base + 30);
+  });
+});
+
+// ── Comet passives ─────────────────────────────────────────────────────────────
+
+describe('Comet passive abilities: apply() modifies correct modifier', () => {
+  it('motorEfficiency: motorDrawMult × 0.75', () => {
+    const base = defaultModifiers().motorDrawMult;
+    expect(applyAbility('comet-motor-efficiency').motorDrawMult).toBeCloseTo(base * 0.75);
+  });
+
+  it('earlyAssault: earlyBirdDmgBonus + 35', () => {
+    const base = defaultModifiers().earlyBirdDmgBonus;
+    expect(applyAbility('comet-early-assault').earlyBirdDmgBonus).toBeCloseTo(base + 35);
+  });
+
+  it('lastLapPush: finalPushDmgBonus + 40', () => {
+    const base = defaultModifiers().finalPushDmgBonus;
+    expect(applyAbility('comet-last-lap').finalPushDmgBonus).toBeCloseTo(base + 40);
+  });
+});
+
+// ── Active abilities: no apply function ────────────────────────────────────────
+
+describe('Active abilities: no apply function, have activate', () => {
+  const ACTIVE_IDS = [
+    'nexus-overload', 'nexus-barrage',
+    'aegis-barrier', 'aegis-resonance-pulse',
+    'quantum-power-surge', 'quantum-energy-overdrive',
+    'comet-speed-burst', 'comet-timeline-rush',
+  ];
+
+  for (const id of ACTIVE_IDS) {
+    it(`${id}: apply is undefined, activate is defined`, () => {
+      const ability = abilityById(id);
+      expect(ability.apply).toBeUndefined();
+      expect(ability.activate).toBeTypeOf('function');
+    });
+  }
+});

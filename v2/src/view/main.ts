@@ -34,10 +34,22 @@ if (import.meta.env.DEV) {
     coins: (amount: number) => { persistSave({ ...loadSave(), coins: loadSave().coins + amount }); goTo('HubScene'); },
     /** Set coins to an exact amount. Usage: __cheat.setCoins(9999) */
     setCoins: (amount: number) => { persistSave({ ...loadSave(), coins: amount }); goTo('HubScene'); },
-    /** Unlock all missions by granting stars. Usage: __cheat.unlockAll() */
+    /** Unlock all missions by granting hull/kill/shield stars. Usage: __cheat.unlockAll() */
     unlockAll: () => {
       const save = loadSave();
-      persistSave({ ...save, missionStars: { ...save.missionStars, 'smoke-1': ['smoke-1-hull', 'smoke-1-kills', 'smoke-1-time'] } });
+      const allStars: Record<string, string[]> = {
+        t1: ['t1-hull-50', 't1-all-kills'],
+        t2: ['t2-hull-50', 't2-hull-90', 't2-all-kills', 't2-shield'],
+        t3: ['t3-hull-50', 't3-all-kills', 't3-shield'],
+        t4: ['t4-hull-50', 't4-hull-90', 't4-all-kills', 't4-shield'],
+        m1: ['m1-hull-50', 'm1-hull-90', 'm1-all-kills', 'm1-shield'],
+        m2: ['m2-hull-50', 'm2-hull-90', 'm2-all-kills', 'm2-shield'],
+        m3: ['m3-hull-50', 'm3-hull-90', 'm3-all-kills', 'm3-shield'],
+        m4: ['m4-hull-50', 'm4-hull-90', 'm4-all-kills', 'm4-shield'],
+        m5: ['m5-hull-50', 'm5-hull-90', 'm5-all-kills', 'm5-shield'],
+        m6: ['m6-hull-50', 'm6-all-kills', 'm6-shield'],
+      };
+      persistSave({ ...save, missionStars: { ...save.missionStars, ...allStars } });
       goTo('HubScene');
     },
     /** Reset save to factory defaults. Usage: __cheat.reset() */
@@ -45,7 +57,7 @@ if (import.meta.env.DEV) {
     /** Print current save to console. Usage: __cheat.inspect() */
     inspect: () => { console.log(JSON.stringify(loadSave(), null, 2)); },
     /** Load a rich save for full shop testing. Usage: __cheat.richSave() */
-    richSave: () => { persistSave({ ...defaultSave(), coins: 99999 }); goTo('HubScene'); },
+    richSave: () => { persistSave({ ...defaultSave(), coins: 99999, w0Completed: true }); goTo('HubScene'); },
   };
   console.info('[dev] __cheat available: coins(n) · setCoins(n) · richSave() · unlockAll() · reset() · inspect()');
 }

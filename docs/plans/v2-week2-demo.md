@@ -41,23 +41,23 @@ Gaps filled here (flag if wrong):
 
 ## Test plan
 
-- [ ] modifiers: effective stats apply damage/interval/energy/pierce/regen/motor deltas
-- [ ] overcharge chain: every Nth shot ×3; refund payoff restores the energy cost
-- [ ] pierce chain: extra targets hit; energy-per-hit payoff restores energy
-- [ ] card offers: 3 distinct cards; payoffs suppressed (weight) until enabler picked;
+- [x] modifiers: effective stats apply damage/interval/energy/pierce/regen/motor deltas
+- [x] overcharge chain: every Nth shot ×3; refund payoff restores the energy cost
+- [x] pierce chain: extra targets hit; energy-per-hit payoff restores energy
+- [x] card offers: 3 distinct cards; payoffs suppressed (weight) until enabler picked;
       enablers/payoffs unique once picked
-- [ ] reroll consumes PRNG deterministically; -2/-1/pick action stream replays exactly
-- [ ] support calls fire at timeline points; blocker death grants a bonus call
-- [ ] pendingOffer blocks advanceTick (sim pauses until resolved)
-- [ ] supplies: charge consumption, shield restore clamps, energy refill, timed damage
+- [x] reroll consumes PRNG deterministically; -2/-1/pick action stream replays exactly
+- [x] support calls fire at timeline points; blocker death grants a bonus call
+- [x] pendingOffer blocks advanceTick (sim pauses until resolved)
+- [x] supplies: charge consumption, shield restore clamps, energy refill, timed damage
       boost expires; boostTaps replay deterministically
-- [ ] stars: boss-time tiers, hull-above tiers, all-kills (collision ≠ kill),
+- [x] stars: boss-time tiers, hull-above tiers, all-kills (collision ≠ kill),
       shield-unbroken; defeat earns no stars
-- [ ] coins: per-kill + completion; identical on replay
-- [ ] loadout report: net energy sign, brownout-time estimate, DPS single vs 3-queue
-- [ ] save manager: roundtrip, version field, star-total derivation, unlock gates,
+- [x] coins: per-kill + completion; identical on replay
+- [x] loadout report: net energy sign, brownout-time estimate, DPS single vs 3-queue
+- [x] save manager: roundtrip, version field, star-total derivation, unlock gates,
       missing/corrupt save falls back to defaults
-- [ ] full-mission determinism with cards + boosts: same record → same resultHash
+- [x] full-mission determinism with cards + boosts: same record → same resultHash
 
 ## File hygiene
 
@@ -95,4 +95,4 @@ Gaps filled here (flag if wrong):
 **CI**
 - [x] `pnpm build:dry` passes
 - [x] `pnpm lint` passes
-- [x] `pnpm test` passes with no new failures
+- [x] `pnpm test` passes with no new failures (191 tests, 17 files)

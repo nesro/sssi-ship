@@ -42,6 +42,51 @@ describe('regenerateEnergy', () => {
   });
 });
 
+describe('regenerateEnergy: conditional output bonuses', () => {
+  it('highHullGenBonus: extra output when hull is above 80%', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, highHullGenBonus: 0.5 };
+    state.ship.hull = state.ship.maxHull; // 100% — above 80%
+    state.ship.energy = 0;
+    const stats = statsFor();
+    regenerateEnergy(state, stats);
+    // output = generatorOutput × (1 + 0.5) = 2 × 1.5 = 3, minus motor draw 0.3 = 2.7
+    expect(state.ship.energy).toBeCloseTo(stats.generatorOutput * 1.5 - stats.motorDraw);
+  });
+
+  it('highHullGenBonus: no bonus when hull is at or below 80%', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, highHullGenBonus: 0.5 };
+    state.ship.hull = Math.floor(state.ship.maxHull * 0.8); // exactly 80% — no bonus
+    state.ship.energy = 0;
+    const stats = statsFor();
+    regenerateEnergy(state, stats);
+    expect(state.ship.energy).toBeCloseTo(stats.generatorOutput - stats.motorDraw);
+  });
+
+  it('bossAliveGenBonus: extra output when a boss is present', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, bossAliveGenBonus: 0.5 };
+    state.enemies = [{ id: 1, kind: 'boss', hp: 100, maxHp: 100, distance: 50, speed: 0,
+      shootTimer: 10, ticksBetweenShots: 10, blocksConveyor: true, coinReward: 50,
+      isBoss: true, regenPerTick: 0, shotDamage: 5, critChance: 0, missChance: 0, critMult: 2 }];
+    state.ship.energy = 0;
+    const stats = statsFor();
+    regenerateEnergy(state, stats);
+    expect(state.ship.energy).toBeCloseTo(stats.generatorOutput * 1.5 - stats.motorDraw);
+  });
+
+  it('bossAliveGenBonus: no bonus when no boss is present', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, bossAliveGenBonus: 0.5 };
+    state.enemies = []; // no boss
+    state.ship.energy = 0;
+    const stats = statsFor();
+    regenerateEnergy(state, stats);
+    expect(state.ship.energy).toBeCloseTo(stats.generatorOutput - stats.motorDraw);
+  });
+});
+
 describe('brownoutFactor', () => {
   const capacity = 100;
 
@@ -120,5 +165,38 @@ describe('pulseShield', () => {
     state.ship.energy = stats.generatorCapacity; // full but pulseDrain might exceed energy
     pulseShield(state, stats);
     expect(state.ship.energy).toBeGreaterThanOrEqual(0);
+  });
+
+  it('energyPerPulse: energy is restored by flat amount after each pulse', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, energyPerPulse: 5 };
+    state.ship.shield = 0;
+    const stats = statsFor();
+    state.ship.energy = stats.generatorCapacity;
+    pulseShield(state, stats);
+    // After pulse: energy = capacity - pulseDrain + energyPerPulse
+    const expected = Math.min(stats.generatorCapacity, stats.generatorCapacity - stats.generatorPulseDrain + 5);
+    expect(state.ship.energy).toBeCloseTo(expected);
+  });
+
+  it('volatileCoreLosePct = 1.0: energy drops to 0 after every pulse', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, volatileCoreLosePct: 1.0 }; // always vents
+    state.ship.shield = 0;
+    const stats = statsFor();
+    state.ship.energy = stats.generatorCapacity;
+    pulseShield(state, stats);
+    expect(state.ship.energy).toBe(0);
+  });
+
+  it('volatileCoreLosePct = 0: energy is unaffected by the vent check', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, volatileCoreLosePct: 0 };
+    state.ship.shield = 0;
+    const stats = statsFor();
+    state.ship.energy = stats.generatorCapacity;
+    pulseShield(state, stats);
+    // Energy should be capacity - pulseDrain (no venting)
+    expect(state.ship.energy).toBeCloseTo(stats.generatorCapacity - stats.generatorPulseDrain);
   });
 });

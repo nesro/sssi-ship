@@ -34,6 +34,7 @@ export function brownoutFactor(energy: number, capacity: number): number {
  * This runs last so the player can observe the generator fill, then the shield step up.
  */
 export function pulseShield(state: CoreState, stats: EffectiveStats): void {
+  if (!state.autoShieldEnabled) return;
   if (stats.shieldCapacity <= 0) return;
   if (state.ship.shield >= stats.shieldCapacity) return;
   if (state.ship.energy < stats.generatorCapacity) return;

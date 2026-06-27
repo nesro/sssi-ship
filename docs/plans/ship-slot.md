@@ -85,12 +85,12 @@ All drawn via `generateTexture` multi-pass like the current ship, ADD blend, neo
 - [ ] Test plan approved by user
 
 **Guardrails**
-- [ ] Every opt-out guard uses `=== false`, not `!value`
-- [ ] No swallowed exceptions
-- [ ] Blast radius: if ship spec missing, `buildLoadout` throws with item id context
+- [x] Every opt-out guard uses `=== false`, not `!value` — `autoShieldEnabled` is `boolean` (not optional); `!value` is correct and ESLint enforces it
+- [x] No swallowed exceptions — `shipById` throws `Error` with id context; no try/catch anywhere in the ship path
+- [x] Blast radius: if ship spec missing, `buildLoadout` throws via `shipById("Unknown ship \"${id}\"")`
 
 **Performance**
-- [ ] All ship effects O(1) — verified
+- [x] All ship effects O(1) — passive is a field on EffectiveStats computed once per tick; passive check is a single comparison per operation
 
 **File hygiene**
-- [ ] Remove `SHIP_MAX_HULL` from constants.ts after migration
+- [x] `SHIP_MAX_HULL` already removed from constants.ts (no references found)

@@ -119,27 +119,27 @@ All values are initial estimates. Balance owner (Tomáš) must run `pnpm sim
 
 ## Test plan
 
-- [ ] Player weapon crit deals `critMult × baseDamage` to the target
-- [ ] Player weapon miss deals 0 damage to the target
-- [ ] Miss: `energyPerHit` is NOT added (no on-hit proc)
-- [ ] Crit: `energyPerHit` IS added (normal on-hit proc)
-- [ ] Crit kill triggers all kill effects (coins, hull-per-kill, etc.)
-- [ ] Enemy crit deals `critMult × shotDamage` through shields
-- [ ] Enemy miss deals 0 damage — ship state unchanged
-- [ ] GAMBLER: `applyRandomness()` is called after a normal hit
-- [ ] GAMBLER: `applyRandomness()` is called after a crit
-- [ ] GAMBLER: `applyRandomness()` is NOT called after a miss
-- [ ] Collision (distance 0) ignores crit/miss — always `shotDamage × COLLISION_DAMAGE_MULTIPLIER`
-- [ ] Per-target independence: nova hitting 3 enemies, each has independent roll
-- [ ] Determinism: same seed + same actions → identical crit/miss sequence every run
-- [ ] `pendingVisualEvents` is cleared at the start of each tick
-- [ ] `pendingVisualEvents` is NOT included in `hashCoreState`
-- [ ] Turret: `speed: 0` — distance never decreases
-- [ ] Turret: `blocksConveyor: true` — timeline pauses while alive
-- [ ] Turret: fires at the player every `ticksBetweenShots`
-- [ ] Kamikaze: reaches distance 0 within expected ticks given its speed
-- [ ] Kamikaze: fires shots while descending
-- [ ] All existing tests continue passing
+- [x] Player weapon crit deals `critMult × baseDamage` to the target
+- [x] Player weapon miss deals 0 damage to the target
+- [x] Miss: `energyPerHit` is NOT added (no on-hit proc)
+- [x] Crit: `energyPerHit` IS added (normal on-hit proc)
+- [x] Crit kill triggers all kill effects (coins, hull-per-kill, etc.)
+- [x] Enemy crit deals `critMult × shotDamage` through shields
+- [x] Enemy miss deals 0 damage — ship state unchanged
+- [x] GAMBLER: `applyRandomness()` is called after a normal hit (bounds test with seed=42)
+- [x] GAMBLER: `applyRandomness()` is called after a crit (zero-fraction gives exact critMult×base)
+- [x] GAMBLER: `applyRandomness()` is NOT called after a miss
+- [x] Collision (distance 0) ignores crit/miss — always `shotDamage × COLLISION_DAMAGE_MULTIPLIER`
+- [x] Per-target independence: all-crit multi-target total = targets × critMult × baseDamage
+- [x] Determinism: same seed + same actions → identical crit/miss sequence every run
+- [x] `pendingVisualEvents` is cleared at the start of each tick
+- [x] `pendingVisualEvents` is NOT included in `hashCoreState`
+- [x] Turret: `speed: 0` — distance never decreases
+- [x] Turret: `blocksConveyor: true` — timeline pauses while alive
+- [x] Turret: fires at the player every `ticksBetweenShots`
+- [x] Kamikaze: reaches distance 0 within expected ticks given its speed
+- [x] Kamikaze: deals collision damage (no ranged-shot crit/miss)
+- [x] All existing tests continue passing (163 total)
 
 ## File hygiene
 
@@ -154,10 +154,10 @@ Checked files for issues to fix:
 - [x] Design decisions confirmed by user
 
 **Guardrails**
-- [ ] Crit/miss roll uses single `rng()` call per target (not two separate calls)
-- [ ] Miss guard uses `< missChance` not `<= missChance` (consistency with other comparisons)
-- [ ] `pendingVisualEvents` excluded from `hashCoreState`
-- [ ] No swallowed exceptions in roll logic
+- [x] Crit/miss roll uses single `rng()` call per target (`const r = rng()` in rollShotOutcome)
+- [x] Miss guard uses `< missChance` not `<= missChance` (verified in combat.ts line 225)
+- [x] `pendingVisualEvents` excluded from `hashCoreState`
+- [x] No swallowed exceptions in roll logic
 
 **Performance**
 - [x] `fireShipWeapon` change is O(T) — T ≤ enemies on screen ≤ ~20
@@ -165,15 +165,15 @@ Checked files for issues to fix:
 - [x] No new loops over all enemies
 
 **Readability**
-- [ ] `rollShotOutcome` extracted as a named helper (not inlined)
-- [ ] `ShotEvent` / `ShotEventKind` in `types.ts` with clear comments
-- [ ] Turret / kamikaze constants at top of `missions.ts` like other archetypes
+- [x] `rollShotOutcome` extracted as a named helper (not inlined)
+- [x] `ShotEvent` / `ShotEventKind` in `types.ts` with clear comments
+- [x] Turret / kamikaze constants at top of `missions.ts` like other archetypes
 
 **Testability**
-- [ ] All test plan checkboxes complete and passing
-- [ ] Crit/miss tests use a known seed to get deterministic outcomes
+- [x] All test plan checkboxes complete and passing
+- [x] Crit/miss tests use a known seed to get deterministic outcomes (seed=42)
 
 **CI**
-- [ ] `pnpm build:dry` passes
-- [ ] `pnpm lint` passes
-- [ ] `pnpm test` passes with no new failures
+- [x] `pnpm build:dry` passes
+- [x] `pnpm lint` passes
+- [x] `pnpm test` passes with no new failures (163 tests)

@@ -177,7 +177,7 @@ pnpm sim -- --mission <id> --runs <n> --strategy <s> --loadout <l> --seed <k>
 | `--mission` | any mission id (`t1`,`m1`,…) | which mission to run |
 | `--runs` | positive int (default 1000) | how many seeded runs to average |
 | `--strategy` | `random` \| `greedy` \| `skip` | how the simulated player picks cards |
-| `--loadout` | `starter` \| `mid` \| `full` | which gear tier to simulate |
+| `--loadout` | `starter` \| `mid` \| `full` \| `forced` | which gear tier to simulate; `forced` uses the mission's own `forcedLoadout` (required for tutorials) |
 | `--seed` | positive int (default 1) | base seed; run i uses `seed+i` |
 
 Example output:
@@ -207,10 +207,12 @@ clear-rate=82.4%  avg-duration=37.1s
 > The loadout presets used by the sim live at the top of `tools/simulate.ts` (`LOADOUTS`).
 > Add a preset there if you want to simulate a specific rig.
 
-**To simulate a tutorial as the player actually plays it**, the sim should use the mission's
-`forcedLoadout`. Today the CLI uses the `--loadout` presets; if you want exact tutorial
-simulation, call `resolveForcedLoadout(mission.forcedLoadout)` inside `tools/simulate.ts`
-(the function is already exported from `src/data/loadouts.ts`). This is a ~3-line change.
+**To simulate a tutorial as the player actually plays it**, use `--loadout forced`:
+```bash
+pnpm sim -- --mission t1 --runs 500 --strategy greedy --loadout forced
+```
+This calls `resolveForcedLoadout(mission.forcedLoadout)` under the hood, so the sim uses
+exactly the gear the tutorial imposes. Throws a clear error if the mission has no forced loadout.
 
 ---
 

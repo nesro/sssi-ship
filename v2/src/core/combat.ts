@@ -1,5 +1,6 @@
 import { OVERCHARGE_DAMAGE_MULT } from './constants';
 import { brownoutFactor } from './energy';
+import { isInvulnerable } from './stats';
 import type { EffectiveStats } from './stats';
 import type { CoreState, EnemyState, RunModifiers } from './types';
 
@@ -9,6 +10,7 @@ import type { CoreState, EnemyState, RunModifiers } from './types';
  * low energy stretches the NEXT interval (brownout) instead of blocking the shot.
  */
 export function fireShipWeapon(state: CoreState, stats: EffectiveStats): void {
+  if (!state.autoFireEnabled) return;
   if (!stats.weaponEquipped) return;
   state.ship.fireTimer -= 1;
   if (state.enemies.length === 0) {
@@ -100,8 +102,36 @@ export function fireEnemyWeapons(state: CoreState, stats: EffectiveStats): void 
   }
 }
 
+/** Toggle auto-fire on or off. When off, the weapon never fires — energy accumulates. */
+export function toggleAutoFire(state: CoreState): void {
+  state.autoFireEnabled = !state.autoFireEnabled;
+}
+
+/** Toggle auto-shield on or off. When off, the generator never fires a shield pulse. */
+export function toggleAutoShield(state: CoreState): void {
+  state.autoShieldEnabled = !state.autoShieldEnabled;
+}
+
+/**
+ * Player-triggered: activate the ability in the given slot. No-ops if on cooldown or
+ * insufficient energy. The caller (view) is responsible for routing this correctly.
+ */
+export function activateAbility(state: CoreState, slotIndex: number): void {
+  const equipped = state.equippedAbilities[slotIndex];
+  if (equipped === undefined) return;
+  if (equipped.cooldownLeft > 0) return;
+  const def = state.abilityPool.find((a) => a.id === equipped.abilityId);
+  if (def === undefined) throw new Error(`Ability "${equipped.abilityId}" not in pool`);
+  const cost = def.energyCost ?? 0;
+  if (state.ship.energy < cost) return;
+  state.ship.energy = Math.max(0, state.ship.energy - cost);
+  if (def.activate !== undefined) def.activate(state);
+  equipped.cooldownLeft = def.cooldownTicks ?? 0;
+}
+
 /** Shield absorbs first; remainder reaches hull. Resets MOMENTUM on hull damage. */
 export function damageShip(state: CoreState, amount: number): void {
+  if (isInvulnerable(state)) return;
   const absorbed = Math.min(state.ship.shield, amount);
   state.ship.shield -= absorbed;
   const hullDmg = amount - absorbed;

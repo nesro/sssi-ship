@@ -2,7 +2,8 @@ import Phaser from 'phaser';
 import { TICKS_PER_SECOND } from '../core/constants';
 import type { MissionResult } from '../core/result';
 import { missionById } from '../data/missions';
-import { loadSave, persistSave } from '../save/SaveManager';
+import { persistSave } from '../save/SaveManager';
+import type { SaveData } from '../save/SaveManager';
 import { cssColor, PALETTE } from './palette';
 import { fontPx, px, SCREEN_WIDTH } from './layout';
 import { addLabel, addTextButton, drawDevBorder, UI_FONT } from './widgets';
@@ -10,6 +11,7 @@ import { addLabel, addTextButton, drawDevBorder, UI_FONT } from './widgets';
 export interface ResultSceneData {
   result: MissionResult;
   newStarIds: string[];
+  save: SaveData;
 }
 
 /** Post-mission summary: stars (new vs repeat), coins, and the next move. */
@@ -20,8 +22,8 @@ export class ResultScene extends Phaser.Scene {
 
   // fallow-ignore-next-line unused-class-member
   create(data: ResultSceneData): void {
-    drawDevBorder(this, loadSave());
-    const { result, newStarIds } = data;
+    drawDevBorder(this, data.save);
+    const { result, newStarIds, save } = data;
     const mission = missionById(result.missionId);
     const victory = result.status === 'victory';
 
@@ -58,7 +60,6 @@ export class ResultScene extends Phaser.Scene {
     const buttonY = px(460);
 
     if (result.missionId === 'w0' && victory) {
-      const save = loadSave();
       addLabel(this, {
         x: SCREEN_WIDTH / 2, y: px(390),
         text: 'WHERE DO YOU WANT TO START?',

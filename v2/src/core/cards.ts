@@ -4,7 +4,7 @@ import {
   CARDS_PER_OFFER,
   PAYOFF_SUPPRESSED_WEIGHT,
 } from './constants';
-import type { CardDefinition, CardOffer, CoreState } from './types';
+import type { AbilityDefinition, AbilityOffer, CoreState } from './types';
 
 /**
  * Draws a 3-card offer from the pool via the seeded PRNG. Weighted sampling without
@@ -15,13 +15,14 @@ import type { CardDefinition, CardOffer, CoreState } from './types';
  * on the very first support call (supportCallsDone === 1 after the counter is incremented
  * in maybeTriggerSupportCall before this is called).
  */
-export function createCardOffer(state: CoreState): CardOffer {
+export function createAbilityOffer(state: CoreState): AbilityOffer {
   const firstOffer = state.mission.firstOfferIds;
-  if (firstOffer !== undefined && state.supportCallsDone === 1) {
-    return { cardIds: firstOffer };
+  // pendingOffer is null only on the initial trigger; a reroll has pendingOffer still set.
+  if (firstOffer !== undefined && state.supportCallsDone === 1 && state.pendingOffer === null) {
+    return { abilityIds: firstOffer };
   }
-  const candidates = state.cardPool.filter(
-    (card) => !(card.unique === true && state.pickedCardIds.includes(card.id)),
+  const candidates = state.abilityPool.filter(
+    (card) => !(card.unique === true && state.pickedAbilityIds.includes(card.id)),
   );
   if (candidates.length < CARDS_PER_OFFER) {
     throw new Error(
@@ -29,11 +30,11 @@ export function createCardOffer(state: CoreState): CardOffer {
     );
   }
   const enabledChains = new Set(
-    state.cardPool
-      .filter((card) => card.enablerFor !== undefined && state.pickedCardIds.includes(card.id))
+    state.abilityPool
+      .filter((card) => card.enablerFor !== undefined && state.pickedAbilityIds.includes(card.id))
       .map((card) => card.enablerFor),
   );
-  const drawn: CardDefinition[] = [];
+  const drawn: AbilityDefinition[] = [];
   const remaining = [...candidates];
   while (drawn.length < CARDS_PER_OFFER) {
     const card = weightedDraw(remaining, enabledChains, state.rng);
@@ -44,14 +45,14 @@ export function createCardOffer(state: CoreState): CardOffer {
   if (a === undefined || b === undefined || c === undefined) {
     throw new Error('Card draw failed to produce a full offer');
   }
-  return { cardIds: [a.id, b.id, c.id] };
+  return { abilityIds: [a.id, b.id, c.id] };
 }
 
 /**
  * Resolves one player action on the pending offer. Actions are recorded in order —
  * the replay's cardPicks stream (-2 reroll, -1 skip, 0..2 pick).
  */
-export function resolveCardAction(state: CoreState, action: number): void {
+export function resolveAbilityAction(state: CoreState, action: number): void {
   const offer = state.pendingOffer;
   if (offer === null) {
     throw new Error(`No pending card offer to resolve (action ${String(action)})`);
@@ -61,35 +62,41 @@ export function resolveCardAction(state: CoreState, action: number): void {
       throw new Error('No rerolls left this mission');
     }
     state.rerollsLeft -= 1;
-    state.cardActions.push(action);
-    state.pendingOffer = createCardOffer(state);
+    state.abilityActions.push(action);
+    state.pendingOffer = createAbilityOffer(state);
     return;
   }
   if (action === CARD_ACTION_SKIP) {
-    state.cardActions.push(action);
+    state.abilityActions.push(action);
     state.pendingOffer = null;
     return;
   }
-  const cardId = offer.cardIds[action];
+  const cardId = offer.abilityIds[action];
   if (cardId === undefined) {
     throw new Error(`Invalid card action ${String(action)}; expected -2, -1, or 0..2`);
   }
-  const card = state.cardPool.find((c) => c.id === cardId);
+  const card = state.abilityPool.find((c) => c.id === cardId);
   if (card === undefined) {
     throw new Error(`Offered card "${cardId}" missing from the pool`);
   }
-  state.modifiers = card.apply(state.modifiers);
+  if (card.kind === 'active') {
+    if (state.equippedAbilities.length < 3) {
+      state.equippedAbilities.push({ abilityId: card.id, cooldownLeft: 0 });
+    }
+  } else {
+    state.modifiers = card.apply !== undefined ? card.apply(state.modifiers) : state.modifiers;
+  }
   if (card.onPick !== undefined) card.onPick(state);
-  state.pickedCardIds.push(card.id);
-  state.cardActions.push(action);
+  state.pickedAbilityIds.push(card.id);
+  state.abilityActions.push(action);
   state.pendingOffer = null;
 }
 
 function weightedDraw(
-  cards: CardDefinition[],
+  cards: AbilityDefinition[],
   enabledChains: Set<string | undefined>,
   rng: () => number,
-): CardDefinition {
+): AbilityDefinition {
   const weights = cards.map((card) =>
     card.requiresChain !== undefined && !enabledChains.has(card.requiresChain)
       ? PAYOFF_SUPPRESSED_WEIGHT

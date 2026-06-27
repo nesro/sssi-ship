@@ -177,24 +177,49 @@ export interface RunModifiers {
   volatileCoreLosePct: number;      // VOLATILE CORE: probability [0–1] energy drops to 0 per pulse
 }
 
-export interface CardDefinition {
+/** Which support company supplied this ability. Determines offer pool when that company's
+ *  equipment is equipped. */
+export type CompanyId = 'nexus' | 'aegis' | 'quantum' | 'comet';
+
+export interface AbilityDefinition {
   id: string;
   name: string;
   description: string;
-  system: 'weapon' | 'shield' | 'generator' | 'motor';
-  apply: (mods: RunModifiers) => RunModifiers;
-  /** Optional side effect executed once when the card is picked (e.g. WINDFALL, REROLL CACHE). */
+  /** Which company's pool this ability belongs to. */
+  company: CompanyId;
+  /** passive: RunModifiers updated immediately on pick (old card behaviour).
+   *  active: stored in the ability bar; player manually activates at energy cost. */
+  kind: 'passive' | 'active';
+  // ── passive ────────────────────────────────────────────────────────────────────
+  /** passive: modify RunModifiers when picked */
+  apply?: (mods: RunModifiers) => RunModifiers;
+  /** side effect executed once when picked (e.g. REROLL CACHE, WINDFALL) */
   onPick?: (state: CoreState) => void;
-  /** Set on chain enablers: the chain id this card unlocks. */
+  // ── active ─────────────────────────────────────────────────────────────────────
+  /** active: energy drained from ship.energy on activation */
+  energyCost?: number;
+  /** active: ticks before the ability can be activated again */
+  cooldownTicks?: number;
+  /** active: effect when the player manually triggers this ability */
+  activate?: (state: CoreState) => void;
+  // ── pool filtering ─────────────────────────────────────────────────────────────
+  /** chain id this ability unlocks (enabler) */
   enablerFor?: string;
-  /** Set on chain payoffs: weight-suppressed until the chain's enabler is picked. */
+  /** weight-suppressed until this chain's enabler is picked */
   requiresChain?: string;
-  /** Unique cards (enablers, payoffs) are never offered twice. */
+  /** never offered twice */
   unique?: boolean;
 }
 
-export interface CardOffer {
-  cardIds: [string, string, string];
+/** One slot on the ability bar — an active ability the player can trigger. */
+export interface EquippedAbility {
+  abilityId: string;
+  /** Ticks remaining before this ability can be activated again. 0 = ready. */
+  cooldownLeft: number;
+}
+
+export interface AbilityOffer {
+  abilityIds: [string, string, string];
 }
 
 // ---------- Mission data ----------
@@ -328,11 +353,11 @@ export interface SupplyState {
   chargesLeft: number;
 }
 
-export interface ActiveEffect {
-  kind: 'damage-mult';
-  multiplier: number;
-  expiresAtTick: number;
-}
+export type ActiveEffect =
+  | { kind: 'damage-mult';     multiplier: number; expiresAtTick: number }
+  | { kind: 'invulnerable';                        expiresAtTick: number }
+  | { kind: 'generator-mult'; multiplier: number; expiresAtTick: number }
+  | { kind: 'fire-rate-mult'; multiplier: number; expiresAtTick: number };
 
 export type MissionStatus = 'running' | 'victory' | 'defeat';
 
@@ -359,13 +384,19 @@ export interface CoreState {
   rng: () => number;
   loadout: LoadoutSnapshot;
   mission: MissionSpec;
-  cardPool: CardDefinition[];
+  abilityPool: AbilityDefinition[];
   modifiers: RunModifiers;
-  pickedCardIds: string[];
+  pickedAbilityIds: string[];
   /** Ordered action stream: -2 = reroll, -1 = skip, 0..2 = pick. Recorded in replays. */
-  cardActions: number[];
-  /** While non-null the sim is paused; resolve via resolveCardAction. */
-  pendingOffer: CardOffer | null;
+  abilityActions: number[];
+  /** While non-null the sim is paused; resolve via resolveAbilityAction. */
+  pendingOffer: AbilityOffer | null;
+  /** Whether the ship fires automatically. Player toggles this to accumulate energy for active abilities. */
+  autoFireEnabled: boolean;
+  /** Whether the shield pulses automatically. */
+  autoShieldEnabled: boolean;
+  /** Active abilities slotted into the ability bar (max 3). */
+  equippedAbilities: EquippedAbility[];
   rerollsLeft: number;
   supportCallsDone: number;
   bonusCallsPending: number;

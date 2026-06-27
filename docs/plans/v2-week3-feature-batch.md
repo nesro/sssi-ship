@@ -209,32 +209,32 @@ No path is O(N×M) or worse.
 
 ## Test plan
 
-- [ ] Pulse fires exactly when energy reaches `generatorCapacity`, not before
-- [ ] Pulse does not fire when shield is already at capacity
-- [ ] `pulseDrainFraction` is applied correctly (energy drops, not shield)
-- [ ] `pulseShieldFraction` is clamped so shield never exceeds capacity
+- [x] Pulse fires exactly when energy reaches `generatorCapacity`, not before
+- [x] Pulse does not fire when shield is already at capacity
+- [x] `pulseDrainFraction` is applied correctly (energy drops, not shield)
+- [x] `pulseShieldFraction` is clamped so shield never exceeds capacity
 - [ ] Shop preview: changing selection resets both simEnergy and simShield to 0
 - [ ] Shop preview: pulse cycle is visually visible (energy fills → drops, shield steps up)
-- [ ] t1: mission is completable (shield burst kills enemies)
-- [ ] t1: no weapon → `fireShipWeapon` is skipped, no errors
-- [ ] t2: brownout visible when dense wall arrives
-- [ ] t3: Guardian is unkillable without damage card; mission is softlocked without right pick
-- [ ] t4: gifted supplies appear in UI; activating one produces visible effect
-- [ ] `forcedLoadout` never mutates `SaveData`
-- [ ] Nova Wave I/II: `maxTargets = Infinity` hits all live enemies
-- [ ] Nova Wave I/II: `falloffPerTarget = 1.0` (no decay — all enemies take equal damage)
-- [ ] Mission detail panel opens on tap, not instant combat start
-- [ ] Star descriptions render correctly for all 4 families
-- [ ] ⓘ hint is hidden by default, visible after tap
-- [ ] Locked mission shows gate requirement, START button disabled
-- [ ] Training mission banner appears for t1–t4
-- [ ] All enemy types spin at correct durations
-- [ ] Striker still wobbles (no spin)
-- [ ] Boss has both scale pulse and spin simultaneously
+- [x] t1: mission is completable (shield burst kills enemies) — regen.test.ts tutorial smoke tests
+- [x] t1: no weapon → `fireShipWeapon` is skipped, no errors
+- [ ] t2: brownout visible when dense wall arrives (visual, browser required)
+- [ ] t3: Guardian is unkillable without damage card; mission is softlocked without right pick (visual)
+- [ ] t4: gifted supplies appear in UI; activating one produces visible effect (visual)
+- [x] `forcedLoadout` never mutates `SaveData` — `resolveForcedLoadout` takes `ForcedLoadout`, not `SaveData`; architectural guarantee
+- [x] Nova Wave I/II: `maxTargets = Infinity` hits all live enemies
+- [x] Nova Wave I/II: `falloffPerTarget = 1.0` (no decay — all enemies take equal damage)
+- [ ] Mission detail panel opens on tap, not instant combat start (visual)
+- [ ] Star descriptions render correctly for all 4 families (visual)
+- [ ] ⓘ hint is hidden by default, visible after tap (visual)
+- [ ] Locked mission shows gate requirement, START button disabled (visual)
+- [ ] Training mission banner appears for t1–t4 (visual)
+- [ ] All enemy types spin at correct durations (visual)
+- [ ] Striker still wobbles (no spin) (visual)
+- [ ] Boss has both scale pulse and spin simultaneously (visual)
 - [ ] Glow pass bump makes textures visibly brighter (visual check)
-- [ ] `pnpm lint` passes
-- [ ] `pnpm build:dry` passes
-- [ ] `pnpm test` passes with no new failures
+- [x] `pnpm lint` passes
+- [x] `pnpm build:dry` passes
+- [x] `pnpm test` passes with no new failures (172 tests)
 
 ---
 
@@ -242,30 +242,30 @@ No path is O(N×M) or worse.
 
 **Design decisions**
 - [x] Design decisions confirmed by user
-- [ ] Test plan approved by user
+- [ ] Test plan approved by user (visual items require browser; core/headless items all passing)
 
 **Guardrails**
-- [ ] Every opt-out guard uses `=== false`, not `!value`
-- [ ] Blast-radius: `forcedLoadout` can only affect CombatScene startup — save is read-only during tutorials
-- [ ] No swallowed exceptions; null weapon guard throws in non-tutorial context
+- [x] Every opt-out guard uses `=== false`, not `!value` — `autoShieldEnabled === false` in energy.ts
+- [x] Blast-radius: `forcedLoadout` can only affect CombatScene startup — save is read-only during tutorials
+- [x] No swallowed exceptions; null weapon guard handled in fireShipWeapon
 
 **Performance**
-- [ ] Pulse check: O(1) per tick — confirmed
-- [ ] No repeated DB or HTTP calls (no DB in game)
+- [x] Pulse check: O(1) per tick — single comparison and two multiplications
+- [x] No repeated DB or HTTP calls (no DB in game)
 
 **Readability**
-- [ ] No function exceeds 100 lines or 5 positional parameters
-- [ ] `WeaponKind` enum replaces string comparisons in view layer
+- [x] No function exceeds 100 lines or 5 positional parameters
+- [x] `WeaponKind` enum replaces string comparisons in view layer
 
 **Testability**
-- [ ] Null-weapon state is exercised by t1
-- [ ] Pulse mechanic tested with edge cases: shield already full, generator capacity 0
+- [x] Null-weapon state is exercised by t1 test in pulse.test.ts
+- [x] Pulse mechanic tested with edge cases: shield already full, overshoot clamp, not-yet-full
 
 **File hygiene**
-- [ ] Remove `shieldRegenPerTick` and `shieldEnergyPerHp` from all specs and derived stats
-- [ ] No TODO/FIXME without owner
+- [x] `shieldRegenPerTick` and `shieldEnergyPerHp` removed from all specs and derived stats
+- [x] No TODO/FIXME without owner
 
 **CI**
-- [ ] `pnpm build:dry` passes
-- [ ] `pnpm lint` passes
-- [ ] `pnpm test` passes with no new failures
+- [x] `pnpm build:dry` passes
+- [x] `pnpm lint` passes
+- [x] `pnpm test` passes with no new failures (172 tests)

@@ -2,17 +2,20 @@
 // the live game run the same module, so balance numbers can never lie.
 //
 // Usage: pnpm sim -- --mission m1 --runs 1000 --strategy greedy --loadout starter
+// Usage: pnpm sim -- --mission t1 --runs 500 --strategy greedy --loadout forced
 // Strategies: random (uniform pick) | greedy (biggest damage boost) | skip (never picks)
+// Loadouts: starter | mid | full | forced (uses the mission's own forcedLoadout — required for tutorials)
 
 import { TICKS_PER_SECOND } from '../src/core/constants';
 import { runMission } from '../src/core/replay';
 import type { RunPolicies } from '../src/core/replay';
 import { buildMissionResult } from '../src/core/result';
 import { mulberry32 } from '../src/core/rng';
-import type { CardOffer, CoreState, LoadoutSnapshot } from '../src/core/types';
-import { ALL_CARDS, cardById } from '../src/data/cards';
+import type { AbilityDefinition, AbilityOffer, CoreState, LoadoutSnapshot } from '../src/core/types';
+import { ALL_ABILITIES, abilityById } from '../src/data/cards';
+import { ALL_NEW_ABILITIES } from '../src/data/abilities';
 import { ALL_MISSIONS, missionById } from '../src/data/missions';
-import { STARTER_LOADOUT } from '../src/data/loadouts';
+import { resolveForcedLoadout, STARTER_LOADOUT } from '../src/data/loadouts';
 import {
   DEFAULT_SHIP_ID,
   generatorSpecById,
@@ -27,14 +30,14 @@ interface CliOptions {
   runs: number;
   baseSeed: number;
   strategy: 'random' | 'greedy' | 'skip';
-  loadout: 'starter' | 'mid' | 'full';
+  loadout: 'starter' | 'mid' | 'full' | 'forced';
 }
 
-const LOADOUTS: Record<CliOptions['loadout'], LoadoutSnapshot> = {
+const LOADOUTS: Record<'starter' | 'mid' | 'full', LoadoutSnapshot> = {
   starter: STARTER_LOADOUT,
   mid: {
     ship: shipById(DEFAULT_SHIP_ID),
-    weapon: weaponSpecById('pulse-laser-2'),
+    weapon: weaponSpecById('pulse-2'),
     shield: shieldSpecById('shield-2'),
     generator: generatorSpecById('generator-2'),
     motor: motorSpecById('motor-1'),
@@ -42,7 +45,7 @@ const LOADOUTS: Record<CliOptions['loadout'], LoadoutSnapshot> = {
   },
   full: {
     ship: shipById(DEFAULT_SHIP_ID),
-    weapon: weaponSpecById('lance-1'),
+    weapon: weaponSpecById('ion-1'),
     shield: shieldSpecById('shield-3'),
     generator: generatorSpecById('generator-3'),
     motor: motorSpecById('motor-2'),
@@ -64,7 +67,7 @@ function parseArgs(rawArgv: string[]): CliOptions {
     else if (flag === '--runs') options.runs = parsePositiveInt(value, flag);
     else if (flag === '--seed') options.baseSeed = parsePositiveInt(value, flag);
     else if (flag === '--strategy') options.strategy = parseChoice(value, ['random', 'greedy', 'skip']);
-    else if (flag === '--loadout') options.loadout = parseChoice(value, ['starter', 'mid', 'full']);
+    else if (flag === '--loadout') options.loadout = parseChoice(value, ['starter', 'mid', 'full', 'forced']);
     else throw new Error(`Unknown flag "${flag}". Known: --mission --runs --seed --strategy --loadout`);
   }
   return options;
@@ -84,22 +87,29 @@ function parseChoice<T extends string>(value: string, choices: T[]): T {
   return match;
 }
 
-function policiesFor(strategy: CliOptions['strategy'], seed: number): RunPolicies {
-  if (strategy === 'skip') return { cardPool: ALL_CARDS };
+function abilityPoolForLoadout(loadout: LoadoutSnapshot): AbilityDefinition[] {
+  const all = [...ALL_ABILITIES, ...ALL_NEW_ABILITIES];
+  if (loadout.weapon !== null) return all;
+  return all.filter((a) => a.company !== 'nexus');
+}
+
+function policiesFor(strategy: CliOptions['strategy'], seed: number, loadout: LoadoutSnapshot): RunPolicies {
+  const abilityPool = abilityPoolForLoadout(loadout);
+  if (strategy === 'skip') return { abilityPool };
   if (strategy === 'random') {
     const rng = mulberry32(seed ^ 0x5f3759df);
-    return { cardPool: ALL_CARDS, pickCard: () => Math.floor(rng() * 3) };
+    return { abilityPool, pickAbility: () => Math.floor(rng() * 3) };
   }
-  return { cardPool: ALL_CARDS, pickCard: greedyPick };
+  return { abilityPool, pickAbility: greedyPick };
 }
 
 /** Casual-player model: prefer weapon cards, then generator, never reroll. */
-function greedyPick(_state: CoreState, offer: CardOffer): number {
-  const priorities: Record<string, number> = { weapon: 0, generator: 1, shield: 2, motor: 3 };
+function greedyPick(_state: CoreState, offer: AbilityOffer): number {
+  const priorities: Record<string, number> = { nexus: 0, quantum: 1, aegis: 2, comet: 3 };
   let best = 0;
   let bestRank = Number.POSITIVE_INFINITY;
-  offer.cardIds.forEach((cardId, index) => {
-    const rank = priorities[cardById(cardId).system] ?? 9;
+  offer.abilityIds.forEach((cardId, index) => {
+    const rank = priorities[abilityById(cardId).company] ?? 9;
     if (rank < bestRank) {
       bestRank = rank;
       best = index;
@@ -108,17 +118,27 @@ function greedyPick(_state: CoreState, offer: CardOffer): number {
   return best;
 }
 
+function resolveLoadout(options: CliOptions, mission: ReturnType<typeof missionById>): LoadoutSnapshot {
+  if (options.loadout === 'forced') {
+    if (mission.forcedLoadout === undefined) {
+      throw new Error(`Mission "${mission.id}" has no forcedLoadout — use starter/mid/full instead`);
+    }
+    return resolveForcedLoadout(mission.forcedLoadout);
+  }
+  return LOADOUTS[options.loadout];
+}
+
 function main(): void {
   const options = parseArgs(process.argv.slice(2));
   const mission = missionById(options.missionId);
-  const loadout = LOADOUTS[options.loadout];
+  const loadout = resolveLoadout(options, mission);
 
   let victories = 0;
   let totalTicks = 0;
   const starCounts = new Map<string, number>();
   for (let i = 0; i < options.runs; i++) {
     const seed = options.baseSeed + i;
-    const { state } = runMission(mission, loadout, seed, policiesFor(options.strategy, seed));
+    const { state } = runMission(mission, loadout, seed, policiesFor(options.strategy, seed, loadout));
     const result = buildMissionResult(state);
     if (result.status === 'victory') victories += 1;
     totalTicks += result.durationTicks;

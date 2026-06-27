@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { damageShip, fireEnemyWeapons, fireShipWeapon } from './combat';
+import { advanceEnemies } from './conveyor';
 import { FIXTURE_LOADOUT, FIXTURE_MISSION, FIXTURE_SHIP, FIXTURE_WEAPON, makeFixtureEnemy } from './fixtures';
 import { computeEffectiveStats } from './stats';
 import { createCoreState } from './state';
@@ -214,6 +215,344 @@ describe('ship passives', () => {
     };
     const stats = computeEffectiveStats(loadout, freshState().modifiers);
     expect(stats.generatorCapacity).toBe(FIXTURE_LOADOUT.generator.capacity * 1.5);
+  });
+
+  it('Tanker: collision damage is halved by collision-reduction passive', () => {
+    const baseLoadout: LoadoutSnapshot = {
+      ...FIXTURE_LOADOUT,
+      ship: { ...FIXTURE_SHIP, passiveKind: 'enemy-miss-bonus', passiveValue: 0 },
+    };
+    const tankerLoadout: LoadoutSnapshot = {
+      ...FIXTURE_LOADOUT,
+      ship: { ...FIXTURE_SHIP, passiveKind: 'collision-reduction', passiveValue: 0.5 },
+    };
+    const baseState = createCoreState(FIXTURE_MISSION, baseLoadout, 1);
+    const tankerState = createCoreState(FIXTURE_MISSION, tankerLoadout, 1);
+    // Use shield=0 so all damage routes to hull
+    baseState.ship.shield = 0;
+    tankerState.ship.shield = 0;
+    const collidingEnemy = makeFixtureEnemy({ distance: 0, speed: 0, shotDamage: 10 });
+    baseState.enemies = [collidingEnemy];
+    tankerState.enemies = [{ ...collidingEnemy }];
+    advanceEnemies(baseState, statsOf(baseState));
+    advanceEnemies(tankerState, statsOf(tankerState));
+    // base: hull -= 10 * 3 * 1 = 30; tanker: hull -= 10 * 3 * 0.5 = 15
+    expect(baseState.ship.hull).toBe(baseState.ship.maxHull - 30);
+    expect(tankerState.ship.hull).toBe(tankerState.ship.maxHull - 15);
+  });
+});
+
+// Helper for one-shot damage tests — avoids repeating boilerplate.
+function oneShotDmg(
+  mods: Partial<ReturnType<typeof freshState>['modifiers']>,
+  setup?: (s: ReturnType<typeof freshState>) => void,
+): number {
+  const state = freshState();
+  state.modifiers = { ...state.modifiers, ...mods };
+  state.enemies = [makeFixtureEnemy({ hp: 9999, coinReward: 0, distance: 50 })];
+  state.ship.fireTimer = 1;
+  if (setup !== undefined) setup(state);
+  fireShipWeapon(state, statsOf(state));
+  return state.stats.damageDealt;
+}
+
+describe('fireShipWeapon state-based damage bonuses', () => {
+  it('fullEnergyDmgBonus: bonus applies at capacity, no bonus below', () => {
+    const base = oneShotDmg({}, (s) => { s.ship.energy = FIXTURE_LOADOUT.generator.capacity - 1; });
+    const boosted = oneShotDmg({ fullEnergyDmgBonus: 0.5 }, (s) => { s.ship.energy = FIXTURE_LOADOUT.generator.capacity; });
+    const notBoosted = oneShotDmg({ fullEnergyDmgBonus: 0.5 }, (s) => { s.ship.energy = FIXTURE_LOADOUT.generator.capacity - 1; });
+    expect(boosted).toBeCloseTo(base * 1.5);
+    expect(notBoosted).toBeCloseTo(base);
+  });
+
+  it('lowHullDmgMult: bonus at <30% hull, none at >=30%', () => {
+    const base = oneShotDmg({});
+    const boosted = oneShotDmg({ lowHullDmgMult: 2 }, (s) => { s.ship.hull = Math.floor(s.ship.maxHull * 0.2); });
+    const same = oneShotDmg({ lowHullDmgMult: 2 }, (s) => { s.ship.hull = Math.ceil(s.ship.maxHull * 0.5); });
+    expect(boosted).toBeCloseTo(base * 2);
+    expect(same).toBeCloseTo(base);
+  });
+
+  it('singleEnemyDmgBonus: bonus with 1 enemy, none with 2', () => {
+    const base = oneShotDmg({});
+    const boosted = oneShotDmg({ singleEnemyDmgBonus: 0.5 });
+    expect(boosted).toBeCloseTo(base * 1.5);
+
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, singleEnemyDmgBonus: 0.5 };
+    state.enemies = [makeFixtureEnemy({ id: 1, hp: 9999 }), makeFixtureEnemy({ id: 2, hp: 9999 })];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    expect(state.stats.damageDealt).toBeCloseTo(FIXTURE_WEAPON.damagePerShot);
+  });
+
+  it('shieldActiveDmgBonus: bonus when shield > 0, none when shield = 0', () => {
+    const base = oneShotDmg({}, (s) => { s.ship.shield = 0; });
+    const boosted = oneShotDmg({ shieldActiveDmgBonus: 0.5 }, (s) => { s.ship.shield = 1; });
+    const same = oneShotDmg({ shieldActiveDmgBonus: 0.5 }, (s) => { s.ship.shield = 0; });
+    expect(boosted).toBeCloseTo(base * 1.5);
+    expect(same).toBeCloseTo(base);
+  });
+});
+
+describe('fireShipWeapon situational and targeting modifiers', () => {
+  it('blockerDamageMult: bonus vs enemies with blocksConveyor', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, blockerDamageMult: 2 };
+    state.enemies = [makeFixtureEnemy({ hp: 9999, blocksConveyor: true })];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    expect(state.stats.damageDealt).toBeCloseTo(FIXTURE_WEAPON.damagePerShot * 2);
+  });
+
+  it('bossDamageMult: bonus vs boss enemies', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, bossDamageMult: 3 };
+    state.enemies = [makeFixtureEnemy({ hp: 9999, isBoss: true })];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    expect(state.stats.damageDealt).toBeCloseTo(FIXTURE_WEAPON.damagePerShot * 3);
+  });
+
+  it('highHpEnemyDamageMult: bonus when enemy > 50% HP, none at exactly 50%', () => {
+    const stateHigh = freshState();
+    stateHigh.modifiers = { ...stateHigh.modifiers, highHpEnemyDamageMult: 1.5 };
+    stateHigh.enemies = [makeFixtureEnemy({ hp: 100, maxHp: 100 })];
+    stateHigh.ship.fireTimer = 1;
+    fireShipWeapon(stateHigh, statsOf(stateHigh));
+    expect(stateHigh.stats.damageDealt).toBeCloseTo(FIXTURE_WEAPON.damagePerShot * 1.5);
+
+    const stateLow = freshState();
+    stateLow.modifiers = { ...stateLow.modifiers, highHpEnemyDamageMult: 1.5 };
+    stateLow.enemies = [makeFixtureEnemy({ hp: 50, maxHp: 100 })]; // exactly 50% — not above
+    stateLow.ship.fireTimer = 1;
+    fireShipWeapon(stateLow, statsOf(stateLow));
+    expect(stateLow.stats.damageDealt).toBeCloseTo(FIXTURE_WEAPON.damagePerShot);
+  });
+
+  it('noShieldPierceAll: hits all enemies when shield is 0', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, noShieldPierceAll: true };
+    state.ship.shield = 0;
+    state.enemies = [
+      makeFixtureEnemy({ id: 1, hp: 9999 }),
+      makeFixtureEnemy({ id: 2, hp: 9999 }),
+      makeFixtureEnemy({ id: 3, hp: 9999 }),
+    ];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    expect(state.stats.damageDealt).toBeCloseTo(FIXTURE_WEAPON.damagePerShot * 3);
+  });
+});
+
+describe('fireShipWeapon kill and shot effect modifiers', () => {
+  it('killExplosionDamage: surviving enemies take explosion damage on kill', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, killExplosionDamage: 5 };
+    state.enemies = [
+      makeFixtureEnemy({ id: 1, hp: 5, distance: 10 }),
+      makeFixtureEnemy({ id: 2, hp: 100, distance: 50 }),
+    ];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    expect(state.enemies.find((e) => e.id === 2)?.hp).toBe(95);
+  });
+
+  it('hullPerKill: hull is restored on each kill', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, hullPerKill: 10 };
+    state.ship.hull = 50;
+    state.enemies = [makeFixtureEnemy({ hp: 5 })];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    expect(state.ship.hull).toBe(60);
+  });
+
+  it('nthKillShieldInterval: shield restored on every Nth kill, not before', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, nthKillShieldInterval: 2, nthKillShieldAmount: 8 };
+    state.ship.shield = 0;
+    state.enemies = [makeFixtureEnemy({ hp: 1 })];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state)); // kill #1 — no restore
+    expect(state.ship.shield).toBe(0);
+    state.enemies = [makeFixtureEnemy({ hp: 1 })];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state)); // kill #2 — restore
+    expect(state.ship.shield).toBe(8);
+  });
+
+  it('freeEveryNthShot: Nth shot costs 0 energy', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, freeEveryNthShot: 3 };
+    state.ship.energy = 50;
+    const stats = statsOf(state);
+    state.enemies = [makeFixtureEnemy({ hp: 9999 })];
+    state.ship.fireTimer = 1; fireShipWeapon(state, stats);
+    const afterShot1 = state.ship.energy;
+    state.ship.fireTimer = 1; fireShipWeapon(state, stats);
+    const afterShot2 = state.ship.energy;
+    state.ship.fireTimer = 1; fireShipWeapon(state, stats); // free
+    expect(state.ship.energy).toBeCloseTo(afterShot2);
+    expect(afterShot1).toBeLessThan(50);
+  });
+
+  it('nthShotShieldInterval: shield restored every N shots', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, nthShotShieldInterval: 2, nthShotShieldAmount: 6 };
+    state.ship.shield = 0;
+    const stats = statsOf(state);
+    state.enemies = [makeFixtureEnemy({ hp: 9999 })];
+    state.ship.fireTimer = 1; fireShipWeapon(state, stats); // shot 1 — no restore
+    expect(state.ship.shield).toBe(0);
+    state.ship.fireTimer = 1; fireShipWeapon(state, stats); // shot 2 — restore
+    expect(state.ship.shield).toBe(6);
+  });
+
+  it('lowHullFireRateMult: fire interval halves at low hull', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, lowHullFireRateMult: 2 };
+    state.ship.hull = Math.floor(state.ship.maxHull * 0.2);
+    state.ship.energy = 50;
+    state.enemies = [makeFixtureEnemy({ hp: 9999 })];
+    const stats = statsOf(state);
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, stats);
+    expect(state.ship.fireTimer).toBeCloseTo(FIXTURE_WEAPON.ticksBetweenShots / 2);
+  });
+});
+
+describe('fireShipWeapon time-progress and count modifiers', () => {
+  it('earlyBirdDmgBonus: bonus in first 25% of mission timeline', () => {
+    // FIXTURE_MISSION last event at seconds(24)=240 ticks; <25% → timelineTick < 60
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, earlyBirdDmgBonus: 0.5 };
+    state.timelineTick = 10; // 10/240 ≈ 4% → early
+    state.enemies = [makeFixtureEnemy({ hp: 9999 })];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    expect(state.stats.damageDealt).toBeCloseTo(FIXTURE_WEAPON.damagePerShot * 1.5);
+  });
+
+  it('earlyBirdDmgBonus: no bonus in middle of mission', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, earlyBirdDmgBonus: 0.5 };
+    state.timelineTick = 120; // 50% → not early
+    state.enemies = [makeFixtureEnemy({ hp: 9999 })];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    expect(state.stats.damageDealt).toBeCloseTo(FIXTURE_WEAPON.damagePerShot);
+  });
+
+  it('finalPushDmgBonus: bonus in last 25% of mission timeline', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, finalPushDmgBonus: 0.5 };
+    state.timelineTick = 230; // 230/240 ≈ 96% → final push
+    state.enemies = [makeFixtureEnemy({ hp: 9999 })];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    expect(state.stats.damageDealt).toBeCloseTo(FIXTURE_WEAPON.damagePerShot * 1.5);
+  });
+
+  it('manyEnemiesExtraTargets: extra targets hit when 6+ enemies present', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, manyEnemiesExtraTargets: 2 }; // +2 targets
+    // 6 enemies: normally maxTargets=1, with bonus=2 → 3 targets hit
+    state.enemies = Array.from({ length: 6 }, (_, i) => makeFixtureEnemy({ id: i + 1, hp: 9999, distance: 50 + i * 5 }));
+    state.loadout = { ...FIXTURE_LOADOUT, weapon: { ...FIXTURE_WEAPON, falloffPerTarget: 1.0 } };
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    expect(state.stats.damageDealt).toBeCloseTo(FIXTURE_WEAPON.damagePerShot * 3); // 1 + 2 = 3 targets
+  });
+
+  it('nthWaveClearRefillInterval: energy refills to capacity on every Nth wave clear', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, nthWaveClearRefillInterval: 1 }; // every 1 wave
+    state.ship.energy = 0;
+    state.enemies = [makeFixtureEnemy({ hp: 5 })];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state)); // kills last enemy → wave cleared
+    expect(state.ship.energy).toBe(statsOf(state).generatorCapacity); // refilled
+  });
+});
+
+describe('fireShipWeapon haywireTargeting', () => {
+  it('haywireTargeting: always hits exactly 1 enemy (random pick, not front-most)', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, haywireTargeting: true };
+    state.enemies = [
+      makeFixtureEnemy({ id: 1, hp: 9999, distance: 10 }),
+      makeFixtureEnemy({ id: 2, hp: 9999, distance: 50 }),
+      makeFixtureEnemy({ id: 3, hp: 9999, distance: 90 }),
+    ];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    // Exactly 1 enemy takes damage regardless of which one was picked
+    const damagedCount = state.enemies.filter((e) => e.hp < 9999).length;
+    expect(damagedCount).toBe(1);
+    expect(state.stats.damageDealt).toBeCloseTo(FIXTURE_WEAPON.damagePerShot);
+  });
+});
+
+describe('fireShipWeapon coin and energy on-kill modifiers', () => {
+  it('blockerCoinMult: coins from blocker kill are multiplied', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, blockerCoinMult: 2 };
+    state.enemies = [makeFixtureEnemy({ hp: 5, blocksConveyor: true, coinReward: 10 })];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    expect(state.stats.coinsEarned).toBe(20); // 10 × 2
+  });
+
+  it('coinsEnergyRestore: energy is restored proportional to coins earned on kill', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, coinsEnergyRestore: 1 }; // 1 energy per coin
+    state.ship.energy = 0;
+    state.enemies = [makeFixtureEnemy({ hp: 5, coinReward: 8 })];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    // Weapon cost clamps energy to 0 (can't go negative), then on-kill restores 8 × 1 = 8
+    expect(state.ship.energy).toBeCloseTo(8);
+  });
+
+  it('extraEnergyOnBlockerKill: flat energy burst on blocker death', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, extraEnergyOnBlockerKill: 15 };
+    state.ship.energy = 0;
+    state.enemies = [makeFixtureEnemy({ hp: 5, blocksConveyor: true, coinReward: 0 })];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    // Weapon cost clamps to 0, then on-kill blocker gives +15 energy
+    expect(state.ship.energy).toBeCloseTo(15);
+  });
+
+  it('hullDamagePerShot: hull decreases by flat amount each shot', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, hullDamagePerShot: 3 };
+    state.enemies = [makeFixtureEnemy({ hp: 9999 })];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    expect(state.ship.hull).toBe(state.ship.maxHull - 3);
+  });
+
+  it('killDmgPerKillPct: damage scales with total kill count', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, killDmgPerKillPct: 100 }; // +100% per kill
+    state.stats.kills = 2; // 2 prior kills → mult = 1 + 2×1.0 = 3
+    state.enemies = [makeFixtureEnemy({ hp: 9999 })];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    expect(state.stats.damageDealt).toBeCloseTo(FIXTURE_WEAPON.damagePerShot * 3);
+  });
+
+  it('momentumDmgPerKillPct: damage scales with consecutive kill streak', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, momentumDmgPerKillPct: 100 }; // +100% per streak
+    state.consecutiveKills = 1; // 1 streak kill → mult = 1 + 1×1.0 = 2
+    state.enemies = [makeFixtureEnemy({ hp: 9999 })];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    expect(state.stats.damageDealt).toBeCloseTo(FIXTURE_WEAPON.damagePerShot * 2);
   });
 });
 

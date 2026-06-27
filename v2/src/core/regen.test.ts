@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_CARDS } from '../data/cards';
+import { ALL_ABILITIES } from '../data/cards';
 import { missionById } from '../data/missions';
-import { createCardOffer, resolveCardAction } from './cards';
+import { createAbilityOffer, resolveAbilityAction } from './cards';
 import { regenerateEnemies } from './combat';
 import { FIXTURE_LOADOUT, FIXTURE_MISSION, makeFixtureEnemy } from './fixtures';
 import { resolveForcedLoadout } from '../data/loadouts';
@@ -63,7 +63,7 @@ function surplusLoadout(): typeof FIXTURE_LOADOUT {
 
 describe('guardian tutorial: unkillable at base DPS, killable after damage card', () => {
   it('base loadout cannot kill the guardian (regen outpaces DPS)', () => {
-    const state = createCoreState(FIXTURE_MISSION, surplusLoadout(), 42, ALL_CARDS);
+    const state = createCoreState(FIXTURE_MISSION, surplusLoadout(), 42, ALL_ABILITIES);
     // Prevent mission events from spawning extra enemies by setting the event index past end
     state.nextEventIndex = FIXTURE_MISSION.events.length;
     state.enemies.push(makeFixtureEnemy({ hp: 80, maxHp: 80, regenPerTick: 2.2, speed: 0, distance: 5 }));
@@ -75,11 +75,11 @@ describe('guardian tutorial: unkillable at base DPS, killable after damage card'
   });
 
   it('after picking w-dmg-30 the guardian dies within 400 ticks', () => {
-    const state = createCoreState(FIXTURE_MISSION, surplusLoadout(), 42, ALL_CARDS);
+    const state = createCoreState(FIXTURE_MISSION, surplusLoadout(), 42, ALL_ABILITIES);
     state.nextEventIndex = FIXTURE_MISSION.events.length;
     state.supportCallsDone = 1;
-    state.pendingOffer = { cardIds: ['w-dmg-30', 'w-rate-20', 'g-out-08'] };
-    resolveCardAction(state, 0); // pick w-dmg-30 (+30% damage → 13/shot)
+    state.pendingOffer = { abilityIds: ['w-dmg-30', 'w-rate-20', 'g-out-08'] };
+    resolveAbilityAction(state, 0); // pick w-dmg-30 (+30% damage → 13/shot)
     state.enemies.push(makeFixtureEnemy({ hp: 80, maxHp: 80, regenPerTick: 2.2, speed: 0, distance: 5 }));
     // Net: 13 dmg/shot every 5 ticks - (2.2 × 5) regen = 13 - 11 = 2 HP net loss per cycle.
     // 80 HP / 2 = 40 cycles × 5 ticks = 200 ticks worst case. Allow 400 for start offset.
@@ -100,32 +100,32 @@ describe('guardian tutorial: unkillable at base DPS, killable after damage card'
 describe('scripted first offer (firstOfferIds)', () => {
   it('returns exactly the scripted ids on the first support call', () => {
     const mission = missionById('t2'); // has firstOfferIds
-    const state = createCoreState(mission, FIXTURE_LOADOUT, 1, ALL_CARDS);
+    const state = createCoreState(mission, FIXTURE_LOADOUT, 1, ALL_ABILITIES);
     // Simulate the counter being incremented (as maybeTriggerSupportCall does)
     state.supportCallsDone = 1;
-    const offer = createCardOffer(state);
-    expect(offer.cardIds).toEqual(['w-dmg-30', 'w-rate-20', 'w-cost-25']);
+    const offer = createAbilityOffer(state);
+    expect(offer.abilityIds).toEqual(['w-dmg-30', 'w-rate-20', 'w-cost-25']);
   });
 
   it('second support call uses normal weighted draw (not scripted)', () => {
     const mission = missionById('t2');
-    const state = createCoreState(mission, FIXTURE_LOADOUT, 1, ALL_CARDS);
+    const state = createCoreState(mission, FIXTURE_LOADOUT, 1, ALL_ABILITIES);
     state.supportCallsDone = 2; // past the first call
-    const offer = createCardOffer(state);
-    // Should produce a valid 3-card offer (not necessarily the scripted ones)
-    expect(offer.cardIds).toHaveLength(3);
+    const offer = createAbilityOffer(state);
+    // Should produce a valid 3-ability offer (not necessarily the scripted ones)
+    expect(offer.abilityIds).toHaveLength(3);
   });
 
   it('reroll of scripted offer produces a new offer and consumes the budget', () => {
     const mission = missionById('t2');
-    const state = createCoreState(mission, FIXTURE_LOADOUT, 99, ALL_CARDS);
+    const state = createCoreState(mission, FIXTURE_LOADOUT, 99, ALL_ABILITIES);
     state.supportCallsDone = 1;
-    state.pendingOffer = createCardOffer(state);
+    state.pendingOffer = createAbilityOffer(state);
     const beforeRerolls = state.rerollsLeft;
-    resolveCardAction(state, -2); // reroll
+    resolveAbilityAction(state, -2); // reroll
     expect(state.rerollsLeft).toBe(beforeRerolls - 1);
-    // resolveCardAction(-2) always sets pendingOffer — check it has 3 cards
-    expect(state.pendingOffer.cardIds).toHaveLength(3);
+    // resolveAbilityAction(-2) always sets pendingOffer — check it has 3 abilities
+    expect(state.pendingOffer.abilityIds).toHaveLength(3);
   });
 });
 
@@ -139,9 +139,9 @@ describe('tutorial missions run to completion', () => {
       const mission = missionById(id);
       if (mission.forcedLoadout === undefined) throw new Error(`${id} must define a forcedLoadout`);
       const loadout = resolveForcedLoadout(mission.forcedLoadout);
-      const state = createCoreState(mission, loadout, 77 + TUTORIAL_IDS.indexOf(id), ALL_CARDS);
+      const state = createCoreState(mission, loadout, 77 + TUTORIAL_IDS.indexOf(id), ALL_ABILITIES);
       for (let tick = 0; tick < 2000; tick++) {
-        if (state.pendingOffer !== null) resolveCardAction(state, 0); // always pick the first card
+        if (state.pendingOffer !== null) resolveAbilityAction(state, 0); // always pick first ability
         advanceTick(state);
         if (state.status !== 'running') break;
       }
