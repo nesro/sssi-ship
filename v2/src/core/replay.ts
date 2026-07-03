@@ -135,6 +135,7 @@ export function hashCoreState(state: CoreState): string {
     stats: state.stats,
     pickedAbilityIds: state.pickedAbilityIds,
     autoFireEnabled: state.autoFireEnabled,
+    rearWeaponEnabled: state.rearWeaponEnabled,
     autoShieldEnabled: state.autoShieldEnabled,
     equippedAbilities: state.equippedAbilities,
     shieldBroke: state.shieldBroke,

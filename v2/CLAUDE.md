@@ -1,10 +1,8 @@
 # Nesro Nova v2 — Agent orientation guide
 
-Read `../V2_HANDOFF.md` **first** — it is the single source of truth for all design
-decisions (confirmed by Tomáš on 2026-06-06). Do not re-litigate anything settled there.
+Read `../GAME_DESIGN.md` **first** — it is the single source of truth for all design
+decisions (confirmed by Tomáš on 2026-07-01). Do not re-litigate anything settled there.
 This file covers how the v2 codebase itself is organized and the rules for working in it.
-For operating the game (running the simulator, adding/balancing content, shipping to Play),
-see `HANDOFF_TO_HUMAN.md`.
 
 ## What this is
 
@@ -43,6 +41,10 @@ npx cap sync android && npx cap open android  # Capacitor → Android Studio
 ```
 
 Run `pnpm lint` and `pnpm build:dry` after every edit; fix warnings immediately.
+
+## Visual verification rule (mandatory)
+
+After **any** change to `src/view/` — renderers, textures, layout, HUD, shop preview — take a `preview_screenshot` before reporting the task done. Never trust code logic alone to verify rendering output. Use `__cheat.equip(id)` and `__cheat.navShop(tab)` to reach the right state fast.
 
 ## Layout
 
@@ -89,11 +91,10 @@ Done: toolchain, deterministic core (conveyor, energy budget, brownout, blockers
 timeline, replay records + hash verification) with full test coverage, dpr-sharp Phaser
 view with baked-glow renderer, simulator skeleton, Capacitor android platform.
 
-Flagged for Tomáš (see `../docs/plans/v2-week1-scaffold.md`):
+Flagged for Tomáš:
 - Collision damage currently routes **shield-first** ("through the shield" reading);
   one-line change in `conveyor.ts` if it should bypass shields.
 - **On-device smoke test** of the additive renderer + text sharpness on a real Android
   phone is a week-1 exit criterion that needs a human with a phone.
 
-Next (week 2, handoff §10): support calls + card pool (~20 cards, 2 synergy chains),
-reserve supplies, benchmark stars, one real mission tuned via `--sweep`, watch-replay.
+Next: landscape revert (960×540, three-panel layout), rear weapon slot, subscriptions system, WelcomeScene.

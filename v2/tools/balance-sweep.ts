@@ -39,18 +39,22 @@ const LOADOUTS: Record<string, LoadoutSnapshot> = {
   mid: {
     ship: shipById(DEFAULT_SHIP_ID),
     weapon: weaponSpecById('pulse-3'),
+    rearWeapon: null,
     shield: shieldSpecById('shield-2'),
     generator: generatorSpecById('generator-2'),
     motor: motorSpecById('motor-1'),
     supplies: [],
+    subscriptionCardIds: [],
   },
   full: {
     ship: shipById(DEFAULT_SHIP_ID),
     weapon: weaponSpecById('scatter-4'),
+    rearWeapon: null,
     shield: shieldSpecById('shield-3'),
     generator: generatorSpecById('generator-3'),
     motor: motorSpecById('motor-2'),
     supplies: [],
+    subscriptionCardIds: [],
   },
 };
 
@@ -202,6 +206,7 @@ function main(): void {
 
   console.log('\nDone. Writing report…');
   const report = formatReport(results, nonTutorial);
+  // fallow-ignore-next-line unresolved-import
   const outPath = new URL('./balance-report.md', import.meta.url).pathname;
   writeFileSync(outPath, report, 'utf8');
   console.log(`Report written to tools/balance-report.md`);

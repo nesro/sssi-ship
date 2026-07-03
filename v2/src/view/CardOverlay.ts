@@ -40,7 +40,7 @@ export class CardOverlay {
     this.objects.push(addModalBackdrop(this.scene, DEPTH));
     this.objects.push(
       this.scene.add
-        .text(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - px(CARD_HEIGHT_LOGICAL / 2) - px(44), 'INCOMING SUPPORT CALL', {
+        .text(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - px(CARD_HEIGHT_LOGICAL / 2) - px(44), 'DISPATCH REINFORCEMENTS', {
           fontFamily: UI_FONT,
           fontSize: `${String(fontPx(18))}px`,
           color: cssColor(PALETTE.weaponCyan),

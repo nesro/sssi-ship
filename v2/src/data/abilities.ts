@@ -283,17 +283,6 @@ const lastLapPush: AbilityDefinition = {
 
 // ── Exports ──────────────────────────────────────────────────────────────────
 
-export const ACTIVE_ABILITIES: AbilityDefinition[] = [
-  nexusOverload,
-  barrageMode,
-  aegisBarrier,
-  resonancePulse,
-  powerSurge,
-  energyOverdrive,
-  speedBurst,
-  timelineRush,
-];
-
 export const ALL_NEW_ABILITIES: AbilityDefinition[] = [
   // nexus
   nexusOverload,

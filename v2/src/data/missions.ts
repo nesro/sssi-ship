@@ -122,16 +122,16 @@ const WELCOME_MISSION: MissionSpec = {
   ],
   supportCallTicks: [],
   stars: [],
-  forcedLoadout: { shieldId: 'shield-1', generatorId: 'generator-1', motorId: 'motor-1', weaponId: 'pulse-1' },
+  forcedLoadout: { shieldId: 'shield-wall-1', generatorId: 'generator-torrent-1', motorId: 'motor-rush-1', weaponId: 'pulse-1' },
   narratorEvents: W0_NARRATOR_EVENTS,
 };
 
 // ---------- Tutorial loadout presets ----------
 
 const TUTORIAL_LOADOUT_BASE: Omit<ForcedLoadout, 'weaponId'> = {
-  shieldId: 'shield-1',
-  generatorId: 'generator-1',
-  motorId: 'motor-1',
+  shieldId: 'shield-wall-1',
+  generatorId: 'generator-torrent-1',
+  motorId: 'motor-rush-1',
 };
 
 // ---------- Tutorial enemy archetypes ----------

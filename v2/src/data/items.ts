@@ -1,6 +1,7 @@
 import type {
   GeneratorSpec,
   MotorSpec,
+  RearWeaponKind,
   ShieldSpec,
   ShipSpec,
   SupplySpec,
@@ -40,15 +41,15 @@ const WEAPON_BASE: Record<WeaponKind, {
   nova:    { displayName: 'Nova Wave',    blurb: 'Hits every enemy. Swarm destroyer.',       damage: 3,  ticks: 9, energy: 16, targets: Infinity, falloff: 1.0 },
 };
 
-/** Stars required per weapon kind and level (index = level − 1). See docs/plans/star-progression.md. */
+/** Stars required per weapon kind and level (index = level − 1). Lv1 + Lv2 always 0 — star-gate starts at Lv3. */
 export const WEAPON_STARS: Record<WeaponKind, [number, number, number, number, number]> = {
-  pulse:   [0,  4,  10, 18, 28],
-  ion:     [10, 18, 28, 38, 38],
-  scatter: [10, 18, 28, 38, 38],
-  nova:    [18, 28, 38, 38, 38],
+  pulse:   [0, 0, 10, 18, 28],
+  ion:     [0, 0, 10, 18, 28],
+  scatter: [0, 0, 10, 18, 28],
+  nova:    [0, 0, 18, 28, 38],
 };
 
-/** Coin cost per level (index = level − 1). Pulse level 1 is free (starter). */
+/** Coin cost per level (index = level − 1). Pulse level 1 is free (mandatory starter). Later types cost coins from Lv1. */
 const WEAPON_PRICES: Record<WeaponKind, [number, number, number, number, number]> = {
   pulse:   [0,    200,  500,  1000, 2000],
   ion:     [250,  500,  1000, 2000, 4000],
@@ -104,95 +105,253 @@ const WEAPON_ITEMS: Record<string, CatalogItem> = Object.fromEntries(
   ),
 );
 
+// ---------- Rear weapon system ----------
+
+export const REAR_WEAPON_KINDS: RearWeaponKind[] = ['grenade', 'flak', 'plasma', 'arc', 'cluster'];
+export const MAX_REAR_WEAPON_LEVEL = 5;
+
+export interface RearWeaponCatalogItem {
+  system: 'rear-weapon';
+  name: string;
+  price: number;
+  starsRequired?: number;
+  blurb: string;
+  spec: WeaponSpec;
+}
+
+const REAR_WEAPON_BASE: Record<RearWeaponKind, {
+  displayName: string;
+  blurb: string;
+  damage: number;
+  ticks: number;
+  energy: number;
+  targets: number;
+  falloff: number;
+}> = {
+  grenade: { displayName: 'Grenade Launcher', blurb: 'Balanced mid-queue burst. Hits a cluster of 3 enemies.',   damage: 12, ticks: 10, energy: 10, targets: 3, falloff: 0.80 },
+  flak:    { displayName: 'Flak Turret',      blurb: 'Wide shrapnel spray. Anti-swarm specialist.',              damage:  5, ticks:  8, energy: 12, targets: 5, falloff: 0.70 },
+  plasma:  { displayName: 'Plasma Cannon',    blurb: 'Slow charge, massive blast. Punishes high-HP targets.',    damage: 25, ticks: 14, energy: 18, targets: 2, falloff: 0.60 },
+  arc:     { displayName: 'Arc Discharger',   blurb: 'Electric chain between two enemies. Reliable AoE.',        damage: 15, ticks:  9, energy: 11, targets: 2, falloff: 0.85 },
+  cluster: { displayName: 'Cluster Bomb',     blurb: 'Submunition scatter. Maximum spread, minimum per-target.', damage:  3, ticks:  7, energy: 11, targets: 6, falloff: 0.65 },
+};
+
+/** Stars required per rear weapon kind and level (index = level − 1). */
+const REAR_WEAPON_STARS: Record<RearWeaponKind, [number, number, number, number, number]> = {
+  grenade: [0, 0, 10, 18, 28],
+  flak:    [0, 0, 10, 18, 28],
+  plasma:  [0, 0, 10, 18, 28],
+  arc:     [0, 0, 10, 18, 28],
+  cluster: [0, 0, 10, 18, 28],
+};
+
+const REAR_WEAPON_PRICES: Record<RearWeaponKind, [number, number, number, number, number]> = {
+  grenade: [0,    400,  800, 1600, 3200],
+  flak:    [160,  320,  640, 1280, 2560],
+  plasma:  [280,  560, 1100, 2200, 4400],
+  arc:     [220,  440,  880, 1760, 3520],
+  cluster: [150,  300,  600, 1200, 2400],
+};
+
+export function rearWeaponSpecAtLevel(kind: RearWeaponKind, level: number): WeaponSpec {
+  const base = REAR_WEAPON_BASE[kind];
+  const t = level - 1;
+  const extraTargets =
+    kind === 'grenade' && level >= 3 ? 1 :
+    kind === 'cluster' && level >= 5 ? 1 : 0;
+  return {
+    id: `${kind}-${String(level)}`,
+    kind,
+    damagePerShot: Math.round(base.damage * Math.pow(1.22, t) * 10) / 10,
+    ticksBetweenShots: Math.max(2, Math.round(base.ticks * Math.pow(0.91, t))),
+    energyPerShot: Math.round(base.energy * Math.pow(1.15, t) * 10) / 10,
+    maxTargets: base.targets + extraTargets,
+    falloffPerTarget: base.falloff,
+    critChance: 0,
+    missChance: 0,
+    critMult: 2.0,
+  };
+}
+
+function rearWeaponDisplayName(kind: RearWeaponKind, level: number): string {
+  return `${REAR_WEAPON_BASE[kind].displayName} Lv ${String(level)}`;
+}
+
+export function rearWeaponKindDisplayName(kind: RearWeaponKind): string {
+  return REAR_WEAPON_BASE[kind].displayName;
+}
+
+export const REAR_WEAPON_ITEMS: Record<string, RearWeaponCatalogItem> = Object.fromEntries(
+  REAR_WEAPON_KINDS.flatMap((kind) =>
+    Array.from({ length: MAX_REAR_WEAPON_LEVEL }, (_, i) => {
+      const level = i + 1;
+      const id = `${kind}-${String(level)}`;
+      return [id, {
+        system: 'rear-weapon' as const,
+        name: rearWeaponDisplayName(kind, level),
+        price: REAR_WEAPON_PRICES[kind][i] ?? 0,
+        starsRequired: REAR_WEAPON_STARS[kind][i] ?? 0,
+        blurb: REAR_WEAPON_BASE[kind].blurb,
+        spec: rearWeaponSpecAtLevel(kind, level),
+      }];
+    }),
+  ),
+);
+
+export function rearWeaponSpecById(id: string): WeaponSpec {
+  const item = REAR_WEAPON_ITEMS[id];
+  if (item === undefined) throw new Error(`Unknown rear weapon "${id}"`);
+  return item.spec;
+}
+
+// ---------- Shield system ----------
+
+export type ShieldKind = 'wall' | 'reflex' | 'bulwark' | 'flux';
+export const SHIELD_KINDS: readonly ShieldKind[] = ['wall', 'reflex', 'bulwark', 'flux'];
+export const MAX_SHIELD_LEVEL = 5;
+
+const SHIELD_BASE: Record<ShieldKind, {
+  displayName: string; blurb: string;
+  caps: [number, number, number, number, number];
+  fractions: [number, number, number, number, number];
+  prices: [number, number, number, number, number];
+  stars: [number, number, number, number, number];
+}> = {
+  wall:    { displayName: 'Wall',    blurb: 'Thick plate — survives hits, slow recharge.',         caps: [ 30,  60, 100, 150, 220], fractions: [0.08, 0.09, 0.10, 0.12, 0.14], prices: [   0,  300,  750, 1500, 2800], stars: [ 0,  0, 10, 18, 28] },
+  reflex:  { displayName: 'Reflex',  blurb: 'Thin plate, instant snap-back. Loves fast pulses.',   caps: [ 15,  22,  30,  40,  55], fractions: [0.35, 0.42, 0.52, 0.62, 0.75], prices: [ 200,  400,  800, 1500, 2800], stars: [ 0,  0, 10, 18, 28] },
+  bulwark: { displayName: 'Bulwark', blurb: 'Extreme capacity, minimal regen. True tank armour.',  caps: [ 60, 100, 155, 225, 320], fractions: [0.05, 0.06, 0.07, 0.08, 0.10], prices: [ 400,  800, 1500, 2800, 5000], stars: [10, 18, 28, 38, 50] },
+  flux:    { displayName: 'Flux',    blurb: 'Balanced cap and pulse rate. Works with anything.',   caps: [ 40,  70, 105, 150, 210], fractions: [0.18, 0.22, 0.26, 0.32, 0.38], prices: [ 350,  650, 1200, 2200, 4000], stars: [10, 18, 28, 38, 50] },
+};
+
+export function shieldKindDisplayName(kind: ShieldKind): string { return SHIELD_BASE[kind].displayName; }
+
+export function shieldSpecAtLevel(kind: ShieldKind, level: number): ShieldSpec {
+  const base = SHIELD_BASE[kind];
+  const i = level - 1;
+  return { id: `shield-${kind}-${String(level)}`, capacity: base.caps[i] ?? 30, pulseShieldFraction: base.fractions[i] ?? 0.08 };
+}
+
+const SHIELD_ITEMS: Record<string, CatalogItem> = Object.fromEntries(
+  SHIELD_KINDS.flatMap((kind) =>
+    Array.from({ length: MAX_SHIELD_LEVEL }, (_, i) => {
+      const level = i + 1;
+      const base = SHIELD_BASE[kind];
+      return [`shield-${kind}-${String(level)}`, {
+        system: 'shield' as const,
+        name: `${base.displayName} Lv${String(level)}`,
+        price: base.prices[i] ?? 0,
+        starsRequired: base.stars[i] ?? 0,
+        blurb: base.blurb,
+        spec: shieldSpecAtLevel(kind, level),
+      }];
+    }),
+  ),
+);
+
+// ---------- Generator system ----------
+
+export type GeneratorKind = 'torrent' | 'reserve' | 'surge' | 'steady';
+export const GENERATOR_KINDS: readonly GeneratorKind[] = ['torrent', 'reserve', 'surge', 'steady'];
+export const MAX_GENERATOR_LEVEL = 5;
+
+const GENERATOR_BASE: Record<GeneratorKind, {
+  displayName: string; blurb: string;
+  outputs: [number, number, number, number, number];
+  caps: [number, number, number, number, number];
+  drains: [number, number, number, number, number];
+  prices: [number, number, number, number, number];
+  stars: [number, number, number, number, number];
+}> = {
+  torrent: { displayName: 'Torrent', blurb: 'High output, small buffer. Feeds fast-cycling weapons.',        outputs: [ 2,  4,  7, 11, 16], caps: [50, 45, 40, 38, 35], drains: [0.50, 0.55, 0.60, 0.65, 0.70], prices: [   0,  300,  800, 1600, 3000], stars: [ 0,  0, 10, 18, 28] },
+  reserve: { displayName: 'Reserve', blurb: 'Vast tank, slow trickle. Charge then unleash.',                 outputs: [1.5, 2.5, 3.5,  5,  7], caps: [100, 160, 240, 340, 480], drains: [0.28, 0.24, 0.20, 0.17, 0.14], prices: [ 280,  550, 1050, 2000, 3800], stars: [ 0,  0, 10, 18, 28] },
+  surge:   { displayName: 'Surge',   blurb: 'Maximum output, tiny battery. Ion and nova goldmine.',          outputs: [ 3,  5,  9, 14, 20], caps: [30, 28, 26, 25, 25], drains: [0.72, 0.78, 0.83, 0.88, 0.92], prices: [ 350,  650, 1200, 2200, 4000], stars: [10, 18, 28, 38, 50] },
+  steady:  { displayName: 'Steady',  blurb: 'Reliable mid-range. Pairs well with any loadout.',              outputs: [2.5,  4,  6,  9, 13], caps: [70, 82, 95, 110, 128], drains: [0.38, 0.34, 0.30, 0.26, 0.22], prices: [ 320,  600, 1100, 2000, 3600], stars: [10, 18, 28, 38, 50] },
+};
+
+export function generatorKindDisplayName(kind: GeneratorKind): string { return GENERATOR_BASE[kind].displayName; }
+
+export function generatorSpecAtLevel(kind: GeneratorKind, level: number): GeneratorSpec {
+  const base = GENERATOR_BASE[kind];
+  const i = level - 1;
+  return { id: `generator-${kind}-${String(level)}`, outputPerTick: base.outputs[i] ?? 2, capacity: base.caps[i] ?? 50, pulseDrainFraction: base.drains[i] ?? 0.5 };
+}
+
+const GENERATOR_ITEMS: Record<string, CatalogItem> = Object.fromEntries(
+  GENERATOR_KINDS.flatMap((kind) =>
+    Array.from({ length: MAX_GENERATOR_LEVEL }, (_, i) => {
+      const level = i + 1;
+      const base = GENERATOR_BASE[kind];
+      return [`generator-${kind}-${String(level)}`, {
+        system: 'generator' as const,
+        name: `${base.displayName} Lv${String(level)}`,
+        price: base.prices[i] ?? 0,
+        starsRequired: base.stars[i] ?? 0,
+        blurb: base.blurb,
+        spec: generatorSpecAtLevel(kind, level),
+      }];
+    }),
+  ),
+);
+
+// ---------- Motor system ----------
+
+export type MotorKind = 'rush' | 'tactical' | 'sentinel' | 'overdrive';
+export const MOTOR_KINDS: readonly MotorKind[] = ['rush', 'tactical', 'sentinel', 'overdrive'];
+export const MAX_MOTOR_LEVEL = 5;
+
+const MOTOR_BASE: Record<MotorKind, {
+  displayName: string; blurb: string;
+  mults: [number, number, number, number, number];
+  draws: [number, number, number, number, number];
+  prices: [number, number, number, number, number];
+  stars: [number, number, number, number, number];
+  bonusCards?: [number, number, number, number, number];
+  bonusRerolls?: [number, number, number, number, number];
+}> = {
+  rush:      { displayName: 'Rush',      blurb: 'Fast timeline, high draw. Time-star goldmine.',                     mults: [1.0, 2.0, 3.0, 4.2, 5.8], draws: [0.30, 1.20, 2.20, 3.80,  6.0], prices: [   0,  400, 1000, 2000, 3800], stars: [ 0,  0, 10, 18, 28] },
+  tactical:  { displayName: 'Tactical',  blurb: 'Normal speed, extra card draws each support call.',                 mults: [1.0, 1.0, 1.1, 1.1, 1.2], draws: [0.30, 0.10, 0.12, 0.15, 0.18], prices: [ 350,  600, 1100, 2000, 3600], stars: [ 0,  0, 10, 18, 28], bonusCards: [0, 1, 2, 3, 4], bonusRerolls: [0, 0, 1, 2, 3] },
+  sentinel:  { displayName: 'Sentinel',  blurb: 'Slow timeline — enemies crawl. Very low energy draw.',             mults: [1.0, 0.7, 0.55, 0.45, 0.35], draws: [0.30, 0.08, 0.05, 0.03, 0.01], prices: [ 300,  550, 1000, 1900, 3400], stars: [ 0,  0, 10, 18, 28] },
+  overdrive: { displayName: 'Overdrive', blurb: 'Extreme speed and draw. Endgame only.',                            mults: [3.0, 5.0, 7.5, 10.5, 14.0], draws: [3.50, 7.00, 12.0, 18.0, 26.0], prices: [ 800, 1600, 3000, 5000, 8000], stars: [18, 28, 38, 50, 65] },
+};
+
+export function motorKindDisplayName(kind: MotorKind): string { return MOTOR_BASE[kind].displayName; }
+
+export function motorSpecAtLevel(kind: MotorKind, level: number): MotorSpec {
+  const base = MOTOR_BASE[kind];
+  const i = level - 1;
+  const spec: MotorSpec = {
+    id: `motor-${kind}-${String(level)}`,
+    timelineMultiplier: base.mults[i] ?? 1,
+    powerDrawPerTick: base.draws[i] ?? 0.3,
+  };
+  const bonus = base.bonusCards?.[i] ?? 0;
+  const rerolls = base.bonusRerolls?.[i] ?? 0;
+  if (bonus > 0) spec.bonusCardsPerSupportCall = bonus;
+  if (rerolls > 0) spec.bonusRerollsPerMission = rerolls;
+  return spec;
+}
+
+const MOTOR_ITEMS: Record<string, CatalogItem> = Object.fromEntries(
+  MOTOR_KINDS.flatMap((kind) =>
+    Array.from({ length: MAX_MOTOR_LEVEL }, (_, i) => {
+      const level = i + 1;
+      const base = MOTOR_BASE[kind];
+      return [`motor-${kind}-${String(level)}`, {
+        system: 'motor' as const,
+        name: `${base.displayName} Lv${String(level)}`,
+        price: base.prices[i] ?? 0,
+        starsRequired: base.stars[i] ?? 0,
+        blurb: base.blurb,
+        spec: motorSpecAtLevel(kind, level),
+      }];
+    }),
+  ),
+);
+
 export const ITEMS: Record<string, CatalogItem> = {
   ...WEAPON_ITEMS,
-
-  // ── Shield: Wall path (high capacity, expensive to recharge) ─────────────────
-  'shield-1': {
-    system: 'shield', name: 'Deflector I', price: 0,
-    blurb: 'Thin but honest. Branch: Wall or Reflex.',
-    spec: { id: 'shield-1', capacity: 30, pulseShieldFraction: 0.08 },
-  },
-  'shield-2': {
-    system: 'shield', name: 'Barricade', price: 250, starsRequired: 4, requires: 'shield-1',
-    blurb: 'Wall path. Thick cap, heavier recharge.',
-    spec: { id: 'shield-2', capacity: 70, pulseShieldFraction: 0.10 },
-  },
-  'shield-3': {
-    system: 'shield', name: 'Fortress', price: 900, starsRequired: 18, requires: 'shield-2',
-    blurb: 'Wall path. Near-invulnerable cap. Recharge is a commitment.',
-    spec: { id: 'shield-3', capacity: 120, pulseShieldFraction: 0.12 },
-  },
-
-  // ── Shield: Reflex path (low capacity, cheap rapid recharge) ─────────────────
-  'shield-reflex-2': {
-    system: 'shield', name: 'Reflex Shield', price: 200, starsRequired: 4, requires: 'shield-1',
-    blurb: 'Reflex path. Breaks easily, snaps back instantly.',
-    spec: { id: 'shield-reflex-2', capacity: 22, pulseShieldFraction: 0.35 },
-  },
-  'shield-reflex-3': {
-    system: 'shield', name: 'Phase Cloak', price: 700, starsRequired: 18, requires: 'shield-reflex-2',
-    blurb: 'Reflex path. Minimal cap, nearly free to maintain. Syncs with SHATTERED CORE.',
-    spec: { id: 'shield-reflex-3', capacity: 18, pulseShieldFraction: 0.50 },
-  },
-
-  // ── Generator: Torrent path (high output, small battery) ─────────────────────
-  'generator-1': {
-    system: 'generator', name: 'Core Cell I', price: 0,
-    blurb: 'Keeps the lights on. Branch: Torrent or Reserve.',
-    spec: { id: 'generator-1', outputPerTick: 2, capacity: 50, pulseDrainFraction: 0.50 },
-  },
-  'generator-2': {
-    system: 'generator', name: 'Overdrive Core', price: 300, starsRequired: 4, requires: 'generator-1',
-    blurb: 'Torrent path. High output, small buffer — great for fast weapons.',
-    spec: { id: 'generator-2', outputPerTick: 5, capacity: 40, pulseDrainFraction: 0.60 },
-  },
-  'generator-3': {
-    system: 'generator', name: 'Quantum Reactor', price: 1000, starsRequired: 18, requires: 'generator-2',
-    blurb: 'Torrent path. Absurd output. Battery barely matters.',
-    spec: { id: 'generator-3', outputPerTick: 9, capacity: 40, pulseDrainFraction: 0.65 },
-  },
-
-  // ── Generator: Reserve path (moderate output, massive battery) ───────────────
-  'generator-reserve-2': {
-    system: 'generator', name: 'Reservoir', price: 280, starsRequired: 4, requires: 'generator-1',
-    blurb: 'Reserve path. Steady trickle, huge tank — great for ion and nova.',
-    spec: { id: 'generator-reserve-2', outputPerTick: 2.5, capacity: 130, pulseDrainFraction: 0.28 },
-  },
-  'generator-reserve-3': {
-    system: 'generator', name: 'Singularity Bank', price: 950, starsRequired: 18, requires: 'generator-reserve-2',
-    blurb: 'Reserve path. Enormous bank. Fire in bursts. Pairs perfectly with FULL CHARGE.',
-    spec: { id: 'generator-reserve-3', outputPerTick: 3, capacity: 220, pulseDrainFraction: 0.22 },
-  },
-
-  // ── Motor: Speed path (compress timeline, high draw) ─────────────────────────
-  'motor-1': {
-    system: 'motor', name: 'Drift Motor', price: 0,
-    blurb: 'Steady pace, sips power. Branch: Rush or Tactical.',
-    spec: { id: 'motor-1', timelineMultiplier: 1, powerDrawPerTick: 0.3 },
-  },
-  'motor-2': {
-    system: 'motor', name: 'Surge Motor', price: 400, starsRequired: 4, requires: 'motor-1',
-    blurb: 'Rush path. Waves arrive twice as fast. Time-star goldmine — if you survive.',
-    spec: { id: 'motor-2', timelineMultiplier: 2.0, powerDrawPerTick: 1.2 },
-  },
-  'motor-3': {
-    system: 'motor', name: 'Comet Drive', price: 1100, starsRequired: 18, requires: 'motor-2',
-    blurb: 'Rush path. 3.5× timeline. Enemies erupt before you breathe. You were warned.',
-    spec: { id: 'motor-3', timelineMultiplier: 3.5, powerDrawPerTick: 2.5 },
-  },
-
-  // ── Motor: Tactical path (normal speed, extra card offers) ───────────────────
-  'motor-tactical-2': {
-    system: 'motor', name: 'Tactical Engine', price: 350, starsRequired: 4, requires: 'motor-1',
-    blurb: 'Tactical path. Same pace, sips power, +1 bonus card per support call.',
-    spec: { id: 'motor-tactical-2', timelineMultiplier: 1, powerDrawPerTick: 0.1, bonusCardsPerSupportCall: 1 },
-  },
-  'motor-tactical-3': {
-    system: 'motor', name: 'Strategic Drive', price: 900, starsRequired: 18, requires: 'motor-tactical-2',
-    blurb: 'Tactical path. Slight speed boost, +2 bonus cards per call, +2 rerolls/mission.',
-    spec: { id: 'motor-tactical-3', timelineMultiplier: 1.1, powerDrawPerTick: 0.15, bonusCardsPerSupportCall: 2, bonusRerollsPerMission: 2 },
-  },
+  ...SHIELD_ITEMS,
+  ...GENERATOR_ITEMS,
+  ...MOTOR_ITEMS,
 };
 
 
@@ -278,34 +437,42 @@ export function supplyById(id: string): SupplyCatalogEntry {
 
 // ---------- Ships ----------
 
-export const DEFAULT_SHIP_ID = 'ship-interceptor';
+export type ShipKind = 'interceptor' | 'salvager' | 'reactor' | 'tanker' | 'warship';
+export const SHIP_KINDS: readonly ShipKind[] = ['interceptor', 'salvager', 'reactor', 'tanker', 'warship'] as const;
+export const MAX_SHIP_LEVEL = 5;
+
+export const DEFAULT_SHIP_ID = 'ship-interceptor-1';
 
 export const SHIPS: Record<string, ShipSpec> = {
-  'ship-interceptor': {
-    id: 'ship-interceptor', name: 'Interceptor', hull: 80, price: 0,
-    passiveKind: 'enemy-miss-bonus', passiveValue: 0.10,
-    passiveDescription: 'Enemies miss +10% more often',
-  },
-  'ship-tanker': {
-    id: 'ship-tanker', name: 'Tanker', hull: 150, price: 1200, starsRequired: 18,
-    passiveKind: 'collision-reduction', passiveValue: 0.5,
-    passiveDescription: 'Collision damage −50%',
-  },
-  'ship-salvager': {
-    id: 'ship-salvager', name: 'Salvager', hull: 100, price: 900, starsRequired: 4,
-    passiveKind: 'coin-bonus', passiveValue: 1.5,
-    passiveDescription: '+50% coins from kills',
-  },
-  'ship-reactor': {
-    id: 'ship-reactor', name: 'Reactor', hull: 90, price: 1000, starsRequired: 18,
-    passiveKind: 'generator-capacity-bonus', passiveValue: 1.5,
-    passiveDescription: 'Generator capacity +50%',
-  },
-  'ship-warship': {
-    id: 'ship-warship', name: 'Warship', hull: 110, price: 1400, starsRequired: 38,
-    passiveKind: 'crit-mult-override', passiveValue: 3.0,
-    passiveDescription: 'Crits deal ×3 instead of ×2',
-  },
+  'ship-interceptor-1': { id: 'ship-interceptor-1', kind: 'interceptor', level: 1, name: 'Interceptor', hull: 80,  price: 0,    passiveKind: 'enemy-miss-bonus',        passiveValue: 0.10, passiveDescription: 'Enemies miss +10% more often' },
+  'ship-interceptor-2': { id: 'ship-interceptor-2', kind: 'interceptor', level: 2, name: 'Interceptor', hull: 96,  price: 200,  passiveKind: 'enemy-miss-bonus',        passiveValue: 0.12, passiveDescription: 'Enemies miss +12% more often' },
+  'ship-interceptor-3': { id: 'ship-interceptor-3', kind: 'interceptor', level: 3, name: 'Interceptor', hull: 115, price: 500,  passiveKind: 'enemy-miss-bonus',        passiveValue: 0.15, passiveDescription: 'Enemies miss +15% more often' },
+  'ship-interceptor-4': { id: 'ship-interceptor-4', kind: 'interceptor', level: 4, name: 'Interceptor', hull: 140, price: 1000, passiveKind: 'enemy-miss-bonus',        passiveValue: 0.18, passiveDescription: 'Enemies miss +18% more often' },
+  'ship-interceptor-5': { id: 'ship-interceptor-5', kind: 'interceptor', level: 5, name: 'Interceptor', hull: 170, price: 1800, passiveKind: 'enemy-miss-bonus',        passiveValue: 0.22, passiveDescription: 'Enemies miss +22% more often' },
+
+  'ship-salvager-1': { id: 'ship-salvager-1', kind: 'salvager', level: 1, name: 'Salvager', hull: 100, price: 900,  passiveKind: 'coin-bonus', passiveValue: 1.5, passiveDescription: '+50% coins from kills' },
+  'ship-salvager-2': { id: 'ship-salvager-2', kind: 'salvager', level: 2, name: 'Salvager', hull: 120, price: 1200, passiveKind: 'coin-bonus', passiveValue: 1.7, passiveDescription: '+70% coins from kills' },
+  'ship-salvager-3': { id: 'ship-salvager-3', kind: 'salvager', level: 3, name: 'Salvager', hull: 145, price: 1600, passiveKind: 'coin-bonus', passiveValue: 2.0, passiveDescription: '+100% coins from kills' },
+  'ship-salvager-4': { id: 'ship-salvager-4', kind: 'salvager', level: 4, name: 'Salvager', hull: 175, price: 2200, passiveKind: 'coin-bonus', passiveValue: 2.4, passiveDescription: '+140% coins from kills' },
+  'ship-salvager-5': { id: 'ship-salvager-5', kind: 'salvager', level: 5, name: 'Salvager', hull: 215, price: 3200, passiveKind: 'coin-bonus', passiveValue: 3.0, passiveDescription: '+200% coins from kills' },
+
+  'ship-reactor-1': { id: 'ship-reactor-1', kind: 'reactor', level: 1, name: 'Reactor', hull: 90,  price: 1000, starsRequired: 18, passiveKind: 'generator-capacity-bonus', passiveValue: 1.5, passiveDescription: 'Generator capacity +50%' },
+  'ship-reactor-2': { id: 'ship-reactor-2', kind: 'reactor', level: 2, name: 'Reactor', hull: 108, price: 1350, passiveKind: 'generator-capacity-bonus', passiveValue: 1.7, passiveDescription: 'Generator capacity +70%' },
+  'ship-reactor-3': { id: 'ship-reactor-3', kind: 'reactor', level: 3, name: 'Reactor', hull: 130, price: 1800, passiveKind: 'generator-capacity-bonus', passiveValue: 2.0, passiveDescription: 'Generator capacity +100%' },
+  'ship-reactor-4': { id: 'ship-reactor-4', kind: 'reactor', level: 4, name: 'Reactor', hull: 157, price: 2500, passiveKind: 'generator-capacity-bonus', passiveValue: 2.4, passiveDescription: 'Generator capacity +140%' },
+  'ship-reactor-5': { id: 'ship-reactor-5', kind: 'reactor', level: 5, name: 'Reactor', hull: 190, price: 3500, passiveKind: 'generator-capacity-bonus', passiveValue: 3.0, passiveDescription: 'Generator capacity +200%' },
+
+  'ship-tanker-1': { id: 'ship-tanker-1', kind: 'tanker', level: 1, name: 'Tanker', hull: 150, price: 1200, starsRequired: 18, passiveKind: 'collision-reduction', passiveValue: 0.50, passiveDescription: 'Collision damage −50%' },
+  'ship-tanker-2': { id: 'ship-tanker-2', kind: 'tanker', level: 2, name: 'Tanker', hull: 180, price: 1650, passiveKind: 'collision-reduction', passiveValue: 0.60, passiveDescription: 'Collision damage −60%' },
+  'ship-tanker-3': { id: 'ship-tanker-3', kind: 'tanker', level: 3, name: 'Tanker', hull: 218, price: 2300, passiveKind: 'collision-reduction', passiveValue: 0.70, passiveDescription: 'Collision damage −70%' },
+  'ship-tanker-4': { id: 'ship-tanker-4', kind: 'tanker', level: 4, name: 'Tanker', hull: 264, price: 3200, passiveKind: 'collision-reduction', passiveValue: 0.80, passiveDescription: 'Collision damage −80%' },
+  'ship-tanker-5': { id: 'ship-tanker-5', kind: 'tanker', level: 5, name: 'Tanker', hull: 320, price: 4500, passiveKind: 'collision-reduction', passiveValue: 0.90, passiveDescription: 'Collision damage −90%' },
+
+  'ship-warship-1': { id: 'ship-warship-1', kind: 'warship', level: 1, name: 'Warship', hull: 110, price: 1400, starsRequired: 38, passiveKind: 'crit-mult-override', passiveValue: 3.0, passiveDescription: 'Crits deal ×3 instead of ×2' },
+  'ship-warship-2': { id: 'ship-warship-2', kind: 'warship', level: 2, name: 'Warship', hull: 132, price: 1900, passiveKind: 'crit-mult-override', passiveValue: 3.5, passiveDescription: 'Crits deal ×3.5 instead of ×2' },
+  'ship-warship-3': { id: 'ship-warship-3', kind: 'warship', level: 3, name: 'Warship', hull: 159, price: 2600, passiveKind: 'crit-mult-override', passiveValue: 4.0, passiveDescription: 'Crits deal ×4 instead of ×2' },
+  'ship-warship-4': { id: 'ship-warship-4', kind: 'warship', level: 4, name: 'Warship', hull: 191, price: 3600, passiveKind: 'crit-mult-override', passiveValue: 5.0, passiveDescription: 'Crits deal ×5 instead of ×2' },
+  'ship-warship-5': { id: 'ship-warship-5', kind: 'warship', level: 5, name: 'Warship', hull: 230, price: 5000, passiveKind: 'crit-mult-override', passiveValue: 6.0, passiveDescription: 'Crits deal ×6 instead of ×2' },
 };
 
 export function shipById(id: string): ShipSpec {

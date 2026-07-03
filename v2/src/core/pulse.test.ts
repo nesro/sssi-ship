@@ -7,13 +7,16 @@ import { FIXTURE_MISSION } from './fixtures';
 import type { LoadoutSnapshot } from './types';
 
 // Controlled loadout for exact pulse accounting — zero motor draw, zero weapon drain.
+const PULSE_SHIELD = { id: 'fix-shield', capacity: 30, pulseShieldFraction: 0.1 };
 const PULSE_LOADOUT: LoadoutSnapshot = {
-  ship: { id: 'fix-ship', name: 'Test', hull: 100, price: 0, passiveKind: 'enemy-miss-bonus', passiveValue: 0, passiveDescription: '' },
+  ship: { id: 'fix-ship', kind: 'interceptor', level: 1, name: 'Test', hull: 100, price: 0, passiveKind: 'enemy-miss-bonus', passiveValue: 0, passiveDescription: '' },
   weapon: null, // no weapon — isolates energy to generator + pulse only
+  rearWeapon: null,
   generator: { id: 'fix-gen', outputPerTick: 2, capacity: 50, pulseDrainFraction: 0.5 },
-  shield: { id: 'fix-shield', capacity: 30, pulseShieldFraction: 0.1 },
+  shield: PULSE_SHIELD,
   motor: { id: 'fix-motor', timelineMultiplier: 1, powerDrawPerTick: 0 },
   supplies: [],
+  subscriptionCardIds: [],
 };
 
 // ── Pulse trigger threshold ───────────────────────────────────────────────────
@@ -74,12 +77,12 @@ describe('pulse when shield is full', () => {
   it('pulse does NOT fire when shield is already at capacity', () => {
     const state = createCoreState(FIXTURE_MISSION, PULSE_LOADOUT, 1, []);
     state.ship.energy = PULSE_LOADOUT.generator.capacity;
-    state.ship.shield = PULSE_LOADOUT.shield.capacity; // already full
+    state.ship.shield = PULSE_SHIELD.capacity; // already full
 
     advanceTick(state);
 
     // Pulse check: shield >= shieldCapacity → skip. No energy drained by pulse.
-    expect(state.ship.shield).toBe(PULSE_LOADOUT.shield.capacity);
+    expect(state.ship.shield).toBe(PULSE_SHIELD.capacity);
     // Generator adds 2, but capacity cap means energy stays at 50
     expect(state.ship.energy).toBe(PULSE_LOADOUT.generator.capacity);
   });
@@ -92,11 +95,11 @@ describe('pulse clamping', () => {
     const state = createCoreState(FIXTURE_MISSION, PULSE_LOADOUT, 1, []);
     state.ship.energy = PULSE_LOADOUT.generator.capacity;
     // 1 below capacity: fraction × capacity = 3, but only 1 space left
-    state.ship.shield = PULSE_LOADOUT.shield.capacity - 1; // 29
+    state.ship.shield = PULSE_SHIELD.capacity - 1; // 29
 
     advanceTick(state);
 
-    expect(state.ship.shield).toBe(PULSE_LOADOUT.shield.capacity); // clamped at 30
+    expect(state.ship.shield).toBe(PULSE_SHIELD.capacity); // clamped at 30
   });
 });
 

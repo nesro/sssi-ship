@@ -3,6 +3,7 @@ import {
   DEFAULT_SHIP_ID,
   generatorSpecById,
   motorSpecById,
+  rearWeaponSpecById,
   shieldSpecById,
   shipById,
   supplyById,
@@ -13,10 +14,12 @@ import {
 export const STARTER_LOADOUT: LoadoutSnapshot = {
   ship: shipById(DEFAULT_SHIP_ID),
   weapon: weaponSpecById('pulse-1'),
-  shield: shieldSpecById('shield-1'),
-  generator: generatorSpecById('generator-1'),
-  motor: motorSpecById('motor-1'),
+  rearWeapon: null,
+  shield: shieldSpecById('shield-wall-1'),
+  generator: generatorSpecById('generator-torrent-1'),
+  motor: motorSpecById('motor-rush-1'),
   supplies: [],
+  subscriptionCardIds: [],
 };
 
 /**
@@ -34,9 +37,11 @@ export function resolveForcedLoadout(forced: ForcedLoadout): LoadoutSnapshot {
   return {
     ship: shipById(forced.shipId ?? DEFAULT_SHIP_ID),
     weapon: forced.weaponId !== null ? weaponSpecById(forced.weaponId) : null,
+    rearWeapon: (forced.rearWeaponId ?? null) !== null ? rearWeaponSpecById(forced.rearWeaponId as string) : null,
     shield: shieldSpecById(forced.shieldId),
     generator: generatorSpecById(forced.generatorId),
     motor: motorSpecById(forced.motorId),
     supplies,
+    subscriptionCardIds: [],
   };
 }

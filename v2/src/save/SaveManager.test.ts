@@ -94,41 +94,47 @@ describe('mission gating', () => {
 describe('shop transactions', () => {
   it('switchItem to pricier item deducts net cost and equips it', () => {
     let save = { ...defaultSave(), coins: 500 };
-    save = switchItem(save, 'shield-2');
-    expect(save.equipped.shield).toBe('shield-2');
-    expect(buildLoadout(save).shield.id).toBe('shield-2');
-    // net cost = shield-2.price - shield-1.price (shield-1 is the starter)
-    const shield1Price = 0; // pulse-1 / shield-1 starters are free
-    const shield2Price = 250;
+    save = switchItem(save, 'shield-wall-2');
+    expect(save.equipped.shield).toBe('shield-wall-2');
+    expect(buildLoadout(save).shield?.id).toBe('shield-wall-2');
+    // net cost = shield-wall-2.price - shield-wall-1.price (shield-wall-1 is the starter)
+    const shield1Price = 0; // starters are free
+    const shield2Price = 300;
     expect(save.coins).toBe(500 - (shield2Price - shield1Price));
   });
 
-  it('switchItem to cheaper item refunds the difference', () => {
-    let save = { ...defaultSave(), coins: 1000 };
-    save = switchItem(save, 'shield-3'); // buy up
-    const coinsAfterUp = save.coins;
-    save = switchItem(save, 'shield-2'); // downgrade
-    expect(save.equipped.shield).toBe('shield-2');
-    expect(save.coins).toBeGreaterThan(coinsAfterUp); // got a refund
+  it('switchItem downgrade refunds the difference and removes the traded-in item', () => {
+    let save = { ...defaultSave(), coins: 2000 };
+    save = switchItem(save, 'shield-wall-2'); // buy wall-2 (net cost 300)
+    save = switchItem(save, 'shield-wall-3'); // upgrade to wall-3 (net cost 450)
+    const coinsAfterUp = save.coins; // 2000 - 300 - 450 = 1250
+    save = switchItem(save, 'shield-wall-2'); // downgrade: refund = wall-3.price - wall-2.price = 450
+    expect(save.equipped.shield).toBe('shield-wall-2');
+    expect(save.coins).toBe(coinsAfterUp + (750 - 300));
+    expect(save.ownedItems).not.toContain('shield-wall-3');
   });
 
   it('switchItem is a no-op when already equipped', () => {
     const save = defaultSave();
-    const after = switchItem(save, save.equipped.shield);
+    const shieldId = save.equipped.shield;
+    if (shieldId === null) throw new Error('default save must have a shield equipped');
+    const after = switchItem(save, shieldId);
     expect(after).toBe(save);
   });
 
   it('refuses switchItem without enough coins', () => {
-    expect(() => switchItem(defaultSave(), 'shield-3')).toThrow(/Not enough coins/);
+    // wall-3 net cost is 750-300=450; give coins enough for wall-2 but not wall-3
+    const save = { ...defaultSave(), coins: 400, ownedItems: [...defaultSave().ownedItems, 'shield-wall-2'] };
+    expect(() => switchItem(save, 'shield-wall-3')).toThrow(/Not enough coins/);
   });
 
   it('switchShip deducts net cost and equips it', () => {
     let save = { ...defaultSave(), coins: 1500 };
-    // ship-salvager costs 900; interceptor (starter) costs 0 → net 900
-    save = switchShip(save, 'ship-salvager');
-    expect(save.equipped.ship).toBe('ship-salvager');
+    // ship-salvager-1 costs 900; interceptor-1 (starter) costs 0 → net 900
+    save = switchShip(save, 'ship-salvager-1');
+    expect(save.equipped.ship).toBe('ship-salvager-1');
     expect(save.coins).toBe(600);
-    expect(buildLoadout(save).ship.id).toBe('ship-salvager');
+    expect(buildLoadout(save).ship.id).toBe('ship-salvager-1');
   });
 
   it('switchShip is a no-op when already equipped', () => {
@@ -138,17 +144,17 @@ describe('shop transactions', () => {
   });
 
   it('switchShip refuses without enough coins', () => {
-    expect(() => switchShip(defaultSave(), 'ship-warship')).toThrow(/Not enough coins/);
+    expect(() => switchShip(defaultSave(), 'ship-warship-1')).toThrow(/Not enough coins/);
   });
 
   it('buildLoadout returns the ship spec matching equipped.ship', () => {
     const save = defaultSave();
     const loadout = buildLoadout(save);
-    expect(loadout.ship.id).toBe('ship-interceptor');
+    expect(loadout.ship.id).toBe('ship-interceptor-1');
     expect(loadout.ship.hull).toBe(80);
   });
 
-  it('migrates a v3 save to add ship = ship-interceptor', () => {
+  it('migrates a v3 save to add ship = ship-interceptor-1', () => {
     const v3Save = {
       version: 3,
       coins: 500,
@@ -158,8 +164,27 @@ describe('shop transactions', () => {
     };
     localStorage.setItem('nesro-nova-v2-save', JSON.stringify(v3Save));
     const save = loadSave();
-    expect(save.equipped.ship).toBe('ship-interceptor');
+    expect(save.equipped.ship).toBe('ship-interceptor-1');
     expect(save.coins).toBe(500);
+  });
+
+  it('migrates a v8 save by appending level suffix to ship IDs', () => {
+    const v8Save = {
+      version: 8,
+      coins: 300,
+      equipped: { ship: 'ship-interceptor', weapon: 'pulse-1', rearWeapon: null, shield: 'shield-1', generator: 'generator-1', motor: 'motor-1' },
+      missionStars: {},
+      ownedItems: ['ship-interceptor', 'ship-salvager', 'pulse-1', 'shield-1', 'generator-1', 'motor-1'],
+      ownedSupplyCharges: {},
+      ownedSubscriptions: {},
+      w0Completed: false,
+    };
+    localStorage.setItem('nesro-nova-v2-save', JSON.stringify(v8Save));
+    const save = loadSave();
+    expect(save.equipped.ship).toBe('ship-interceptor-1');
+    expect(save.ownedItems).toContain('ship-interceptor-1');
+    expect(save.ownedItems).toContain('ship-salvager-1');
+    expect(save.ownedItems).not.toContain('ship-interceptor');
   });
 
   it('supply charges cap at maxCharges and appear in the loadout', () => {

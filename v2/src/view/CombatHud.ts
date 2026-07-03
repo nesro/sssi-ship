@@ -3,22 +3,22 @@ import { BROWNOUT_THRESHOLD, TICKS_PER_SECOND } from '../core/constants';
 import { activeDamageMult, activeFireRateMult, activeGeneratorMult, computeEffectiveStats } from '../core/stats';
 import type { CoreState, EnemyState } from '../core/types';
 import { cssColor, PALETTE } from './palette';
-import { fontPx, LEFT_PANEL_W, px } from './layout';
+import { fontPx, INFO_PANEL_W, px } from './layout';
 import { UI_FONT } from './widgets';
 
 // Hull bar uses vivid green — ADD blend over near-black makes white look grey, green stays readable
 const HULL_GREEN = 0x44ff66;
 
-// Portrait left panel (150px wide): 4 compact horizontal bar rows.
+// Left info panel (160px wide): 4 compact horizontal bar rows.
 const ROW_TOP = 14;      // y-centre of first bar
 const ROW_GAP = 20;      // row-to-row spacing
 
-const BAR_LABEL_X = 4;                    // label left edge
-const BAR_X = 38;                         // bar fill left edge
-const BAR_END_X = LEFT_PANEL_W - 20;      // bar fill right edge (= 130)
-const BAR_W = BAR_END_X - BAR_X;          // = 92
+const BAR_LABEL_X = 20;                   // label left edge — 20 px mobile safe zone
+const BAR_X = 52;                         // bar fill left edge
+const BAR_END_X = INFO_PANEL_W - 20;      // bar fill right edge (= 140)
+const BAR_W = BAR_END_X - BAR_X;          // = 88
 const BAR_H = 6;
-const VALUE_X = LEFT_PANEL_W - 2;         // value text right edge (= 148)
+const VALUE_X = INFO_PANEL_W - 4;         // value text right edge (panel-internal, not screen edge)
 
 const STATS_Y = ROW_TOP + 4 * ROW_GAP + 12;  // = 106
 const STAT_LINE_GAP = 12;
@@ -72,7 +72,7 @@ export class CombatHud {
         .setDepth(11),
     );
 
-    const panelCX = LEFT_PANEL_W / 2;
+    const panelCX = INFO_PANEL_W / 2;
     const statsStyle = { fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: '#8899aa' };
     this.statsTexts = [
       scene.add.text(px(panelCX), px(STATS_Y),                     '', statsStyle).setOrigin(0.5, 0).setDepth(11),

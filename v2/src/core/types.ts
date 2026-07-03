@@ -3,10 +3,11 @@
 // ---------- Component specs (what the shop sells; what a loadout equips) ----------
 
 export type WeaponKind = 'pulse' | 'ion' | 'scatter' | 'nova';
+export type RearWeaponKind = 'grenade' | 'flak' | 'plasma' | 'arc' | 'cluster';
 
 export interface WeaponSpec {
   id: string;
-  kind: WeaponKind;
+  kind: WeaponKind | RearWeaponKind;
   damagePerShot: number;
   /** Base interval; stretched by brownout when energy is low. */
   ticksBetweenShots: number;
@@ -58,6 +59,8 @@ export type ShipPassiveKind =
 
 export interface ShipSpec {
   id: string;
+  kind: string;
+  level: number;
   name: string;
   hull: number;
   price: number;
@@ -92,10 +95,13 @@ export interface SupplyLoadout {
 export interface LoadoutSnapshot {
   ship: ShipSpec;
   weapon: WeaponSpec | null;
-  shield: ShieldSpec;
+  rearWeapon: WeaponSpec | null;
+  shield: ShieldSpec | null;
   generator: GeneratorSpec;
   motor: MotorSpec;
   supplies: SupplyLoadout[];
+  /** Union of all card IDs from owned subscriptions at their current levels. */
+  subscriptionCardIds: string[];
 }
 
 // ---------- Cards (support calls, §3.6) ----------
@@ -267,6 +273,7 @@ export interface StarSpec {
 /** Pins the loadout for tutorial missions; the player's save is ignored for this run. */
 export interface ForcedLoadout {
   weaponId: string | null;
+  rearWeaponId?: string | null;
   shieldId: string;
   generatorId: string;
   motorId: string;
@@ -346,6 +353,8 @@ export interface ShipState {
   energy: number;
   /** Counts down in ticks; fractional because brownout stretches it smoothly. */
   fireTimer: number;
+  /** Counts down in ticks for the rear weapon; independent of front fireTimer. */
+  rearFireTimer: number;
 }
 
 export interface SupplyState {
@@ -363,6 +372,7 @@ export type MissionStatus = 'running' | 'victory' | 'defeat';
 
 export interface RunStats {
   shotsFired: number;
+  rearShotsFired: number;
   damageDealt: number;
   /** Weapon kills only — a collision is not a kill (all-kills star tension). */
   kills: number;
@@ -393,6 +403,8 @@ export interface CoreState {
   pendingOffer: AbilityOffer | null;
   /** Whether the ship fires automatically. Player toggles this to accumulate energy for active abilities. */
   autoFireEnabled: boolean;
+  /** Whether the rear weapon fires automatically. */
+  rearWeaponEnabled: boolean;
   /** Whether the shield pulses automatically. */
   autoShieldEnabled: boolean;
   /** Active abilities slotted into the ability bar (max 3). */

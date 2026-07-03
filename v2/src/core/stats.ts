@@ -8,6 +8,12 @@ export interface EffectiveStats {
   weaponEnergyPerShot: number;
   weaponMaxTargets: number;
   weaponFalloff: number;
+  rearWeaponEquipped: boolean;
+  rearWeaponDamage: number;
+  rearWeaponInterval: number;
+  rearWeaponEnergyPerShot: number;
+  rearWeaponMaxTargets: number;
+  rearWeaponFalloff: number;
   shieldCapacity: number;
   /** Effective fraction of shieldCapacity restored per generator pulse (after card mods). */
   shieldPulseFraction: number;
@@ -85,7 +91,7 @@ export function computeEffectiveStats(
   fireRateBoostMult = 1,
   generatorBoostMult = 1,
 ): EffectiveStats {
-  const { ship, weapon, shield, generator, motor } = loadout;
+  const { ship, weapon, rearWeapon, shield, generator, motor } = loadout;
   const reactorMult = ship.passiveKind === 'generator-capacity-bonus' ? ship.passiveValue : 1;
   const generatorCapacity = generator.capacity * reactorMult + mods.generatorCapacityBonus;
   return {
@@ -95,8 +101,14 @@ export function computeEffectiveStats(
     weaponEnergyPerShot: weapon !== null ? weapon.energyPerShot * mods.weaponEnergyMult : 0,
     weaponMaxTargets: weapon !== null ? weapon.maxTargets + mods.extraPierce : 0,
     weaponFalloff: weapon !== null ? weapon.falloffPerTarget : 1,
-    shieldCapacity: (shield.capacity + mods.shieldCapacityBonus) * mods.shieldCapacityMult,
-    shieldPulseFraction: shield.pulseShieldFraction * mods.shieldPulseMult,
+    rearWeaponEquipped: rearWeapon !== null,
+    rearWeaponDamage: rearWeapon !== null ? rearWeapon.damagePerShot * damageBoostMult : 0,
+    rearWeaponInterval: rearWeapon !== null ? rearWeapon.ticksBetweenShots : 0,
+    rearWeaponEnergyPerShot: rearWeapon !== null ? rearWeapon.energyPerShot : 0,
+    rearWeaponMaxTargets: rearWeapon !== null ? rearWeapon.maxTargets : 0,
+    rearWeaponFalloff: rearWeapon !== null ? rearWeapon.falloffPerTarget : 1,
+    shieldCapacity: shield !== null ? (shield.capacity + mods.shieldCapacityBonus) * mods.shieldCapacityMult : 0,
+    shieldPulseFraction: shield !== null ? shield.pulseShieldFraction * mods.shieldPulseMult : 0,
     generatorOutput: (generator.outputPerTick + mods.generatorOutputBonus) * generatorBoostMult,
     generatorCapacity,
     generatorPulseDrain: generator.pulseDrainFraction * generatorCapacity,

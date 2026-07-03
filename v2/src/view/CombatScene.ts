@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { resolveAbilityAction } from '../core/cards';
-import { activateAbility, toggleAutoFire, toggleAutoShield } from '../core/combat';
+import { activateAbility, toggleAutoFire, toggleAutoShield, toggleRearWeapon } from '../core/combat';
 import { resolveNarrator } from '../core/narrator';
 import { LANE_LENGTH, MS_PER_TICK } from '../core/constants';
 import { buildMissionResult } from '../core/result';
@@ -22,9 +22,9 @@ import { CombatHud } from './CombatHud';
 import { NarratorBar } from './NarratorBar';
 import { SupplyButtons } from './SupplyButtons';
 import { cssColor, PALETTE } from './palette';
-import { fontPx, GAME_WIDTH, GAME_X, LEFT_PANEL_W, LOGICAL_HEIGHT, LOGICAL_WIDTH, px, SHIP_GUN_X_OFFSET, SHIP_GUN_Y_OFFSET } from './layout';
-import { buildGameTextures, laserTextureForWeaponId, splitWeaponId, textureForEnemyKind, textureForShipId } from './textures';
-import { drawMotorHousing, drawThruster, renderGunIndicator, tickLaserBolts, tickMuzzleFlashes, THRUSTER_PARAMS } from './shipRenderers';
+import { BTN_PANEL_W, BTN_X, fontPx, GAME_WIDTH, GAME_X, INFO_PANEL_W, LOGICAL_HEIGHT, LOGICAL_WIDTH, px, SHIP_GUN_X_OFFSET, SHIP_GUN_Y_OFFSET } from './layout';
+import { buildGameTextures, laserTextureForWeaponId, rearBoltTextureKey, splitWeaponId, textureForEnemyKind, textureForShipId } from './textures';
+import { drawGeneratorCore, drawMotorHousing, drawRearWeaponIndicator, drawShieldRings, drawThruster, motorKindColorFromId, motorLevelFromId, renderGunIndicator, tickLaserBolts, tickMuzzleFlashes, THRUSTER_PARAMS } from './shipRenderers';
 import type { LaserBolt, MuzzleFlash } from './shipRenderers';
 import { addModalBackdrop, addTextButton, drawDevBorder, UI_FONT } from './widgets';
 
@@ -74,6 +74,7 @@ export class CombatScene extends Phaser.Scene {
   private thrusterGfx!: Phaser.GameObjects.Graphics;
   private motorGfx!: Phaser.GameObjects.Graphics;
   private motorLevel: 1 | 2 | 3 = 1;
+  private motorKindColor: number = 0xff44cc;
   private thrusterPhase = 0;
   private enemySprites = new Map<number, Phaser.GameObjects.Image>();
   private previousDistances = new Map<number, number>();
@@ -83,7 +84,10 @@ export class CombatScene extends Phaser.Scene {
   private muzzleFlashes: MuzzleFlash[] = [];
   private muzzleFlashGfx!: Phaser.GameObjects.Graphics;
   private gunGfx!: Phaser.GameObjects.Graphics;
+  private rearGunGfx!: Phaser.GameObjects.Graphics;
+  private generatorGfx!: Phaser.GameObjects.Graphics;
   private gunToggle = false;
+  private rearLaserBolts: LaserBolt[] = [];
   private hpBarGfx!: Phaser.GameObjects.Graphics;
 
   private shieldGfx!: Phaser.GameObjects.Graphics;
@@ -104,8 +108,9 @@ export class CombatScene extends Phaser.Scene {
   private cardsHeader!: Phaser.GameObjects.Text;
   /** Ability name + description labels — rebuilt on every new pick. */
   private cardEntries: Phaser.GameObjects.Text[] = [];
-  /** Toggle button labels for auto-fire and auto-shield in the left panel. */
+  /** Toggle button labels for auto-fire, rear weapon, and auto-shield in the left panel. */
   private autoFireLabel!: Phaser.GameObjects.Text;
+  private rearWeaponLabel!: Phaser.GameObjects.Text;
   private autoShieldLabel!: Phaser.GameObjects.Text;
   /** Ability bar slots: up to 3 active ability buttons. */
   private abilitySlots: Array<{
@@ -135,16 +140,19 @@ export class CombatScene extends Phaser.Scene {
       : buildLoadout(this.save);
     this.core = createCoreState(mission, loadout, seed, abilityPoolForLoadout(loadout));
     this.motorLevel = motorLevelFromId(loadout.motor.id);
+    this.motorKindColor = motorKindColorFromId(loadout.motor.id);
 
     Sound.attach(this.sound);
     Sound.startMusic();
     buildGameTextures(this);
     drawDevBorder(this, this.save);
 
-    // Left panel background
-    this.add.rectangle(0, 0, px(LEFT_PANEL_W), px(LOGICAL_HEIGHT), 0x04040f, 0.82).setOrigin(0, 0).setDepth(0);
-    // Panel divider
-    this.add.rectangle(px(LEFT_PANEL_W), 0, px(2), px(LOGICAL_HEIGHT), 0x445577).setOrigin(0, 0).setDepth(1);
+    // Info panel (left) background + divider
+    this.add.rectangle(0, 0, px(INFO_PANEL_W), px(LOGICAL_HEIGHT), 0x04040f, 0.82).setOrigin(0, 0).setDepth(0);
+    this.add.rectangle(px(INFO_PANEL_W), 0, px(2), px(LOGICAL_HEIGHT), 0x445577).setOrigin(0, 0).setDepth(1);
+    // Button panel (right) background + divider
+    this.add.rectangle(px(BTN_X), 0, px(BTN_PANEL_W), px(LOGICAL_HEIGHT), 0x04040f, 0.82).setOrigin(0, 0).setDepth(0);
+    this.add.rectangle(px(BTN_X - 1), 0, px(2), px(LOGICAL_HEIGHT), 0x445577).setOrigin(0, 0).setDepth(1);
 
     // Mission name at top of game field
     this.add
@@ -157,7 +165,7 @@ export class CombatScene extends Phaser.Scene {
       .setDepth(10);
 
     // "ABILITIES" header — shown after first pick; in left panel below ability slots
-    this.cardsHeader = this.add.text(px(LEFT_PANEL_W / 2), px(400), '', {
+    this.cardsHeader = this.add.text(px(INFO_PANEL_W / 2), px(180), '', {
       fontFamily: UI_FONT,
       fontSize: `${String(fontPx(8))}px`,
       color: '#445566',
@@ -172,10 +180,10 @@ export class CombatScene extends Phaser.Scene {
     this.buildToggleButtons();
     this.buildAbilitySlots();
 
-    const exitX = px(LEFT_PANEL_W / 2);
-    const exitY = px(928);
+    const exitX = px(BTN_X + BTN_PANEL_W / 2);
+    const exitY = px(LOGICAL_HEIGHT - 22);
     const exitBg = this.add
-      .rectangle(exitX, exitY, px(LEFT_PANEL_W - 16), px(24), 0x110a14, 0.9)
+      .rectangle(exitX, exitY, px(BTN_PANEL_W - 40), px(24), 0x110a14, 0.9)
       .setStrokeStyle(px(1), 0x443355)
       .setDepth(10)
       .setInteractive({ useHandCursor: true });
@@ -184,13 +192,15 @@ export class CombatScene extends Phaser.Scene {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: '#665577',
     }).setOrigin(0.5).setDepth(11);
 
-    this.thrusterGfx = this.add.graphics().setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
-    this.motorGfx = this.add.graphics().setDepth(4).setBlendMode(Phaser.BlendModes.ADD);
-    this.shieldGfx = this.add.graphics().setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
-    this.shieldPulseGfx = this.add.graphics().setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
+    this.thrusterGfx   = this.add.graphics().setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
+    this.motorGfx      = this.add.graphics().setDepth(4).setBlendMode(Phaser.BlendModes.ADD);
+    this.generatorGfx  = this.add.graphics().setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
+    this.shieldGfx     = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
+    this.shieldPulseGfx = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
     this.muzzleFlashGfx = this.add.graphics().setDepth(6).setBlendMode(Phaser.BlendModes.ADD);
-    this.gunGfx = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
-    this.particleGfx = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
+    this.gunGfx        = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
+    this.rearGunGfx    = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
+    this.particleGfx   = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
     this.hpBarGfx = this.add.graphics().setDepth(7);
     this.vignetteGfx = this.add.graphics().setDepth(9);
 
@@ -275,7 +285,7 @@ export class CombatScene extends Phaser.Scene {
 
   private renderShield(): void {
     this.shieldGfx.clear();
-    const maxShield = this.core.loadout.shield.capacity;
+    const maxShield = this.core.loadout.shield?.capacity ?? 0;
     if (maxShield <= 0 || this.core.ship.shield <= 0) return;
     const frac = this.core.ship.shield / maxShield;
     const flash = this.shieldHitFlash;
@@ -286,16 +296,7 @@ export class CombatScene extends Phaser.Scene {
     this.shieldGfx.fillStyle(0x0044ff, (0.04 + flash * 0.06) * frac);
     this.shieldGfx.fillCircle(cx, cy, r + px(6));
     // Four neon rings: outermost dim halo → innermost bright edge; all brighten on hit
-    this.shieldGfx.lineStyle(px(6), 0x0033cc, (0.06 + flash * 0.08) * frac);
-    this.shieldGfx.strokeCircle(cx, cy, r + px(10));
-    this.shieldGfx.lineStyle(px(3), 0x2255ff, 0.15 * frac + flash * 0.2);
-    this.shieldGfx.strokeCircle(cx, cy, r + px(4));
-    // Inner rings shift toward white on impact
-    const innerColor = flash > 0.5 ? 0xaaddff : 0x44aaff;
-    this.shieldGfx.lineStyle(px(1.5), innerColor, Math.min(1, 0.45 + 0.35 * frac + flash * 0.4));
-    this.shieldGfx.strokeCircle(cx, cy, r);
-    this.shieldGfx.lineStyle(px(0.8), 0xffffff, Math.min(1, 0.6 * frac + flash * 0.5));
-    this.shieldGfx.strokeCircle(cx, cy, r - px(2));
+    drawShieldRings(this.shieldGfx, cx, cy, r, { intensity: frac, flash });
   }
 
   private renderShieldPulseRings(deltaMs: number): void {
@@ -405,6 +406,7 @@ export class CombatScene extends Phaser.Scene {
     for (const e of this.core.enemies) timersBefore.set(e.id, e.shootTimer);
 
     const shotsBefore = this.core.stats.shotsFired;
+    const rearShotsBefore = this.core.stats.rearShotsFired;
     const killsBefore = this.core.stats.kills;
     while (this.accumulatorMs >= MS_PER_TICK) {
       this.accumulatorMs -= MS_PER_TICK;
@@ -415,8 +417,10 @@ export class CombatScene extends Phaser.Scene {
 
     // Detect events and trigger visual/audio feedback
     const shotsFired = this.core.stats.shotsFired - shotsBefore;
+    const rearShotsFired = this.core.stats.rearShotsFired - rearShotsBefore;
     const playerBoltKind = this.resolvePlayerBoltKind();
     for (let i = 0; i < shotsFired; i++) this.spawnLaserBolt(playerBoltKind);
+    for (let i = 0; i < rearShotsFired; i++) this.spawnRearBolt();
     if (shotsFired > 0) Sound.fire();
     if (this.core.stats.kills > killsBefore) Sound.kill();
 
@@ -462,15 +466,18 @@ export class CombatScene extends Phaser.Scene {
     const progressFrac = boss === null ? Math.min(1, this.core.timelineTick / totalTicks) : 0;
     this.updateStars(deltaMs);
     this.renderThruster();
+    this.renderGenerator();
     this.renderShield();
     this.renderShieldPulseRings(deltaMs);
     this.renderGuns();
+    this.renderRearGuns();
     this.renderMuzzleFlashes(deltaMs);
     this.renderLowHullVignette();
     this.shipSprite.setX(px(SHIP_CENTER_X) + this.driftX());
     this.shipSprite.setY(px(SHIP_Y) + this.bobY());
     this.renderEnemies(alpha);
     this.updateLasers(deltaMs);
+    this.updateRearLasers(deltaMs);
     this.updateEnemyBolts(deltaMs);
     this.updateBurstParticles(deltaMs);
     this.updateFloatingTexts(deltaMs);
@@ -511,9 +518,9 @@ export class CombatScene extends Phaser.Scene {
     const namePx = useTwoCols ? 7 : 8;
     const descPx = useTwoCols ? 6 : 7;
     const rowH   = useTwoCols ? 16 : 20;
-    const colW   = (LEFT_PANEL_W - 6) / cols;
+    const colW   = (INFO_PANEL_W - 6) / cols;
     const startX = 3;
-    const startY = 412;
+    const startY = 192;
 
     this.core.pickedAbilityIds.forEach((abilityId, i) => {
       const ability = abilityById(abilityId);
@@ -544,36 +551,40 @@ export class CombatScene extends Phaser.Scene {
   }
 
   private buildToggleButtons(): void {
-    const cx = px(LEFT_PANEL_W / 2);
-    const btnW = px(LEFT_PANEL_W - 16);
+    const cx = px(BTN_X + BTN_PANEL_W / 2);
+    const btnW = px(BTN_PANEL_W - 40);
     const btnH = px(14);
 
-    const fireBg = this.add.rectangle(cx, px(300), btnW, btnH, 0x0a0a1a)
-      .setStrokeStyle(px(1), 0x225533)
-      .setDepth(10)
-      .setInteractive({ useHandCursor: true });
+    const fireBg = this.add.rectangle(cx, px(22), btnW, btnH, 0x0a0a1a)
+      .setStrokeStyle(px(1), 0x225533).setDepth(10).setInteractive({ useHandCursor: true });
     fireBg.on('pointerdown', () => { toggleAutoFire(this.core); });
-    this.autoFireLabel = this.add.text(cx, px(300), 'AUTO-FIRE  ON', {
+    this.autoFireLabel = this.add.text(cx, px(22), 'AUTO-FIRE  ON', {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#44ff66',
     }).setOrigin(0.5).setDepth(11);
 
-    const shieldBg = this.add.rectangle(cx, px(318), btnW, btnH, 0x0a0a1a)
-      .setStrokeStyle(px(1), 0x223355)
-      .setDepth(10)
-      .setInteractive({ useHandCursor: true });
+    const rearBg = this.add.rectangle(cx, px(40), btnW, btnH, 0x0a0a1a)
+      .setStrokeStyle(px(1), 0x336622).setDepth(10).setInteractive({ useHandCursor: true });
+    rearBg.on('pointerdown', () => { toggleRearWeapon(this.core); });
+    this.rearWeaponLabel = this.add.text(cx, px(40), 'REAR  ON', {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#88ff44',
+    }).setOrigin(0.5).setDepth(11);
+    if (this.core.loadout.rearWeapon === null) { rearBg.setAlpha(0.3); this.rearWeaponLabel.setAlpha(0.3); }
+
+    const shieldBg = this.add.rectangle(cx, px(58), btnW, btnH, 0x0a0a1a)
+      .setStrokeStyle(px(1), 0x223355).setDepth(10).setInteractive({ useHandCursor: true });
     shieldBg.on('pointerdown', () => { toggleAutoShield(this.core); });
-    this.autoShieldLabel = this.add.text(cx, px(318), 'AUTO-SHIELD  ON', {
+    this.autoShieldLabel = this.add.text(cx, px(58), 'AUTO-SHIELD  ON', {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#4488ff',
     }).setOrigin(0.5).setDepth(11);
   }
 
   private buildAbilitySlots(): void {
-    const cx = px(LEFT_PANEL_W / 2);
-    const slotW = px(LEFT_PANEL_W - 16);
+    const cx = px(BTN_X + BTN_PANEL_W / 2);
+    const slotW = px(BTN_PANEL_W - 40);
     const slotH = px(16);
 
     for (let i = 0; i < 3; i++) {
-      const y = px(342 + i * 22);
+      const y = px(78 + i * 22);
       const bg = this.add.rectangle(cx, y, slotW, slotH, 0x080818)
         .setStrokeStyle(px(1), 0x334455)
         .setDepth(10)
@@ -593,6 +604,10 @@ export class CombatScene extends Phaser.Scene {
   private updateAbilityBar(): void {
     this.autoFireLabel.setText(`AUTO-FIRE  ${this.core.autoFireEnabled ? 'ON' : 'OFF'}`);
     this.autoFireLabel.setColor(this.core.autoFireEnabled ? '#44ff66' : '#664422');
+    if (this.core.loadout.rearWeapon !== null) {
+      this.rearWeaponLabel.setText(`REAR  ${this.core.rearWeaponEnabled ? 'ON' : 'OFF'}`);
+      this.rearWeaponLabel.setColor(this.core.rearWeaponEnabled ? '#88ff44' : '#446622');
+    }
     this.autoShieldLabel.setText(`AUTO-SHIELD  ${this.core.autoShieldEnabled ? 'ON' : 'OFF'}`);
     this.autoShieldLabel.setColor(this.core.autoShieldEnabled ? '#4488ff' : '#334466');
 
@@ -705,8 +720,8 @@ export class CombatScene extends Phaser.Scene {
     const flicker = p.minBright + p.range * Math.sin(this.thrusterPhase * p.speed);
     const cx = px(SHIP_CENTER_X) + this.driftX();
     const baseY = px(SHIP_Y + 24) + this.bobY();
-    drawThruster(this.thrusterGfx, cx, baseY, px(p.hBase + p.hScale * flicker), { flicker, motorLevel: this.motorLevel });
-    drawMotorHousing(this.motorGfx, cx, px(SHIP_Y) + this.bobY(), this.motorLevel);
+    drawThruster(this.thrusterGfx, cx, baseY, px(p.hBase + p.hScale * flicker), { flicker, motorLevel: this.motorLevel, kindColor: this.motorKindColor });
+    drawMotorHousing(this.motorGfx, cx, px(SHIP_Y) + this.bobY(), this.motorLevel, this.motorKindColor);
   }
 
   private spawnLaserBolt(boltKind: 'normal' | 'crit' | 'miss' = 'normal'): void {
@@ -769,12 +784,48 @@ export class CombatScene extends Phaser.Scene {
       px(SHIP_CENTER_X) + this.driftX(), px(SHIP_Y - SHIP_GUN_Y_OFFSET) + this.bobY());
   }
 
+  private renderRearGuns(): void {
+    drawRearWeaponIndicator(this.rearGunGfx, this.core.loadout.rearWeapon,
+      px(SHIP_CENTER_X) + this.driftX(), px(SHIP_Y) + this.bobY());
+  }
+
+  private renderGenerator(): void {
+    const genCap = this.core.loadout.generator.capacity;
+    const frac = genCap > 0 ? this.core.ship.energy / genCap : 0;
+    drawGeneratorCore(this.generatorGfx,
+      px(SHIP_CENTER_X) + this.driftX(), px(SHIP_Y) + this.bobY(), frac);
+  }
+
   private renderMuzzleFlashes(deltaMs: number): void {
     this.muzzleFlashes = tickMuzzleFlashes(this.muzzleFlashGfx, this.muzzleFlashes, deltaMs, MUZZLE_FLASH_MS);
   }
 
   private updateLasers(deltaMs: number): void {
     this.laserBolts = tickLaserBolts(this.laserBolts, deltaMs);
+  }
+
+  private updateRearLasers(deltaMs: number): void {
+    this.rearLaserBolts = tickLaserBolts(this.rearLaserBolts, deltaMs);
+  }
+
+  private spawnRearBolt(): void {
+    const rearWeapon = this.core.loadout.rearWeapon;
+    if (rearWeapon === null) return;
+    const texKey = rearBoltTextureKey(rearWeapon.id);
+    const cx = px(SHIP_CENTER_X) + this.driftX();
+    const cy = px(SHIP_Y) + this.bobY();
+    const targetY = px(GAME_TOP_Y);
+    for (const side of [-1, 1]) {
+      const gx = cx + px(SHIP_GUN_X_OFFSET * 1.4) * side;
+      const gy = cy + px(9);
+      if (gy <= targetY) continue;
+      const sprite = this.add
+        .image(gx, gy, texKey)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setDepth(5);
+      this.rearLaserBolts.push({ sprite, vy: (targetY - gy) / LASER_TRAVEL_MS, targetY });
+      this.muzzleFlashes.push({ x: gx, y: gy, life: MUZZLE_FLASH_MS });
+    }
   }
 
   private spawnEnemyBolt(enemy: EnemyState, outcome: 'normal' | 'crit' | 'miss' = 'normal'): void {
@@ -972,12 +1023,6 @@ function boltScaleForLevel(level: number): number {
   return 0.8 + level * 0.06;
 }
 
-function motorLevelFromId(motorId: string): 1 | 2 | 3 {
-  const last = motorId.at(-1);
-  if (last === '3') return 3;
-  if (last === '2') return 2;
-  return 1;
-}
 
 function abilityCompanyColor(company: string): string {
   if (company === 'nexus')   return cssColor(PALETTE.weaponCyan);
@@ -987,10 +1032,17 @@ function abilityCompanyColor(company: string): string {
   return '#aabbcc';
 }
 
-/** Filters the global ability list to companies whose equipment is in the loadout.
- *  Nexus (weapon) is excluded when no weapon is equipped (e.g. tutorial t1). */
+/**
+ * Builds the ability pool for a mission from the subscription card IDs in the loadout.
+ * Falls back to the full pool for tutorial forced-loadouts that have no subscriptions.
+ * Nexus (weapon) cards are excluded when no weapon is equipped (e.g. tutorial t1).
+ */
 function abilityPoolForLoadout(loadout: LoadoutSnapshot): AbilityDefinition[] {
-  const all = [...ALL_ABILITIES, ...ALL_NEW_ABILITIES];
-  if (loadout.weapon !== null) return all;
-  return all.filter((a) => a.company !== 'nexus');
+  const allById = new Map([...ALL_ABILITIES, ...ALL_NEW_ABILITIES].map((a) => [a.id, a]));
+  const ids = loadout.subscriptionCardIds;
+  const pool = ids.length > 0
+    ? ids.map((id) => allById.get(id)).filter((a): a is AbilityDefinition => a !== undefined)
+    : [...ALL_ABILITIES, ...ALL_NEW_ABILITIES];
+  if (loadout.weapon === null) return pool.filter((a) => a.company !== 'nexus');
+  return pool;
 }

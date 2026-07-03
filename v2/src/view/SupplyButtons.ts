@@ -1,13 +1,13 @@
 import Phaser from 'phaser';
 import type { CoreState } from '../core/types';
 import { cssColor, PALETTE } from './palette';
-import { fontPx, LEFT_PANEL_W, px } from './layout';
+import { BTN_PANEL_W, BTN_X, fontPx, px } from './layout';
 import { UI_FONT } from './widgets';
 
-const BUTTON_W = 130;
+const BUTTON_W = 120;
 const BUTTON_H = 36;
 const BUTTON_GAP = 6;
-const BUTTONS_TOP = 152;
+const BUTTONS_TOP = 128;
 
 /** Reserve-supply tap buttons stacked in the left panel (V2_HANDOFF.md §3.7). */
 export class SupplyButtons {
@@ -18,7 +18,7 @@ export class SupplyButtons {
     state: CoreState,
     onTap: (slot: number) => void,
   ) {
-    const cx = px(LEFT_PANEL_W / 2);
+    const cx = px(BTN_X + BTN_PANEL_W / 2);
     scene.add.text(cx, px(BUTTONS_TOP - 14), 'BOOST', {
       fontFamily: UI_FONT,
       fontSize: `${String(fontPx(8))}px`,

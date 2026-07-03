@@ -5,7 +5,7 @@ import { HubScene } from './HubScene';
 import { ResultScene } from './ResultScene';
 import { PALETTE } from './palette';
 import { DPR, SCREEN_HEIGHT, SCREEN_WIDTH } from './layout';
-import { defaultSave, loadSave, persistSave, resetSave } from '../save/SaveManager';
+import { defaultSave, loadSave, persistSave, resetSave, switchItem, switchShip, switchRearWeapon } from '../save/SaveManager';
 
 // dpr-sharp canvas (V2_HANDOFF.md §4.2): render at native resolution, zoom back to
 // logical CSS size. Never Scale.FIT on a small canvas — that was v1's blurry-text bug.
@@ -58,6 +58,36 @@ if (import.meta.env.DEV) {
     inspect: () => { console.log(JSON.stringify(loadSave(), null, 2)); },
     /** Load a rich save for full shop testing. Usage: __cheat.richSave() */
     richSave: () => { persistSave({ ...defaultSave(), coins: 99999, w0Completed: true }); goTo('HubScene'); },
+    /**
+     * Equip any item by ID without clicking — skips coin deduction.
+     * Usage: __cheat.equip('shield-reflex-3')
+     * Works for weapons, rear-weapons, shields, generators, motors, ships.
+     */
+    equip: (id: string) => {
+      let save = loadSave();
+      if (!save.ownedItems.includes(id)) save = { ...save, ownedItems: [...save.ownedItems, id] };
+      if (id.startsWith('ship-')) {
+        save = switchShip({ ...save, coins: 999999 }, id);
+      } else if (id.match(/^(grenade|flak|plasma|arc|cluster)-\d/)) {
+        save = switchRearWeapon({ ...save, coins: 999999 }, id);
+      } else {
+        save = switchItem({ ...save, coins: 999999 }, id);
+      }
+      persistSave(save);
+      goTo('HubScene');
+    },
+    /**
+     * Navigate to a shop tab without clicking.
+     * Usage: __cheat.navShop('motor')   // weapon | rear-weapon | shield | generator | motor | ship | supplies | loadout
+     */
+    navShop: (tab: string) => {
+      const scene = game.scene.getScene('HubScene') as unknown as Record<string, unknown> | null;
+      if (scene && typeof scene['cheatNavShop'] === 'function') {
+        (scene['cheatNavShop'] as (t: string) => void)(tab);
+      } else {
+        goTo('HubScene');
+      }
+    },
   };
-  console.info('[dev] __cheat available: coins(n) · setCoins(n) · richSave() · unlockAll() · reset() · inspect()');
+  console.info('[dev] __cheat available: coins(n) · setCoins(n) · richSave() · unlockAll() · reset() · inspect() · equip(id) · navShop(tab)');
 }

@@ -1,5 +1,5 @@
 import { createAbilityOffer } from './cards';
-import { fireEnemyWeapons, fireShipWeapon, regenerateEnemies } from './combat';
+import { fireEnemyWeapons, fireRearWeapon, fireShipWeapon, regenerateEnemies } from './combat';
 import { advanceEnemies } from './conveyor';
 import { pulseShield, regenerateEnergy } from './energy';
 import { activeDamageMult, activeFireRateMult, activeGeneratorMult, computeEffectiveStats } from './stats';
@@ -32,6 +32,7 @@ export function advanceTick(state: CoreState): void {
   advanceTimeline(state, stats);
   regenerateEnemies(state);
   fireShipWeapon(state, stats);
+  fireRearWeapon(state, stats);
   fireEnemyWeapons(state, stats);
   advanceEnemies(state, stats);
   pulseShield(state, stats);

@@ -14,6 +14,8 @@ const seconds = (n: number): number => n * TICKS_PER_SECOND;
 
 export const FIXTURE_SHIP: ShipSpec = {
   id: 'fix-ship',
+  kind: 'interceptor',
+  level: 1,
   name: 'Test Ship',
   hull: 100,
   price: 0,
@@ -35,13 +37,28 @@ export const FIXTURE_WEAPON: NonNullable<LoadoutSnapshot['weapon']> = {
   critMult: 2.0,
 };
 
+export const FIXTURE_REAR_WEAPON: NonNullable<LoadoutSnapshot['rearWeapon']> = {
+  id: 'fix-rear',
+  kind: 'grenade',
+  damagePerShot: 8,
+  ticksBetweenShots: 10,
+  energyPerShot: 8,
+  maxTargets: 3,
+  falloffPerTarget: 0.8,
+  critChance: 0,
+  missChance: 0,
+  critMult: 2.0,
+};
+
 export const FIXTURE_LOADOUT: LoadoutSnapshot = {
   ship: FIXTURE_SHIP,
   weapon: FIXTURE_WEAPON,
+  rearWeapon: null,
   shield: { id: 'fix-shield', capacity: 30, pulseShieldFraction: 0.1 },
   generator: { id: 'fix-generator', outputPerTick: 2, capacity: 50, pulseDrainFraction: 0.5 },
   motor: { id: 'fix-motor', timelineMultiplier: 1, powerDrawPerTick: 0.3 },
   supplies: [],
+  subscriptionCardIds: [],
 };
 
 export const FIXTURE_FODDER: EnemySpec = {

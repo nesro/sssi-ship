@@ -38,18 +38,22 @@ const LOADOUTS: Record<'starter' | 'mid' | 'full', LoadoutSnapshot> = {
   mid: {
     ship: shipById(DEFAULT_SHIP_ID),
     weapon: weaponSpecById('pulse-2'),
+    rearWeapon: null,
     shield: shieldSpecById('shield-2'),
     generator: generatorSpecById('generator-2'),
     motor: motorSpecById('motor-1'),
     supplies: [],
+    subscriptionCardIds: [],
   },
   full: {
     ship: shipById(DEFAULT_SHIP_ID),
     weapon: weaponSpecById('ion-1'),
+    rearWeapon: null,
     shield: shieldSpecById('shield-3'),
     generator: generatorSpecById('generator-3'),
     motor: motorSpecById('motor-2'),
     supplies: [],
+    subscriptionCardIds: [],
   },
 };
 

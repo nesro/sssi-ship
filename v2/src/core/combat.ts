@@ -102,9 +102,53 @@ export function fireEnemyWeapons(state: CoreState, stats: EffectiveStats): void 
   }
 }
 
+/**
+ * Rear weapon fires sideways at mid-queue enemies: a centered slice around
+ * enemies[floor(N/2)]. Brownout does NOT stretch the rear weapon — it fires on a fixed
+ * interval so the player can rely on it as a predictable AoE tool.
+ */
+export function fireRearWeapon(state: CoreState, stats: EffectiveStats): void {
+  if (!state.rearWeaponEnabled) return;
+  if (!stats.rearWeaponEquipped) return;
+  state.ship.rearFireTimer -= 1;
+  if (state.enemies.length === 0) {
+    state.ship.rearFireTimer = Math.max(state.ship.rearFireTimer, 1);
+    return;
+  }
+  if (state.ship.rearFireTimer > 0) return;
+
+  const midIndex = Math.floor(state.enemies.length / 2);
+  const half = Math.floor(stats.rearWeaponMaxTargets / 2);
+  const start = Math.max(0, midIndex - half);
+  const end = Math.min(state.enemies.length, start + stats.rearWeaponMaxTargets);
+  const targets = state.enemies.slice(start, end);
+  const rearWeapon = state.loadout.rearWeapon;
+
+  targets.forEach((enemy, index) => {
+    const falloff = Math.pow(stats.rearWeaponFalloff, index);
+    const { damage, wasMiss } = rearWeapon !== null
+      ? rollShotOutcome(rearWeapon.missChance, rearWeapon.critChance, rearWeapon.critMult, stats.rearWeaponDamage * falloff, state.rng)
+      : { damage: stats.rearWeaponDamage * falloff, wasMiss: false };
+    if (wasMiss) return;
+    enemy.hp -= damage;
+    state.stats.damageDealt += damage;
+  });
+
+  const energyCost = stats.rearWeaponEnergyPerShot;
+  state.ship.energy = clampEnergy(state.ship.energy - energyCost, stats);
+  state.stats.rearShotsFired += 1;
+  removeDeadEnemies(state, stats);
+  state.ship.rearFireTimer += stats.rearWeaponInterval;
+}
+
 /** Toggle auto-fire on or off. When off, the weapon never fires — energy accumulates. */
 export function toggleAutoFire(state: CoreState): void {
   state.autoFireEnabled = !state.autoFireEnabled;
+}
+
+/** Toggle rear weapon on or off. When off, energy is not drained by rear shots. */
+export function toggleRearWeapon(state: CoreState): void {
+  state.rearWeaponEnabled = !state.rearWeaponEnabled;
 }
 
 /** Toggle auto-shield on or off. When off, the generator never fires a shield pulse. */
