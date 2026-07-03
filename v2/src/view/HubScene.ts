@@ -11,6 +11,7 @@ import {
   shieldKindDisplayName, shieldSpecAtLevel,
   generatorKindDisplayName, generatorSpecAtLevel,
   motorKindDisplayName, motorSpecAtLevel,
+  shipKindDisplayName,
 } from '../data/items';
 import type { ShieldKind, GeneratorKind, MotorKind, ShipKind, SystemKind } from '../data/items';
 import {
@@ -46,15 +47,15 @@ type ShopTab = SystemKind | 'supplies' | 'ship' | 'rear-weapon' | 'loadout';
 
 const NAV_Y = 22;
 const CONTENT_TOP = 48;
-const CONTENT_PAD = 10;
+const CONTENT_PAD = 20;       // mobile safe-area left/right margin
 const INFO_PANEL_TOP = 378;
 const INFO_PANEL_H = 152;
 const SHOP_TAB_W = 130;
-const SHOP_ITEM_X = SHOP_TAB_W + 4;
+const SHOP_ITEM_X = CONTENT_PAD + SHOP_TAB_W + 4;  // tabs + margin + gap
 /** Right edge of the shop item column — preview panel occupies the remaining width. */
 const SHOP_COL_W = 640;
 const SHOP_ITEM_W = SHOP_COL_W - SHOP_ITEM_X - 4;
-const SHOP_ROW_H = 48;
+const SHOP_ROW_H = 54;        // taller rows for mobile tap targets
 const SHOP_ACTION_Y = 432;
 const SHOP_ICON_X_OFFSET = 18;   // icon centre x within row
 const SHOP_NAME_X_OFFSET = 38;   // name label left x within row
@@ -232,8 +233,9 @@ export class HubScene extends Phaser.Scene {
           fontFamily: UI_FONT, fontSize: `${String(fontPx(12))}px`, color: cssColor(navItem.color),
         }).setOrigin(0.5, 0.5));
       }
-      this.addC(this.add.text(px(LOGICAL_WIDTH - CONTENT_PAD), px(NAV_Y), `⬤ ${String(this.save.coins)}`, {
-        fontFamily: UI_FONT, fontSize: `${String(fontPx(12))}px`, color: cssColor(PALETTE.generatorAmber),
+      this.addC(this.add.text(px(LOGICAL_WIDTH - CONTENT_PAD), px(NAV_Y),
+        `★ ${String(totalStars(this.save))}/${String(totalStarsAvailable())}  ⬤ ${String(this.save.coins)}`, {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(11))}px`, color: cssColor(PALETTE.generatorAmber),
       }).setOrigin(1, 0.5));
     }
 
@@ -435,7 +437,7 @@ export class HubScene extends Phaser.Scene {
       const tabY = CONTENT_TOP + tabH * (i + 0.5);
       const active = tab.key === this.shopTab;
       const bg = this.addC(
-        this.add.rectangle(px(0), px(tabY), px(SHOP_TAB_W), px(tabH - 2), active ? 0x111128 : 0x080818, 0.95)
+        this.add.rectangle(px(CONTENT_PAD), px(tabY), px(SHOP_TAB_W), px(tabH - 2), active ? 0x111128 : 0x080818, 0.95)
           .setOrigin(0, 0.5).setInteractive({ useHandCursor: true }),
       );
       if (active) bg.setStrokeStyle(px(1), tab.color, 0.6);
@@ -453,7 +455,7 @@ export class HubScene extends Phaser.Scene {
         this.updatePreview();
       });
       this.addC(
-        this.add.text(px(SHOP_TAB_W / 2), px(tabY), tab.label, {
+        this.add.text(px(CONTENT_PAD + SHOP_TAB_W / 2), px(tabY), tab.label, {
           fontFamily: UI_FONT,
           fontSize: `${String(fontPx(9))}px`,
           color: cssColor(active ? tab.color : 0x555577),
@@ -462,7 +464,7 @@ export class HubScene extends Phaser.Scene {
       );
     });
 
-    this.addC(this.add.rectangle(px(SHOP_TAB_W), px(CONTENT_TOP), px(1), px(LOGICAL_HEIGHT - CONTENT_TOP), 0x333355).setOrigin(0, 0));
+    this.addC(this.add.rectangle(px(CONTENT_PAD + SHOP_TAB_W), px(CONTENT_TOP), px(1), px(LOGICAL_HEIGHT - CONTENT_TOP), 0x333355).setOrigin(0, 0));
     this.addC(this.add.rectangle(px(SHOP_COL_W), px(CONTENT_TOP), px(1), px(LOGICAL_HEIGHT - CONTENT_TOP), 0x333355).setOrigin(0, 0));
     this.addC(this.add.rectangle(px(SHOP_ITEM_X), px(SHOP_ACTION_Y), px(SHOP_ITEM_W), px(1), 0x222244).setOrigin(0, 0));
 
@@ -510,20 +512,18 @@ export class HubScene extends Phaser.Scene {
     const equippedLevel = equippedThisKind
       ? (parseInt(equippedId.split('-')[1] ?? '0', 10) || 0)
       : 0;
-    const ownedLevel = this.ownedRearWeaponLevelForKind(kind);
-    const ownedThisKind = ownedLevel > 0 && !equippedThisKind;
-    const displayLevel = equippedLevel > 0 ? equippedLevel : ownedLevel;
-    const iconId = displayLevel > 0 ? `${kind}-${String(displayLevel)}` : `${kind}-1`;
+    const displayLevel = equippedLevel > 0 ? equippedLevel : 1;
+    const iconId = `${kind}-${String(displayLevel)}`;
     const selected = this.shopSelectedRearWeaponKind === kind;
     const entryPrice = REAR_WEAPON_ITEMS[`${kind}-1`]?.price ?? 0;
-    const canAfford = equippedThisKind || ownedThisKind || this.save.coins >= entryPrice;
+    const equippedRearPrice = equippedId !== null ? (REAR_WEAPON_ITEMS[equippedId]?.price ?? 0) : 0;
+    const netCostToSwitch = Math.max(0, entryPrice - equippedRearPrice);
+    const canAfford = equippedThisKind || this.save.coins >= netCostToSwitch;
     const y = px(CONTENT_TOP + 22 + index * SHOP_ROW_H + SHOP_ROW_H / 2);
 
     this.addKindRowBg(y, selected, false, canAfford, () => {
       if (!equippedThisKind) {
-        const ownedLv = this.ownedRearWeaponLevelForKind(kind);
-        const targetLv = ownedLv > 0 ? ownedLv : 1;
-        this.save = switchRearWeapon(this.save, `${kind}-${String(targetLv)}`);
+        this.save = switchRearWeapon(this.save, `${kind}-1`);
       }
       this.shopSelectedRearWeaponKind = kind;
       this.rebuildContent(); this.updatePreview();
@@ -531,13 +531,12 @@ export class HubScene extends Phaser.Scene {
     this.addC(this.add.image(px(SHOP_ITEM_X + SHOP_ICON_X_OFFSET), y, iconTextureForRearWeaponId(iconId))
       .setOrigin(0.5).setBlendMode(Phaser.BlendModes.ADD)
       .setScale(1.2 + Math.max(0, displayLevel - 1) * 0.07)
-      .setAlpha(canAfford ? ((equippedThisKind || ownedThisKind) ? 1 : 0.5) : 0.2));
+      .setAlpha(canAfford ? (equippedThisKind ? 1 : 0.5) : 0.2));
     this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_NAME_X_OFFSET), y, rearWeaponKindDisplayName(kind), {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(14))}px`,
       color: cssColor(equippedThisKind ? PALETTE.weaponCyan : PALETTE.hullWhite),
-    }).setOrigin(0, 0.5).setAlpha(canAfford ? ((equippedThisKind || ownedThisKind) ? 1 : 0.6) : 0.25));
-    const equippedRearPrice = equippedId !== null ? (REAR_WEAPON_ITEMS[equippedId]?.price ?? 0) : 0;
-    this.addKindBadge(y, { locked: false, starsNeeded: 0, entryPrice, equippedPrice: equippedRearPrice, show: !equippedThisKind && ownedLevel === 0, canAfford });
+    }).setOrigin(0, 0.5).setAlpha(canAfford ? (equippedThisKind ? 1 : 0.6) : 0.25));
+    this.addKindBadge(y, { locked: false, starsNeeded: 0, entryPrice, equippedPrice: equippedRearPrice, show: !equippedThisKind, canAfford });
   }
 
   private ownedRearWeaponLevelForKind(kind: RearWeaponKind): number {
@@ -896,7 +895,7 @@ export class HubScene extends Phaser.Scene {
       color: cssColor(locked ? 0x555577 : (equippedThisKind ? PALETTE.shieldBlue : PALETTE.hullWhite)),
     }).setOrigin(0, 0.5).setAlpha(locked ? 0.5 : (canAfford ? 1 : 0.4)));
     const equippedShieldPrice = this.save.equipped.shield !== null ? (ITEMS[this.save.equipped.shield]?.price ?? 0) : 0;
-    this.addKindBadge(y, { locked, starsNeeded, entryPrice, equippedPrice: equippedShieldPrice, show: !equippedThisKind && ownedLevel === 0, canAfford });
+    this.addKindBadge(y, { locked, starsNeeded, entryPrice, equippedPrice: equippedShieldPrice, show: !equippedThisKind && ownedLevel === 0, canAfford, ownedNotEquipped: ownedLevel > 0 && !equippedThisKind });
   }
 
   private buildShieldLevelChips(): void {
@@ -978,7 +977,7 @@ export class HubScene extends Phaser.Scene {
       color: cssColor(locked ? 0x555577 : (equippedThisKind ? PALETTE.generatorAmber : PALETTE.hullWhite)),
     }).setOrigin(0, 0.5).setAlpha(locked ? 0.5 : (canAfford ? 1 : 0.4)));
     const equippedGenPrice = ITEMS[this.save.equipped.generator]?.price ?? 0;
-    this.addKindBadge(y, { locked, starsNeeded, entryPrice, equippedPrice: equippedGenPrice, show: !equippedThisKind && ownedLevel === 0, canAfford });
+    this.addKindBadge(y, { locked, starsNeeded, entryPrice, equippedPrice: equippedGenPrice, show: !equippedThisKind && ownedLevel === 0, canAfford, ownedNotEquipped: ownedLevel > 0 && !equippedThisKind });
   }
 
   private buildGeneratorLevelChips(): void {
@@ -1058,7 +1057,7 @@ export class HubScene extends Phaser.Scene {
       color: cssColor(locked ? 0x555577 : (equippedThisKind ? PALETTE.motorMagenta : PALETTE.hullWhite)),
     }).setOrigin(0, 0.5).setAlpha(locked ? 0.5 : (canAfford ? 1 : 0.4)));
     const equippedMotorPrice = ITEMS[this.save.equipped.motor]?.price ?? 0;
-    this.addKindBadge(y, { locked, starsNeeded, entryPrice, equippedPrice: equippedMotorPrice, show: !equippedThisKind && ownedLevel === 0, canAfford });
+    this.addKindBadge(y, { locked, starsNeeded, entryPrice, equippedPrice: equippedMotorPrice, show: !equippedThisKind && ownedLevel === 0, canAfford, ownedNotEquipped: ownedLevel > 0 && !equippedThisKind });
   }
 
   private buildMotorLevelChips(): void {
@@ -1112,8 +1111,15 @@ export class HubScene extends Phaser.Scene {
     locked: boolean; starsNeeded: number;
     entryPrice: number; equippedPrice: number;
     show: boolean; canAfford: boolean;
+    ownedNotEquipped?: boolean;
   }): void {
     const { locked, starsNeeded, entryPrice, equippedPrice, show, canAfford } = opts;
+    if (opts.ownedNotEquipped === true) {
+      this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_ITEM_W - 4), y, 'switching is free', {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`, color: cssColor(PALETTE.shieldBlue),
+      }).setOrigin(1, 0.5).setAlpha(0.85));
+      return;
+    }
     if (!locked && !show) return;
     const x = px(SHOP_ITEM_X + SHOP_ITEM_W - 4);
     if (locked) {
@@ -1122,12 +1128,17 @@ export class HubScene extends Phaser.Scene {
       }).setOrigin(1, 0.5));
       return;
     }
-    const netCost = Math.max(0, entryPrice - equippedPrice);
-    const label = netCost === 0 ? 'FREE' : `${String(netCost)}⬤`;
-    const color = netCost === 0 ? PALETTE.shieldBlue : (canAfford ? PALETTE.generatorAmber : 0x556677);
+    const netCost = entryPrice - equippedPrice;
+    if (entryPrice === 0 && equippedPrice === 0) return;
+    const label = netCost > 0
+      ? `switching costs ${String(netCost)} coins`
+      : netCost === 0
+        ? 'switching is free'
+        : `switching returns ${String(-netCost)} coins`;
+    const color = netCost > 0 ? (canAfford ? PALETTE.generatorAmber : 0x556677) : PALETTE.shieldBlue;
     this.addC(this.add.text(x, y, label, {
-      fontFamily: UI_FONT, fontSize: `${String(fontPx(12))}px`, color: cssColor(color),
-    }).setOrigin(1, 0.5).setAlpha(0.7));
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`, color: cssColor(color),
+    }).setOrigin(1, 0.5).setAlpha(0.85));
   }
 
   /** Level chips shown in the action panel — one chip per level/item, click = immediate switch. */
@@ -1176,7 +1187,7 @@ export class HubScene extends Phaser.Scene {
       if (locked) {
         subText = `★${String(lv.starsRequired)}`; subColor = 0x445566;
       } else if (isCurrent) {
-        subText = '▶'; subColor = accentColor;
+        subText = lv.price > 0 ? `${String(lv.price)}⬤` : 'FREE'; subColor = accentColor;
       } else if (isRefund) {
         subText = `+${String(-cost)}⬤`; subColor = PALETTE.shieldBlue;
       } else if (cost === 0) {
@@ -1259,13 +1270,12 @@ export class HubScene extends Phaser.Scene {
     this.addC(this.add.image(px(SHOP_ITEM_X + SHOP_ICON_X_OFFSET), y, iconTextureForShipKind(kind))
       .setOrigin(0.5).setBlendMode(Phaser.BlendModes.ADD).setScale(0.6)
       .setAlpha(locked ? 0.15 : (canAfford ? ((equippedThisKind || ownedLevel > 0) ? 1 : 0.5) : 0.2)));
-    const displayName = kind.charAt(0).toUpperCase() + kind.slice(1);
-    this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_NAME_X_OFFSET), y, displayName, {
+    this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_NAME_X_OFFSET), y, shipKindDisplayName(kind), {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(14))}px`,
       color: cssColor(locked ? 0x555577 : (equippedThisKind ? SHIP_TAB_COLOR : PALETTE.hullWhite)),
     }).setOrigin(0, 0.5).setAlpha(locked ? 0.5 : (canAfford ? 1 : 0.4)));
     const equippedShipPrice = SHIPS[this.save.equipped.ship]?.price ?? 0;
-    this.addKindBadge(y, { locked, starsNeeded, entryPrice, equippedPrice: equippedShipPrice, show: !equippedThisKind && ownedLevel === 0, canAfford });
+    this.addKindBadge(y, { locked, starsNeeded, entryPrice, equippedPrice: equippedShipPrice, show: !equippedThisKind && ownedLevel === 0, canAfford, ownedNotEquipped: ownedLevel > 0 && !equippedThisKind });
   }
 
   private buildShipLevelChips(): void {
@@ -1307,16 +1317,15 @@ export class HubScene extends Phaser.Scene {
 
     const rearId = eq.rearWeapon;
     const rearItem = rearId !== null ? REAR_WEAPON_ITEMS[rearId] : undefined;
-    const rearName = rearItem !== undefined ? rearItem.name.replace(/\s+Lv\s*\d+$/, '') : 'None';
     const rearPrice = rearItem?.price ?? 0;
 
     const rows: Array<{ label: string; name: string; price: number; color: number; empty?: boolean }> = [
-      { label: 'SHIP',         name: `${shipSpec.name} Lv${String(shipSpec.level)}`,                                   price: shipSpec.price,    color: SHIP_TAB_COLOR },
-      { label: 'FRONT WEAPON', name: weaponItem !== null ? weaponItem.name.replace(/\s+Lv\s*\d+$/, '') : 'None',       price: weaponItem?.price ?? 0, color: PALETTE.weaponCyan,    empty: weaponItem === null },
-      { label: 'REAR WEAPON',  name: rearName,                                                                         price: rearPrice,         color: PALETTE.weaponCyan,    empty: rearItem === undefined },
-      { label: 'SHIELD',       name: shieldItem !== null ? shieldItem.name.replace(/\s+Lv\s*\d+$/, '') : 'None',       price: shieldItem?.price ?? 0, color: PALETTE.shieldBlue,   empty: shieldItem === null },
-      { label: 'GENERATOR',    name: genItem.name.replace(/\s+Lv\s*\d+$/, ''),                                         price: genItem.price,     color: PALETTE.generatorAmber },
-      { label: 'MOTOR',        name: motorItem.name.replace(/\s+Lv\s*\d+$/, ''),                                       price: motorItem.price,   color: PALETTE.motorMagenta },
+      { label: 'SHIP',         name: `${shipSpec.name} Lv${String(shipSpec.level)}`, price: shipSpec.price,        color: SHIP_TAB_COLOR },
+      { label: 'FRONT WEAPON', name: weaponItem !== null ? weaponItem.name : 'None', price: weaponItem?.price ?? 0, color: PALETTE.weaponCyan,    empty: weaponItem === null },
+      { label: 'REAR WEAPON',  name: rearItem !== undefined ? rearItem.name : 'None', price: rearPrice,            color: PALETTE.weaponCyan,    empty: rearItem === undefined },
+      { label: 'SHIELD',       name: shieldItem !== null ? shieldItem.name : 'None', price: shieldItem?.price ?? 0, color: PALETTE.shieldBlue,   empty: shieldItem === null },
+      { label: 'GENERATOR',    name: genItem.name,                                   price: genItem.price,         color: PALETTE.generatorAmber },
+      { label: 'MOTOR',        name: motorItem.name,                                 price: motorItem.price,       color: PALETTE.motorMagenta },
     ];
 
     const totalInvested = rows.reduce((sum, r) => sum + r.price, 0);
@@ -1392,7 +1401,7 @@ export class HubScene extends Phaser.Scene {
     }).setOrigin(0, 0.5).setAlpha(locked ? 0.5 : (canAfford ? ((equippedThisKind || ownedThisKind) ? 1 : 0.6) : 0.25)));
     const equippedWeaponPrice = this.save.equipped.weapon !== null ? itemById(this.save.equipped.weapon).price : 0;
     const badgeEntryPrice = targetLevel !== null ? itemById(`${kind}-${String(targetLevel)}`).price : 0;
-    this.addKindBadge(y, { locked, starsNeeded, entryPrice: badgeEntryPrice, equippedPrice: equippedWeaponPrice, show: !equippedThisKind && !ownedThisKind && targetLevel !== null, canAfford });
+    this.addKindBadge(y, { locked, starsNeeded, entryPrice: badgeEntryPrice, equippedPrice: equippedWeaponPrice, show: !equippedThisKind && !ownedThisKind && targetLevel !== null, canAfford, ownedNotEquipped: ownedThisKind });
   }
 
   private buildWeaponLevelChips(): void {

@@ -219,8 +219,9 @@ export function buildLoadout(save: SaveData): LoadoutSnapshot {
 }
 
 /**
- * Equip or unequip a rear weapon. Pass `null` to unequip (free). Buying costs
- * max(0, newPrice − 0) since there's no trade-in — rear weapons are permanent once bought.
+ * Equip or unequip a rear weapon. Pass `null` to unequip (free).
+ * Already-owned weapons: free re-equip. Within-kind upgrade: pay the level diff.
+ * New kind: pay the flat price. Rear weapons are permanent — never deleted on switch.
  */
 export function switchRearWeapon(save: SaveData, rearWeaponId: string | null): SaveData {
   if (rearWeaponId === null) {
@@ -228,16 +229,20 @@ export function switchRearWeapon(save: SaveData, rearWeaponId: string | null): S
     persistSave(next);
     return next;
   }
-  rearWeaponSpecById(rearWeaponId); // throws if unknown id
-  const currentRWId = save.equipped.rearWeapon;
-  const currentRWPrice = currentRWId !== null ? (REAR_WEAPON_ITEMS[currentRWId]?.price ?? 0) : 0;
-  const newRWPrice = REAR_WEAPON_ITEMS[rearWeaponId]?.price ?? 0;
-  const cost = newRWPrice - currentRWPrice;
+  rearWeaponSpecById(rearWeaponId);
+  const currentId = save.equipped.rearWeapon;
+  if (currentId === rearWeaponId) return save;
+  const newItem = REAR_WEAPON_ITEMS[rearWeaponId];
+  if (!newItem) throw new Error(`Unknown rear weapon "${rearWeaponId}"`);
+  const currentPrice = currentId !== null ? (REAR_WEAPON_ITEMS[currentId]?.price ?? 0) : 0;
+  const cost = newItem.price - currentPrice;
   if (cost > 0 && save.coins < cost) {
     throw new Error(`Not enough coins to buy rear weapon "${rearWeaponId}" (need ${String(cost)}, have ${String(save.coins)})`);
   }
   const newOwned = new Set(save.ownedItems);
-  if (cost < 0 && currentRWId !== null) newOwned.delete(currentRWId);
+  for (const id of save.ownedItems) {
+    if (REAR_WEAPON_ITEMS[id] !== undefined) newOwned.delete(id);
+  }
   newOwned.add(rearWeaponId);
   const next: SaveData = {
     ...save,

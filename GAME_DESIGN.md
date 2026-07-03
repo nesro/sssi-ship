@@ -169,6 +169,21 @@ Every module — including subscriptions — can be sold for exactly what the pl
 and stars both refunded in full. No depreciation, no exceptions. The player is always free to
 try something new.
 
+### Shop kind-row badge
+
+Each kind row (weapon type, shield path, generator path, etc.) shows a cost-hint badge on the
+right side. The player always has some kind equipped — the badge answers "what does it cost to
+switch to this kind right now?"
+
+| Row state | Badge text |
+|-----------|------------|
+| Currently equipped | *(none — row is highlighted)* |
+| Not equipped, costs coins (net after trade-in) | `switching costs N coins` |
+| Not equipped, net cost is zero | `switching is free` |
+| Not equipped, cheaper than current (net refund) | `switching returns N coins` |
+| Not equipped, free starter (price 0, nothing equipped) | *(none)* |
+| Locked by stars | `★N` |
+
 ### Ship
 
 Ships are a **strategic choice matched to the mission**. The player is expected to switch ships

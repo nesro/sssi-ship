@@ -22,7 +22,7 @@ export type CatalogItem =
 
 // ---------- Weapon level system ----------
 
-export const WEAPON_KINDS: WeaponKind[] = ['pulse', 'ion', 'scatter', 'nova'];
+export const WEAPON_KINDS: WeaponKind[] = ['pulse', 'scatter', 'ion', 'nova'];
 export const MAX_WEAPON_LEVEL = 5;
 
 /** Display info and base-level-1 stats for each weapon type. */
@@ -78,7 +78,7 @@ export function weaponSpecAtLevel(kind: WeaponKind, level: number): WeaponSpec {
 
 /** Human-readable display name for a weapon type and level. */
 function weaponDisplayName(kind: WeaponKind, level: number): string {
-  return `${WEAPON_BASE[kind].displayName} Lv ${String(level)}`;
+  return `${WEAPON_BASE[kind].displayName} Lv${String(level)}`;
 }
 
 /** Returns the base display name (without level suffix) for a weapon kind. */
@@ -107,7 +107,7 @@ const WEAPON_ITEMS: Record<string, CatalogItem> = Object.fromEntries(
 
 // ---------- Rear weapon system ----------
 
-export const REAR_WEAPON_KINDS: RearWeaponKind[] = ['grenade', 'flak', 'plasma', 'arc', 'cluster'];
+export const REAR_WEAPON_KINDS: RearWeaponKind[] = ['grenade', 'cluster', 'flak', 'arc', 'plasma'];
 export const MAX_REAR_WEAPON_LEVEL = 5;
 
 export interface RearWeaponCatalogItem {
@@ -173,7 +173,7 @@ export function rearWeaponSpecAtLevel(kind: RearWeaponKind, level: number): Weap
 }
 
 function rearWeaponDisplayName(kind: RearWeaponKind, level: number): string {
-  return `${REAR_WEAPON_BASE[kind].displayName} Lv ${String(level)}`;
+  return `${REAR_WEAPON_BASE[kind].displayName} Lv${String(level)}`;
 }
 
 export function rearWeaponKindDisplayName(kind: RearWeaponKind): string {
@@ -206,7 +206,7 @@ export function rearWeaponSpecById(id: string): WeaponSpec {
 // ---------- Shield system ----------
 
 export type ShieldKind = 'wall' | 'reflex' | 'bulwark' | 'flux';
-export const SHIELD_KINDS: readonly ShieldKind[] = ['wall', 'reflex', 'bulwark', 'flux'];
+export const SHIELD_KINDS: readonly ShieldKind[] = ['wall', 'reflex', 'flux', 'bulwark'];
 export const MAX_SHIELD_LEVEL = 5;
 
 const SHIELD_BASE: Record<ShieldKind, {
@@ -250,7 +250,7 @@ const SHIELD_ITEMS: Record<string, CatalogItem> = Object.fromEntries(
 // ---------- Generator system ----------
 
 export type GeneratorKind = 'torrent' | 'reserve' | 'surge' | 'steady';
-export const GENERATOR_KINDS: readonly GeneratorKind[] = ['torrent', 'reserve', 'surge', 'steady'];
+export const GENERATOR_KINDS: readonly GeneratorKind[] = ['torrent', 'reserve', 'steady', 'surge'];
 export const MAX_GENERATOR_LEVEL = 5;
 
 const GENERATOR_BASE: Record<GeneratorKind, {
@@ -295,7 +295,7 @@ const GENERATOR_ITEMS: Record<string, CatalogItem> = Object.fromEntries(
 // ---------- Motor system ----------
 
 export type MotorKind = 'rush' | 'tactical' | 'sentinel' | 'overdrive';
-export const MOTOR_KINDS: readonly MotorKind[] = ['rush', 'tactical', 'sentinel', 'overdrive'];
+export const MOTOR_KINDS: readonly MotorKind[] = ['rush', 'sentinel', 'tactical', 'overdrive'];
 export const MAX_MOTOR_LEVEL = 5;
 
 const MOTOR_BASE: Record<MotorKind, {
@@ -479,4 +479,8 @@ export function shipById(id: string): ShipSpec {
   const ship = SHIPS[id];
   if (ship === undefined) throw new Error(`Unknown ship "${id}"`);
   return ship;
+}
+
+export function shipKindDisplayName(kind: ShipKind): string {
+  return SHIPS[`ship-${kind}-1`]?.name ?? kind;
 }

@@ -28,9 +28,9 @@ export function px(logical: number): number {
   return logical * DPR;
 }
 
-/** Integer pixel font size — fractional sizes blur monospace text. */
+/** Integer pixel font size — fractional sizes blur monospace text. 1.15 scale improves legibility on mobile. */
 export function fontPx(logical: number): number {
-  return Math.round(logical * DPR);
+  return Math.round(logical * DPR * 1.15);
 }
 
 /** Logical offset from ship centre to each gun muzzle (shared by combat + shop views). */
