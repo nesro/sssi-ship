@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import { PALETTE, WEAPON_PALETTE } from './palette';
 import { px } from './layout';
+import { splitWeaponId, TEXTURE_KEYS } from './textureKeys';
+import type { ShipKindName } from './textureKeys';
 
 // Baked glow (V2_HANDOFF.md §4.3): paint each shape several times with increasing
 // thickness and decreasing alpha ONCE at startup, then rely on ADD blend at runtime.
@@ -12,85 +14,6 @@ const GLOW_PASSES = [
   { widthMultiplier: 1.6, alpha: 0.45 },
   { widthMultiplier: 1, alpha: 1 },
 ];
-
-export const TEXTURE_KEYS = {
-  ship: 'ship', // interceptor (default / backward compat)
-  shipInterceptor: 'ship-interceptor-tex',
-  shipTanker: 'ship-tanker-tex',
-  shipSalvager: 'ship-salvager-tex',
-  shipReactor: 'ship-reactor-tex',
-  shipWarship: 'ship-warship-tex',
-  fodder: 'enemy-fodder',
-  striker: 'enemy-striker',
-  tank: 'enemy-tank',
-  swarm: 'enemy-swarm',
-  blocker: 'enemy-blocker',
-  boss: 'enemy-boss',
-  guardian: 'enemy-guardian',
-  turret: 'enemy-turret',
-  kamikaze: 'enemy-kamikaze',
-  // Projectiles — one per weapon kind+tier
-  laserPulse1: 'laser-pulse-1',
-  laserPulse2: 'laser-pulse-2',
-  laserIon: 'laser-ion',
-  laserScatter1: 'laser-scatter-1',
-  laserScatter2: 'laser-scatter-2',
-  laserNova1: 'laser-nova-1',
-  laserNova2: 'laser-nova-2',
-  // Weapon icons for shop list
-  iconPulse1: 'icon-pulse-1',
-  iconPulse2: 'icon-pulse-2',
-  iconIon: 'icon-ion',
-  iconScatter1: 'icon-scatter-1',
-  iconScatter2: 'icon-scatter-2',
-  iconNova1: 'icon-nova-1',
-  iconNova2: 'icon-nova-2',
-  // Rear weapon projectiles — one per kind
-  rearGrenade: 'rear-grenade',
-  rearFlak:    'rear-flak',
-  rearPlasma:  'rear-plasma',
-  rearArc:     'rear-arc',
-  rearCluster: 'rear-cluster',
-  // Rear weapon icons (one per kind; level suffix appended at runtime)
-  iconGrenade1: 'icon-grenade-1',
-  iconGrenade2: 'icon-grenade-2',
-  iconFlak1: 'icon-flak-1',
-  iconFlak2: 'icon-flak-2',
-  iconPlasma1: 'icon-plasma-1',
-  iconPlasma2: 'icon-plasma-2',
-  iconArc1: 'icon-arc-1',
-  iconArc2: 'icon-arc-2',
-  iconCluster1: 'icon-cluster-1',
-  iconCluster2: 'icon-cluster-2',
-  // Shield kind icons
-  iconShieldWall:    'icon-shield-wall',
-  iconShieldReflex:  'icon-shield-reflex',
-  iconShieldBulwark: 'icon-shield-bulwark',
-  iconShieldFlux:    'icon-shield-flux',
-  // Generator kind icons
-  iconGeneratorTorrent: 'icon-generator-torrent',
-  iconGeneratorReserve: 'icon-generator-reserve',
-  iconGeneratorSurge:   'icon-generator-surge',
-  iconGeneratorSteady:  'icon-generator-steady',
-  // Motor kind icons
-  iconMotorRush:      'icon-motor-rush',
-  iconMotorTactical:  'icon-motor-tactical',
-  iconMotorSentinel:  'icon-motor-sentinel',
-  iconMotorOverdrive: 'icon-motor-overdrive',
-} as const;
-
-const SHIP_KIND_NAMES = ['interceptor', 'tanker', 'salvager', 'reactor', 'warship'] as const;
-type ShipKindName = typeof SHIP_KIND_NAMES[number];
-
-/** Returns the level-specific baked texture key for a ship id like "ship-interceptor-3". */
-export function textureForShipId(shipId: string): string {
-  const match = /^ship-(\w+)-(\d+)$/.exec(shipId);
-  if (match === null) return TEXTURE_KEYS.ship;
-  const kind = match[1] ?? '';
-  const level = Math.max(1, Math.min(5, parseInt(match[2] ?? '1', 10)));
-  if (!(SHIP_KIND_NAMES as readonly string[]).includes(kind)) return TEXTURE_KEYS.ship;
-  return `ship-${kind}-lv${String(level)}`;
-}
 
 /** Maps a core enemy kind to its texture; logs a warning for unknown kinds. */
 export function textureForEnemyKind(kind: string, isBoss: boolean, blocks: boolean): string {
@@ -125,12 +48,14 @@ export function weaponKindColor(kind: string, weaponId: string): number {
   return upgraded ? WEAPON_PALETTE.pulse2 : WEAPON_PALETTE.pulse1;
 }
 
-/** Extracts kind and level from a weapon ID like 'pulse-3' or 'scatter-5'. */
-export function splitWeaponId(weaponId: string): { kind: string; level: number } {
-  const lastDash = weaponId.lastIndexOf('-');
-  const level = lastDash >= 0 ? parseInt(weaponId.slice(lastDash + 1), 10) : 1;
-  const kind = lastDash >= 0 ? weaponId.slice(0, lastDash) : weaponId;
-  return { kind, level: isNaN(level) ? 1 : level };
+/** Burst colour for a side weapon kind + id combo — matches each kind's shop icon hue. */
+export function sideWeaponKindColor(kind: string, sideWeaponId: string): number {
+  const { level } = splitWeaponId(sideWeaponId);
+  const upgraded = level >= 3;
+  if (kind === 'flechette') return upgraded ? 0xffaa88 : 0xff7755;
+  if (kind === 'railgun') return upgraded ? 0xff88aa : 0xff3355;
+  if (kind === 'orbital') return upgraded ? 0xddaaff : 0xaa66ff;
+  return upgraded ? 0xccf0ff : 0x99ddff; // focus
 }
 
 /** Maps weapon item id to its projectile texture key. Levels 1-2 use the base texture; 3+ use the upgraded one. */
@@ -145,71 +70,6 @@ export function laserTextureForWeaponId(weaponId: string): string {
   return TEXTURE_KEYS.laserPulse1;
 }
 
-/** Maps rear weapon item id to its shop icon texture key. Levels 1–2 = base, 3+ = upgraded. */
-export function iconTextureForRearWeaponId(rearWeaponId: string): string {
-  const { kind, level } = splitWeaponId(rearWeaponId);
-  const upgraded = level >= 3;
-  if (kind === 'grenade') return upgraded ? TEXTURE_KEYS.iconGrenade2 : TEXTURE_KEYS.iconGrenade1;
-  if (kind === 'flak')    return upgraded ? TEXTURE_KEYS.iconFlak2    : TEXTURE_KEYS.iconFlak1;
-  if (kind === 'plasma')  return upgraded ? TEXTURE_KEYS.iconPlasma2  : TEXTURE_KEYS.iconPlasma1;
-  if (kind === 'arc')     return upgraded ? TEXTURE_KEYS.iconArc2     : TEXTURE_KEYS.iconArc1;
-  if (kind === 'cluster') return upgraded ? TEXTURE_KEYS.iconCluster2 : TEXTURE_KEYS.iconCluster1;
-  return TEXTURE_KEYS.iconGrenade1;
-}
-
-/** Maps weapon item id to its shop icon texture key. */
-export function iconTextureForShipKind(kind: string): string {
-  const map: Record<string, string> = {
-    interceptor: TEXTURE_KEYS.shipInterceptor,
-    tanker:      TEXTURE_KEYS.shipTanker,
-    salvager:    TEXTURE_KEYS.shipSalvager,
-    reactor:     TEXTURE_KEYS.shipReactor,
-    warship:     TEXTURE_KEYS.shipWarship,
-  };
-  return map[kind] ?? TEXTURE_KEYS.ship;
-}
-
-export function iconTextureForShieldKind(kind: string): string {
-  const map: Record<string, string> = {
-    wall:    TEXTURE_KEYS.iconShieldWall,
-    reflex:  TEXTURE_KEYS.iconShieldReflex,
-    bulwark: TEXTURE_KEYS.iconShieldBulwark,
-    flux:    TEXTURE_KEYS.iconShieldFlux,
-  };
-  return map[kind] ?? TEXTURE_KEYS.iconShieldWall;
-}
-
-export function iconTextureForGeneratorKind(kind: string): string {
-  const map: Record<string, string> = {
-    torrent: TEXTURE_KEYS.iconGeneratorTorrent,
-    reserve: TEXTURE_KEYS.iconGeneratorReserve,
-    surge:   TEXTURE_KEYS.iconGeneratorSurge,
-    steady:  TEXTURE_KEYS.iconGeneratorSteady,
-  };
-  return map[kind] ?? TEXTURE_KEYS.iconGeneratorTorrent;
-}
-
-export function iconTextureForMotorKind(kind: string): string {
-  const map: Record<string, string> = {
-    rush:      TEXTURE_KEYS.iconMotorRush,
-    tactical:  TEXTURE_KEYS.iconMotorTactical,
-    sentinel:  TEXTURE_KEYS.iconMotorSentinel,
-    overdrive: TEXTURE_KEYS.iconMotorOverdrive,
-  };
-  return map[kind] ?? TEXTURE_KEYS.iconMotorRush;
-}
-
-export function iconTextureForWeaponId(weaponId: string): string {
-  const { kind, level } = splitWeaponId(weaponId);
-  const upgraded = level >= 3;
-  if (kind === 'pulse')   return upgraded ? TEXTURE_KEYS.iconPulse2   : TEXTURE_KEYS.iconPulse1;
-  if (kind === 'ion')     return TEXTURE_KEYS.iconIon;
-  if (kind === 'scatter') return upgraded ? TEXTURE_KEYS.iconScatter2 : TEXTURE_KEYS.iconScatter1;
-  if (kind === 'nova')    return upgraded ? TEXTURE_KEYS.iconNova2    : TEXTURE_KEYS.iconNova1;
-  console.warn(`Unknown weapon kind "${kind}" in iconTextureForWeaponId — falling back to pulse1`);
-  return TEXTURE_KEYS.iconPulse1;
-}
-
 type ShapePainter = (g: Phaser.GameObjects.Graphics, lineWidth: number, alpha: number) => void;
 
 export function buildGameTextures(scene: Phaser.Scene): void {
@@ -220,6 +80,7 @@ export function buildGameTextures(scene: Phaser.Scene): void {
   buildRearProjectileTextures(scene);
   buildWeaponIconTextures(scene);
   buildRearWeaponIconTextures(scene);
+  buildSideWeaponIconTextures(scene);
   buildEquipmentIconTextures(scene);
 }
 
@@ -631,6 +492,95 @@ function buildRearWeaponIconTextures(scene: Phaser.Scene): void {
     g.strokeCircle(px(24), px(24), px(3));
     g.strokeCircle(px(14), px(4),  px(2));
     g.strokeCircle(px(14), px(28), px(2));
+  });
+}
+
+function buildSideWeaponIconTextures(scene: Phaser.Scene): void {
+  const ice    = 0x99ddff;
+  const ice2   = 0xccf0ff;
+  const coral  = 0xff7755;
+  const coral2 = 0xffaa88;
+  const red    = 0xff3355;
+  const red2   = 0xff88aa;
+  const violet = 0xaa66ff;
+  const violet2 = 0xddaaff;
+
+  // Focus — targeting reticle: circle, four ticks, center dot
+  bake(scene, TEXTURE_KEYS.iconFocus1, px(28), px(32), (g, w, a) => {
+    g.lineStyle(w, ice, a);
+    g.strokeCircle(px(14), px(18), px(7));
+    g.lineBetween(px(14), px(7), px(14), px(11));
+    g.lineBetween(px(14), px(25), px(14), px(29));
+    g.lineBetween(px(3), px(18), px(7), px(18));
+    g.lineBetween(px(21), px(18), px(25), px(18));
+    g.fillStyle(ice, a * 0.8);
+    g.fillCircle(px(14), px(18), px(2));
+  });
+  bake(scene, TEXTURE_KEYS.iconFocus2, px(28), px(32), (g, w, a) => {
+    g.lineStyle(w * 1.2, ice2, a);
+    g.strokeCircle(px(14), px(18), px(9));
+    g.lineBetween(px(14), px(5), px(14), px(10));
+    g.lineBetween(px(14), px(26), px(14), px(31));
+    g.lineBetween(px(1), px(18), px(6), px(18));
+    g.lineBetween(px(22), px(18), px(27), px(18));
+    g.fillStyle(ice2, a * 0.9);
+    g.fillCircle(px(14), px(18), px(3));
+  });
+
+  // Flechette — fan of three darts converging at the tail
+  bake(scene, TEXTURE_KEYS.iconFlechette1, px(28), px(32), (g, w, a) => {
+    g.lineStyle(w, coral, a);
+    g.lineBetween(px(14), px(28), px(14), px(6));
+    g.lineBetween(px(14), px(6), px(11), px(2));
+    g.lineBetween(px(14), px(28), px(6), px(10));
+    g.lineBetween(px(6), px(10), px(2), px(6));
+    g.lineBetween(px(14), px(28), px(22), px(10));
+    g.lineBetween(px(22), px(10), px(26), px(6));
+  });
+  bake(scene, TEXTURE_KEYS.iconFlechette2, px(28), px(32), (g, w, a) => {
+    g.lineStyle(w * 1.2, coral2, a);
+    g.lineBetween(px(14), px(29), px(14), px(4));
+    g.lineBetween(px(14), px(4), px(10), px(1));
+    g.lineBetween(px(14), px(29), px(4), px(8));
+    g.lineBetween(px(4), px(8), px(1), px(4));
+    g.lineBetween(px(14), px(29), px(24), px(8));
+    g.lineBetween(px(24), px(8), px(27), px(4));
+  });
+
+  // Railgun — single heavy piercing rail with an arrow tip
+  bake(scene, TEXTURE_KEYS.iconRailgun1, px(28), px(32), (g, w, a) => {
+    g.lineStyle(w * 1.6, red, a);
+    g.lineBetween(px(14), px(29), px(14), px(4));
+    g.lineStyle(w, red, a);
+    g.lineBetween(px(9), px(9), px(14), px(2));
+    g.lineBetween(px(19), px(9), px(14), px(2));
+  });
+  bake(scene, TEXTURE_KEYS.iconRailgun2, px(28), px(32), (g, w, a) => {
+    g.lineStyle(w * 2, red2, a);
+    g.lineBetween(px(14), px(30), px(14), px(2));
+    g.lineStyle(w, red2, a);
+    g.lineBetween(px(7), px(8), px(14), px(0));
+    g.lineBetween(px(21), px(8), px(14), px(0));
+    g.lineStyle(w * 0.6, red2, a * 0.7);
+    g.lineBetween(px(10), px(20), px(18), px(20));
+  });
+
+  // Orbital — converging chevron marking a strike called down from above
+  bake(scene, TEXTURE_KEYS.iconOrbital1, px(28), px(32), (g, w, a) => {
+    g.lineStyle(w, violet, a);
+    g.lineBetween(px(6), px(6), px(14), px(14));
+    g.lineBetween(px(22), px(6), px(14), px(14));
+    g.lineBetween(px(14), px(14), px(14), px(24));
+    g.strokeCircle(px(14), px(27), px(3));
+  });
+  bake(scene, TEXTURE_KEYS.iconOrbital2, px(28), px(32), (g, w, a) => {
+    g.lineStyle(w * 1.2, violet2, a);
+    g.lineBetween(px(4), px(4), px(14), px(14));
+    g.lineBetween(px(24), px(4), px(14), px(14));
+    g.lineBetween(px(14), px(14), px(14), px(25));
+    g.strokeCircle(px(14), px(28), px(4));
+    g.lineStyle(w * 0.6, violet2, a * 0.7);
+    g.lineBetween(px(8), px(9), px(20), px(9));
   });
 }
 

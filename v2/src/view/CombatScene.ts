@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { resolveAbilityAction } from '../core/cards';
-import { activateAbility, toggleAutoFire, toggleAutoShield, toggleRearWeapon } from '../core/combat';
+import { activateAbility, fireSideWeapon, toggleAutoFire, toggleAutoShield, toggleRearWeapon } from '../core/combat';
 import { resolveNarrator } from '../core/narrator';
 import { LANE_LENGTH, MS_PER_TICK } from '../core/constants';
 import { buildMissionResult } from '../core/result';
@@ -14,6 +14,7 @@ import { ALL_NEW_ABILITIES } from '../data/abilities';
 import { missionById } from '../data/missions';
 import { getStoryLine } from '../data/story';
 import { resolveForcedLoadout } from '../data/loadouts';
+import { computeSideWeaponButtonViewModel } from '../viewmodel/combat';
 import { applyMissionResult, buildLoadout, loadSave } from '../save/SaveManager';
 import type { SaveData } from '../save/SaveManager';
 import { Sound } from '../audio/SoundManager';
@@ -23,8 +24,9 @@ import { NarratorBar } from './NarratorBar';
 import { SupplyButtons } from './SupplyButtons';
 import { cssColor, PALETTE } from './palette';
 import { BTN_PANEL_W, BTN_X, fontPx, GAME_WIDTH, GAME_X, INFO_PANEL_W, LOGICAL_HEIGHT, LOGICAL_WIDTH, px, SHIP_GUN_X_OFFSET, SHIP_GUN_Y_OFFSET } from './layout';
-import { buildGameTextures, laserTextureForWeaponId, rearBoltTextureKey, splitWeaponId, textureForEnemyKind, textureForShipId } from './textures';
-import { drawGeneratorCore, drawMotorHousing, drawRearWeaponIndicator, drawShieldRings, drawThruster, motorKindColorFromId, motorLevelFromId, renderGunIndicator, tickLaserBolts, tickMuzzleFlashes, THRUSTER_PARAMS } from './shipRenderers';
+import { buildGameTextures, laserTextureForWeaponId, rearBoltTextureKey, sideWeaponKindColor, textureForEnemyKind } from './textures';
+import { motorKindColorFromId, motorLevelFromId, splitWeaponId, textureForShipId } from './textureKeys';
+import { drawGeneratorCore, drawRearWeaponIndicator, drawShieldRings, renderGunIndicator, renderThrusterAssembly, tickLaserBolts, tickMuzzleFlashes } from './shipRenderers';
 import type { LaserBolt, MuzzleFlash } from './shipRenderers';
 import { addModalBackdrop, addTextButton, drawDevBorder, UI_FONT } from './widgets';
 
@@ -41,6 +43,14 @@ const MAX_CATCH_UP_MS = 250;
 
 // How fast shield hit-flash decays (full fade in ~550ms, matching v1 ShieldVisual).
 const SHIELD_FLASH_DECAY = 1.8;
+// Shield ring radius grows with remaining shield fraction — a live, continuous
+// reading of `ship.shield`. Contrast with ShopPreviewPanel's discrete per-tier
+// radius, which reads a simulated fraction instead — see that file for why.
+const SHIELD_BASE_RADIUS = 26;
+const SHIELD_RADIUS_PER_FRACTION = 6;
+const SHIELD_GLOW_BASE_ALPHA = 0.04;
+const SHIELD_GLOW_FLASH_ALPHA = 0.06;
+const SHIELD_GLOW_RADIUS_PAD = 6;
 // Pulse ring expands this many logical px/s and fades this much alpha/s.
 const PULSE_RING_EXPAND_PX_S = 120;
 const PULSE_RING_FADE_S = 1.6;
@@ -112,6 +122,9 @@ export class CombatScene extends Phaser.Scene {
   private autoFireLabel!: Phaser.GameObjects.Text;
   private rearWeaponLabel!: Phaser.GameObjects.Text;
   private autoShieldLabel!: Phaser.GameObjects.Text;
+  /** Manual-fire side weapon button — label shows kind + charges, e.g. "RAILGUN 2/3". */
+  private sideWeaponBg!: Phaser.GameObjects.Rectangle;
+  private sideWeaponLabel!: Phaser.GameObjects.Text;
   /** Ability bar slots: up to 3 active ability buttons. */
   private abilitySlots: Array<{
     bg: Phaser.GameObjects.Rectangle;
@@ -291,10 +304,10 @@ export class CombatScene extends Phaser.Scene {
     const flash = this.shieldHitFlash;
     const cx = px(SHIP_CENTER_X) + this.driftX();
     const cy = px(SHIP_Y - 6) + this.bobY();
-    const r = px(26 + frac * 6);
+    const r = px(SHIELD_BASE_RADIUS + frac * SHIELD_RADIUS_PER_FRACTION);
     // Soft fill glow — brightens on hit
-    this.shieldGfx.fillStyle(0x0044ff, (0.04 + flash * 0.06) * frac);
-    this.shieldGfx.fillCircle(cx, cy, r + px(6));
+    this.shieldGfx.fillStyle(0x0044ff, (SHIELD_GLOW_BASE_ALPHA + flash * SHIELD_GLOW_FLASH_ALPHA) * frac);
+    this.shieldGfx.fillCircle(cx, cy, r + px(SHIELD_GLOW_RADIUS_PAD));
     // Four neon rings: outermost dim halo → innermost bright edge; all brighten on hit
     drawShieldRings(this.shieldGfx, cx, cy, r, { intensity: frac, flash });
   }
@@ -576,6 +589,14 @@ export class CombatScene extends Phaser.Scene {
     this.autoShieldLabel = this.add.text(cx, px(58), 'AUTO-SHIELD  ON', {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#4488ff',
     }).setOrigin(0.5).setDepth(11);
+
+    this.sideWeaponBg = this.add.rectangle(cx, px(76), btnW, btnH, 0x0a0a1a)
+      .setStrokeStyle(px(1), 0x552233).setDepth(10).setInteractive({ useHandCursor: true });
+    this.sideWeaponBg.on('pointerdown', () => { this.handleSideWeaponTap(); });
+    this.sideWeaponLabel = this.add.text(cx, px(76), '—', {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#ff6688',
+    }).setOrigin(0.5).setDepth(11);
+    if (this.core.loadout.sideWeapon === null) { this.sideWeaponBg.setAlpha(0.3); this.sideWeaponLabel.setAlpha(0.3); }
   }
 
   private buildAbilitySlots(): void {
@@ -584,7 +605,7 @@ export class CombatScene extends Phaser.Scene {
     const slotH = px(16);
 
     for (let i = 0; i < 3; i++) {
-      const y = px(78 + i * 22);
+      const y = px(96 + i * 22);
       const bg = this.add.rectangle(cx, y, slotW, slotH, 0x080818)
         .setStrokeStyle(px(1), 0x334455)
         .setDepth(10)
@@ -611,6 +632,12 @@ export class CombatScene extends Phaser.Scene {
     this.autoShieldLabel.setText(`AUTO-SHIELD  ${this.core.autoShieldEnabled ? 'ON' : 'OFF'}`);
     this.autoShieldLabel.setColor(this.core.autoShieldEnabled ? '#4488ff' : '#334466');
 
+    const sideWeaponVm = computeSideWeaponButtonViewModel(this.core);
+    this.sideWeaponLabel.setText(sideWeaponVm.equipped ? `${sideWeaponVm.label}  ${sideWeaponVm.chargesLabel}` : '—');
+    this.sideWeaponLabel.setColor(sideWeaponVm.canFire ? '#ff6688' : '#663344');
+    this.sideWeaponBg.setAlpha(sideWeaponVm.equipped ? 1 : 0.3);
+    this.sideWeaponLabel.setAlpha(sideWeaponVm.equipped ? 1 : 0.3);
+
     this.abilitySlots.forEach((slot, i) => {
       const equipped = this.core.equippedAbilities[i];
       if (equipped === undefined) {
@@ -636,6 +663,14 @@ export class CombatScene extends Phaser.Scene {
     if (supply === undefined || supply.chargesLeft <= 0 || this.core.status !== 'running') return;
     applyBoost(this.core, slot);
     Sound.boost();
+  }
+
+  private handleSideWeaponTap(): void {
+    if (!computeSideWeaponButtonViewModel(this.core).canFire) return;
+    const sideWeapon = this.core.loadout.sideWeapon;
+    fireSideWeapon(this.core);
+    Sound.boost();
+    if (sideWeapon !== null) this.spawnSideWeaponBurst(sideWeaponKindColor(sideWeapon.kind, sideWeapon.id));
   }
 
   private syncCardOverlay(): void {
@@ -716,12 +751,11 @@ export class CombatScene extends Phaser.Scene {
   }
 
   private renderThruster(): void {
-    const p = THRUSTER_PARAMS[this.motorLevel];
-    const flicker = p.minBright + p.range * Math.sin(this.thrusterPhase * p.speed);
-    const cx = px(SHIP_CENTER_X) + this.driftX();
-    const baseY = px(SHIP_Y + 24) + this.bobY();
-    drawThruster(this.thrusterGfx, cx, baseY, px(p.hBase + p.hScale * flicker), { flicker, motorLevel: this.motorLevel, kindColor: this.motorKindColor });
-    drawMotorHousing(this.motorGfx, cx, px(SHIP_Y) + this.bobY(), this.motorLevel, this.motorKindColor);
+    renderThrusterAssembly(
+      this.thrusterGfx, this.motorGfx,
+      px(SHIP_CENTER_X) + this.driftX(), px(SHIP_Y) + this.bobY(),
+      { motorLevel: this.motorLevel, kindColor: this.motorKindColor, phase: this.thrusterPhase },
+    );
   }
 
   private spawnLaserBolt(boltKind: 'normal' | 'crit' | 'miss' = 'normal'): void {
@@ -775,6 +809,23 @@ export class CombatScene extends Phaser.Scene {
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
         color: 0x44aaff, life: 200, maxLife: 200,
+      });
+    }
+  }
+
+  /** Wide radial burst marking a manual side-weapon shot — bigger and longer-lived than a deflection spark. */
+  private spawnSideWeaponBurst(color: number): void {
+    const cx = px(SHIP_CENTER_X) + this.driftX();
+    const cy = px(SHIP_Y - 6) + this.bobY();
+    const count = 10;
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2;
+      const speed = px(60 + (i % 3) * 20);
+      this.burstParticles.push({
+        x: cx, y: cy,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        color, life: 320, maxLife: 320,
       });
     }
   }

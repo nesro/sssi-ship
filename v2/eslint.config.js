@@ -33,4 +33,18 @@ export default tseslint.config(
     files: ['**/*.js'],
     ...tseslint.configs.disableTypeChecked,
   },
+  {
+    // src/viewmodel/ must stay pure TypeScript — zero Phaser, zero src/view/** except
+    // textureKeys.ts (pure icon-key lookups) and palette.ts (pure numeric color
+    // constants, verified zero-Phaser) — so it stays testable without Phaser.
+    files: ['src/viewmodel/**'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [
+          { group: ['phaser', 'phaser3*'], message: 'src/viewmodel/** must not import Phaser.' },
+          { group: ['../view/*', '!../view/textureKeys', '!../view/palette'], message: 'src/viewmodel/** may only import src/view/textureKeys or src/view/palette.' },
+        ],
+      }],
+    },
+  },
 );

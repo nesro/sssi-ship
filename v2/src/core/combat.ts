@@ -1,6 +1,6 @@
 import { OVERCHARGE_DAMAGE_MULT } from './constants';
 import { brownoutFactor } from './energy';
-import { isInvulnerable } from './stats';
+import { computeEffectiveStats, isInvulnerable } from './stats';
 import type { EffectiveStats } from './stats';
 import type { CoreState, EnemyState, RunModifiers } from './types';
 
@@ -139,6 +139,43 @@ export function fireRearWeapon(state: CoreState, stats: EffectiveStats): void {
   state.stats.rearShotsFired += 1;
   removeDeadEnemies(state, stats);
   state.ship.rearFireTimer += stats.rearWeaponInterval;
+}
+
+/**
+ * Player-triggered: fire the equipped side weapon, consuming one charge (§5). Manual
+ * only — never called from advanceTick, same as applyBoost. Throws on an invalid call
+ * (no weapon equipped, no charges left, mission not running) since the view disables
+ * the button in those cases, matching applyBoost's fail-fast convention.
+ */
+export function fireSideWeapon(state: CoreState): void {
+  const sideWeapon = state.loadout.sideWeapon;
+  if (sideWeapon === null) {
+    throw new Error('No side weapon equipped');
+  }
+  if (state.ship.sideWeaponCharges <= 0) {
+    throw new Error(`Side weapon "${sideWeapon.id}" has no charges left`);
+  }
+  if (state.status !== 'running') {
+    throw new Error(`Cannot fire side weapon while mission status is "${state.status}"`);
+  }
+  state.ship.sideWeaponCharges -= 1;
+  state.sideWeaponTaps.push(state.tick);
+
+  const stats = computeEffectiveStats(state.loadout, state.modifiers);
+  const targets = [...state.enemies].sort((a, b) => a.distance - b.distance).slice(0, sideWeapon.maxTargets);
+  targets.forEach((enemy, index) => {
+    const falloff = Math.pow(sideWeapon.falloffPerTarget, index);
+    const { damage, wasMiss } = rollShotOutcome(
+      sideWeapon.missChance, sideWeapon.critChance, sideWeapon.critMult,
+      sideWeapon.damagePerShot * falloff, state.rng,
+    );
+    if (wasMiss) return;
+    enemy.hp -= damage;
+    state.stats.damageDealt += damage;
+  });
+  state.stats.sideShotsFired += 1;
+
+  removeDeadEnemies(state, stats);
 }
 
 /** Toggle auto-fire on or off. When off, the weapon never fires — energy accumulates. */

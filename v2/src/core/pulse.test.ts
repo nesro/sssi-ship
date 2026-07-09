@@ -9,9 +9,10 @@ import type { LoadoutSnapshot } from './types';
 // Controlled loadout for exact pulse accounting — zero motor draw, zero weapon drain.
 const PULSE_SHIELD = { id: 'fix-shield', capacity: 30, pulseShieldFraction: 0.1 };
 const PULSE_LOADOUT: LoadoutSnapshot = {
-  ship: { id: 'fix-ship', kind: 'interceptor', level: 1, name: 'Test', hull: 100, price: 0, passiveKind: 'enemy-miss-bonus', passiveValue: 0, passiveDescription: '' },
+  ship: { id: 'fix-ship', kind: 'interceptor', level: 1, name: 'Test', hull: 100, price: 0, passiveKind: 'enemy-miss-bonus', passiveValue: 0, passiveDescription: '', blurb: '' },
   weapon: null, // no weapon — isolates energy to generator + pulse only
   rearWeapon: null,
+  sideWeapon: null,
   generator: { id: 'fix-gen', outputPerTick: 2, capacity: 50, pulseDrainFraction: 0.5 },
   shield: PULSE_SHIELD,
   motor: { id: 'fix-motor', timelineMultiplier: 1, powerDrawPerTick: 0 },

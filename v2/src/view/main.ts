@@ -5,7 +5,7 @@ import { HubScene } from './HubScene';
 import { ResultScene } from './ResultScene';
 import { PALETTE } from './palette';
 import { DPR, SCREEN_HEIGHT, SCREEN_WIDTH } from './layout';
-import { defaultSave, loadSave, persistSave, resetSave, switchItem, switchShip, switchRearWeapon } from '../save/SaveManager';
+import { defaultSave, loadSave, persistSave, resetSave, switchItem, switchShip, switchRearWeapon, switchSideWeapon } from '../save/SaveManager';
 
 // dpr-sharp canvas (V2_HANDOFF.md §4.2): render at native resolution, zoom back to
 // logical CSS size. Never Scale.FIT on a small canvas — that was v1's blurry-text bug.
@@ -61,15 +61,16 @@ if (import.meta.env.DEV) {
     /**
      * Equip any item by ID without clicking — skips coin deduction.
      * Usage: __cheat.equip('shield-reflex-3')
-     * Works for weapons, rear-weapons, shields, generators, motors, ships.
+     * Works for weapons, rear-weapons, side-weapons, shields, generators, motors, ships.
      */
     equip: (id: string) => {
       let save = loadSave();
-      if (!save.ownedItems.includes(id)) save = { ...save, ownedItems: [...save.ownedItems, id] };
       if (id.startsWith('ship-')) {
         save = switchShip({ ...save, coins: 999999 }, id);
       } else if (id.match(/^(grenade|flak|plasma|arc|cluster)-\d/)) {
         save = switchRearWeapon({ ...save, coins: 999999 }, id);
+      } else if (id.match(/^(focus|flechette|railgun|orbital)-\d/)) {
+        save = switchSideWeapon({ ...save, coins: 999999 }, id);
       } else {
         save = switchItem({ ...save, coins: 999999 }, id);
       }
@@ -78,7 +79,7 @@ if (import.meta.env.DEV) {
     },
     /**
      * Navigate to a shop tab without clicking.
-     * Usage: __cheat.navShop('motor')   // weapon | rear-weapon | shield | generator | motor | ship | supplies | loadout
+     * Usage: __cheat.navShop('motor')   // weapon | rear-weapon | side-weapon | shield | generator | motor | ship | supplies | loadout
      */
     navShop: (tab: string) => {
       const scene = game.scene.getScene('HubScene') as unknown as Record<string, unknown> | null;

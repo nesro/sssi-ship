@@ -1,13 +1,14 @@
 import Phaser from 'phaser';
 import { MS_PER_TICK } from '../core/constants';
-import { computeEffectiveStats, defaultModifiers } from '../core/stats';
 import type { EffectiveStats } from '../core/stats';
-import { computeLoadoutReport } from '../core/report';
-import type { LoadoutSnapshot, RearWeaponKind, WeaponKind } from '../core/types';
+import type { LoadoutSnapshot, RearWeaponKind, SideWeaponKind, WeaponKind } from '../core/types';
+import { computePreviewStatic, initPreviewSim, stepPreviewSim } from '../viewmodel/preview';
+import type { PreviewSimState, PreviewSimStep } from '../viewmodel/preview';
 import { cssColor, PALETTE } from './palette';
 import { fontPx, px, SHIP_GUN_X_OFFSET, SHIP_GUN_Y_OFFSET } from './layout';
-import { laserTextureForWeaponId, rearBoltTextureKey, TEXTURE_KEYS, textureForShipId } from './textures';
-import { drawGeneratorCore, drawMotorHousing, drawRearWeaponIndicator, drawShieldRings, drawThruster, motorKindColorFromId, motorLevelFromId, renderGunIndicator, tickLaserBolts, tickMuzzleFlashes, THRUSTER_PARAMS } from './shipRenderers';
+import { laserTextureForWeaponId, rearBoltTextureKey } from './textures';
+import { TEXTURE_KEYS } from './textureKeys';
+import { drawGeneratorCore, drawRearWeaponIndicator, drawShieldRings, renderGunIndicator, renderThrusterAssembly, tickLaserBolts, tickMuzzleFlashes } from './shipRenderers';
 import type { LaserBolt, MuzzleFlash } from './shipRenderers';
 import { UI_FONT } from './widgets';
 
@@ -21,6 +22,21 @@ const LASER_TRAVEL_MS = 280;
 const MUZZLE_FLASH_MS = 100;
 // Sim runs faster than real-time so the charge cycle is clearly visible
 const SIM_SPEED_MULT = 4;
+
+// Preview shows a discrete per-tier shield radius (vs CombatScene's continuous
+// fraction-based radius) so a glance at the preview reads "which shield class is
+// this" rather than "what's my shield % right now". Tier cutoffs are capacity
+// thresholds, not tied to specific shield kinds — recheck against src/data/items.ts
+// SHIELD_BASE if shield capacities are rebalanced.
+const SHIELD_TIER_HIGH_CAPACITY = 65;
+const SHIELD_TIER_MID_CAPACITY = 40;
+const SHIELD_BASE_RADIUS = 22;
+const SHIELD_RADIUS_PER_TIER = 5;
+const SHIELD_RADIUS_PER_FRACTION = 4;
+const SHIELD_GLOW_ALPHA_SCALE = 0.03;
+const SHIELD_GLOW_RADIUS_PAD = 10;
+const SHIELD_RING_RADIUS_STEP = 9;
+const SHIELD_RING_INTENSITY_FALLOFF_PER_RING = 0.2;
 
 /** Explicit placement for the preview band — lets the ship and bars sit side by side. */
 export interface PreviewLayout {
@@ -69,15 +85,15 @@ export class ShopPreviewPanel {
   private rearVisualFireTimer = 0;
 
   // Active weapons — null when the equipped loadout has none
-  private currentWeapon: { id: string; kind: WeaponKind | RearWeaponKind } | null = null;
+  private currentWeapon: { id: string; kind: WeaponKind | RearWeaponKind | SideWeaponKind } | null = null;
   private currentRearWeapon: { id: string; kind: RearWeaponKind } | null = null;
 
   // Simulation state (resets on each show() call)
   // The sim shows generator vs shield regen efficiency without weapon drain — the player
   // can read weapon DPS from the label. Running at SIM_SPEED_MULT×, looping when shield fills.
   private simStats: EffectiveStats | null = null;
-  private simEnergy = 0;
-  private simShield = 0;
+  private simState: PreviewSimState = { energy: 0, shield: 0 };
+  private simStep: PreviewSimStep | null = null;
 
   // Resolved pixel geometry (from the logical PreviewLayout)
   private readonly shipX: number;
@@ -163,14 +179,13 @@ export class ShopPreviewPanel {
 
   /** Call when the loadout selection changes — resets the energy/shield simulation from zero. */
   show(current: LoadoutSnapshot, prospective: LoadoutSnapshot | null): void {
+    const vm = computePreviewStatic(current, prospective);
     const activeLoadout = prospective ?? current;
-    this.motorLevel = motorLevelFromId(activeLoadout.motor.id);
-    this.motorKindColor = motorKindColorFromId(activeLoadout.motor.id);
-    this.ship.setTexture(textureForShipId(activeLoadout.ship.id));
-    const stats = computeEffectiveStats(activeLoadout, defaultModifiers());
-    this.simStats = stats;
-    this.simEnergy = 0;
-    this.simShield = stats.shieldCapacity * 0.5; // start at half so the ring is immediately visible
+    this.motorLevel = vm.motorLevel;
+    this.motorKindColor = vm.motorKindColor;
+    this.ship.setTexture(vm.shipTextureId);
+    this.simStats = vm.stats;
+    this.simState = initPreviewSim(vm.stats);
     this.visualFireTimer = 0;
     this.rearVisualFireTimer = 0;
     this.gunToggle = false;
@@ -181,8 +196,7 @@ export class ShopPreviewPanel {
       ? { id: activeLoadout.rearWeapon.id, kind: activeLoadout.rearWeapon.kind as RearWeaponKind }
       : null;
 
-    const report = computeLoadoutReport(activeLoadout);
-    this.dpsLabel.setText(stats.weaponEquipped ? `DPS  ${report.dpsSingleTarget.toFixed(1)}` : 'NO WEAPON');
+    this.dpsLabel.setText(vm.dpsLabel);
   }
 
   /** Driven by HubScene.update(). */
@@ -203,39 +217,12 @@ export class ShopPreviewPanel {
     this.updateLasers(deltaMs);
   }
 
-  /**
-   * Simulates generator→shield pulse flow at SIM_SPEED_MULT× real-time.
-   * Mirrors the discrete pulse mechanic from energy.ts: generator fills to 100%,
-   * fires a pulse into the shield, then drops by pulseDrainFraction.
-   * Shield climbs to full and stays there — player resets by changing loadout.
-   */
+  /** Advances the pure sim stepper at SIM_SPEED_MULT× real-time (see viewmodel/preview.ts). */
   private stepSim(deltaMs: number): void {
     const stats = this.simStats as EffectiveStats;
     const dt = (deltaMs * SIM_SPEED_MULT) / MS_PER_TICK;
-
-    // Charge generator first — capture whether it hit the cap BEFORE motor draw.
-    // Motor draw applied after charging means energy can never equal capacity in the
-    // same step unless we check the cap separately.
-    const recharged = Math.min(stats.generatorCapacity, this.simEnergy + stats.generatorOutput * dt);
-    const hitCap = recharged >= stats.generatorCapacity;
-    this.simEnergy = Math.max(0, recharged - stats.motorDraw * dt);
-
-    // Shield pulse fires exactly when the generator hits full (mirrors energy.ts pulseShield)
-    if (hitCap && stats.shieldCapacity > 0 && this.simShield < stats.shieldCapacity) {
-      const gain = Math.min(
-        stats.shieldPulseFraction * stats.shieldCapacity,
-        stats.shieldCapacity - this.simShield,
-      );
-      this.simShield += gain;
-      this.simEnergy = Math.max(0, this.simEnergy - stats.generatorPulseDrain);
-    }
-
-    this.simShield = Math.min(this.simShield, stats.shieldCapacity);
-    // Loop: restart the charge cycle so the ring keeps pulsing
-    if (stats.shieldCapacity > 0 && this.simShield >= stats.shieldCapacity) {
-      this.simEnergy = 0;
-      this.simShield = 0;
-    }
+    this.simStep = stepPreviewSim(this.simState, stats, dt);
+    this.simState = this.simStep.next;
   }
 
   /** Spawns visual laser bolts at the real (unscaled) weapon interval. */
@@ -259,8 +246,8 @@ export class ShopPreviewPanel {
 
   private renderBars(): void {
     this.barGfx.clear();
-    const stats = this.simStats;
-    if (stats === null) return;
+    const step = this.simStep;
+    if (step === null) return;
 
     const bx = this.barsLeftX;
     const bw = this.barWidthPx;
@@ -271,20 +258,18 @@ export class ShopPreviewPanel {
     // Energy bar track + fill
     this.barGfx.fillStyle(0x111122, 0.8);
     this.barGfx.fillRect(bx, ey, bw, bh);
-    const eFrac = stats.generatorCapacity > 0 ? this.simEnergy / stats.generatorCapacity : 0;
     this.barGfx.fillStyle(PALETTE_AMBER, 0.85);
-    this.barGfx.fillRect(bx, ey, bw * eFrac, bh);
+    this.barGfx.fillRect(bx, ey, bw * step.energyFraction, bh);
 
     // Shield bar track + fill
     this.barGfx.fillStyle(0x111122, 0.8);
     this.barGfx.fillRect(bx, sy, bw, bh);
-    const sFrac = stats.shieldCapacity > 0 ? this.simShield / stats.shieldCapacity : 0;
     this.barGfx.fillStyle(0x2255ff, 0.85);
-    this.barGfx.fillRect(bx, sy, bw * sFrac, bh);
+    this.barGfx.fillRect(bx, sy, bw * step.shieldFraction, bh);
 
     // Live numeric values
-    this.energyLabel.setText(`${String(Math.ceil(this.simEnergy))} / ${String(Math.ceil(stats.generatorCapacity))}`);
-    this.shieldLabel.setText(`${String(Math.ceil(this.simShield))} / ${String(Math.ceil(stats.shieldCapacity))}`);
+    this.energyLabel.setText(step.energyLabel);
+    this.shieldLabel.setText(step.shieldLabel);
   }
 
   private spawnLaserBolt(): void {
@@ -323,9 +308,7 @@ export class ShopPreviewPanel {
   }
 
   private renderGenerator(): void {
-    const stats = this.simStats;
-    const frac = stats !== null && stats.generatorCapacity > 0 ? this.simEnergy / stats.generatorCapacity : 0;
-    drawGeneratorCore(this.generatorGfx, this.shipX, this.shipY, frac);
+    drawGeneratorCore(this.generatorGfx, this.shipX, this.shipY, this.simStep?.energyFraction ?? 0);
   }
 
   private spawnRearBolt(): void {
@@ -346,35 +329,35 @@ export class ShopPreviewPanel {
   }
 
   private renderThruster(): void {
-    const p = THRUSTER_PARAMS[this.motorLevel];
-    const flicker = p.minBright + p.range * Math.sin(this.phase * p.speed);
-    drawThruster(this.thrusterGfx, this.shipX, this.shipY + px(24), px(p.hBase + p.hScale * flicker), { flicker, motorLevel: this.motorLevel, kindColor: this.motorKindColor });
-    drawMotorHousing(this.motorGfx, this.shipX, this.shipY, this.motorLevel, this.motorKindColor);
+    renderThrusterAssembly(
+      this.thrusterGfx, this.motorGfx, this.shipX, this.shipY,
+      { motorLevel: this.motorLevel, kindColor: this.motorKindColor, phase: this.phase },
+    );
   }
 
   private renderShield(): void {
     this.shieldGfx.clear();
     const stats = this.simStats;
-    if (stats === null || stats.shieldCapacity <= 0) return;
-    const frac = this.simShield / stats.shieldCapacity;
+    if (stats === null || stats.shieldCapacity <= 0 || this.simStep === null) return;
+    const frac = this.simStep.shieldFraction;
     if (frac <= 0.01) return;
 
     const cx = this.shipX;
     const cy = this.shipY - px(6);
     // One ring per tier so the player can visually read shield strength at a glance.
-    // Thresholds match the three shield specs: Deflector I (<40), Deflector II (<65), Aegis (≥65).
-    const tier = stats.shieldCapacity >= 65 ? 3 : stats.shieldCapacity >= 40 ? 2 : 1;
-    const baseR = px(22 + tier * 5 + frac * 4); // bigger shields occupy more space
+    const tier = stats.shieldCapacity >= SHIELD_TIER_HIGH_CAPACITY ? 3
+      : stats.shieldCapacity >= SHIELD_TIER_MID_CAPACITY ? 2 : 1;
+    const baseR = px(SHIELD_BASE_RADIUS + tier * SHIELD_RADIUS_PER_TIER + frac * SHIELD_RADIUS_PER_FRACTION); // bigger shields occupy more space
 
     // Core fill glow — denser for higher-tier shields
-    this.shieldGfx.fillStyle(0x0044ff, 0.03 * frac * tier);
-    this.shieldGfx.fillCircle(cx, cy, baseR + px(10));
+    this.shieldGfx.fillStyle(0x0044ff, SHIELD_GLOW_ALPHA_SCALE * frac * tier);
+    this.shieldGfx.fillCircle(cx, cy, baseR + px(SHIELD_GLOW_RADIUS_PAD));
 
     // Draw one ring layer per tier, stepping inward
     for (let i = 0; i < tier; i++) {
-      const r = baseR - i * px(9);
+      const r = baseR - i * px(SHIELD_RING_RADIUS_STEP);
       if (r <= 0) continue;
-      drawShieldRings(this.shieldGfx, cx, cy, r, { intensity: frac * (1 - i * 0.2) });
+      drawShieldRings(this.shieldGfx, cx, cy, r, { intensity: frac * (1 - i * SHIELD_RING_INTENSITY_FALLOFF_PER_RING) });
     }
   }
 }

@@ -3,13 +3,14 @@ import type { MissionResult } from '../core/result';
 import {
   DEFAULT_SHIP_ID,
   REAR_WEAPON_ITEMS,
+  SIDE_WEAPON_ITEMS,
   generatorSpecById,
   itemById,
   motorSpecById,
   rearWeaponSpecById,
-  requiresAncestors,
   shieldSpecById,
   shipById,
+  sideWeaponSpecById,
   supplyById,
   weaponSpecById,
 } from '../data/items';
@@ -21,9 +22,12 @@ export interface SaveData {
   coins: number;
   /** supplyId → owned charges (auto-refill every mission; never consumed permanently). */
   ownedSupplyCharges: Record<string, number>;
-  equipped: { ship: string; weapon: string | null; rearWeapon: string | null; shield: string | null; generator: string; motor: string };
-  /** Item IDs permanently owned — once bought, free to re-equip at any time. */
-  ownedItems: string[];
+  /**
+   * Per-system ownership IS equip state — there is no persisted list of past
+   * purchases. Switching to a different item pays/refunds the price difference and
+   * the previous item is gone; there is no "owned but not equipped" limbo state.
+   */
+  equipped: { ship: string; weapon: string | null; rearWeapon: string | null; sideWeapon: string | null; shield: string | null; generator: string; motor: string };
   /** missionId → star ids earned across all runs (best benchmarks; never decreases). */
   missionStars: Record<string, string[]>;
   /** subscriptionId → owned level (1–3). Basic is always 1. */
@@ -36,12 +40,10 @@ export interface SaveData {
   firstBranchChoice?: 'tutorial' | 'missions';
 }
 
-const SAVE_VERSION = 10;
+const SAVE_VERSION = 12;
 const STORAGE_KEY = 'nesro-nova-v2-save';
 
-const DEFAULT_EQUIPPED_ITEMS = [DEFAULT_SHIP_ID, 'pulse-1', 'shield-wall-1', 'generator-torrent-1', 'motor-rush-1'];
-
-/** Maps v9-and-earlier item IDs to their v10 equivalents. */
+/** Maps v9-and-earlier item IDs to their v10+ equivalents. */
 const LEGACY_ID_MAP: Record<string, string> = {
   'shield-1': 'shield-wall-1', 'shield-2': 'shield-wall-2', 'shield-3': 'shield-wall-3',
   'shield-reflex-2': 'shield-reflex-2', 'shield-reflex-3': 'shield-reflex-3',
@@ -62,119 +64,137 @@ export function defaultSave(): SaveData {
       ship: DEFAULT_SHIP_ID,
       weapon: 'pulse-1',
       rearWeapon: null,
+      sideWeapon: null,
       shield: 'shield-wall-1',
       generator: 'generator-torrent-1',
       motor: 'motor-rush-1',
     },
-    ownedItems: [...DEFAULT_EQUIPPED_ITEMS],
     missionStars: {},
     ownedSubscriptions: { 'sub-basic': 1 },
   };
 }
 
-/** True when the given item or ship id has been permanently purchased. */
-export function isOwned(save: SaveData, id: string): boolean {
-  return save.ownedItems.includes(id);
+type ParsedSave = Record<string, unknown>;
+
+/** v11 → v12: add sideWeapon: null to equipped (§5, side weapons). */
+function migrateV11(parsed: ParsedSave): SaveData {
+  const v11 = parsed as unknown as Omit<SaveData, 'version' | 'equipped'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
+  return { ...v11, version: SAVE_VERSION, equipped: { ...v11.equipped, sideWeapon: null } };
 }
 
-/** Loads the save; migrates v2–v6 (keeping coins/equipped/stars/supplies/owned), resets anything older. */
+/** v10 → v12: no data shape change beyond dropping ownedItems (handled by the caller); still needs sideWeapon added. */
+function migrateV10(parsed: ParsedSave): SaveData {
+  const v10 = parsed as unknown as Omit<SaveData, 'version' | 'equipped'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
+  return { ...v10, version: SAVE_VERSION, equipped: { ...v10.equipped, sideWeapon: null } };
+}
+
+/** v9 → v12: shield/generator/motor IDs gain kind prefixes; still needs sideWeapon added. */
+function migrateV9(parsed: ParsedSave): SaveData {
+  const v9 = parsed as unknown as Omit<SaveData, 'equipped'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
+  const oldShip = v9.equipped.ship;
+  const newShip = /-\d+$/.test(oldShip) ? oldShip : `${oldShip}-1`;
+  const renamedEquipped: SaveData['equipped'] = {
+    ...v9.equipped,
+    ship: newShip,
+    shield: v9.equipped.shield !== null ? renameId(v9.equipped.shield) : null,
+    generator: renameId(v9.equipped.generator),
+    motor: renameId(v9.equipped.motor),
+    sideWeapon: null,
+  };
+  return { ...v9, version: SAVE_VERSION, equipped: renamedEquipped };
+}
+
+/** v8 → v12: ship IDs gain level suffix, shield/generator/motor get kind prefixes; still needs sideWeapon added. */
+function migrateV8(parsed: ParsedSave): SaveData {
+  const v8 = parsed as unknown as Omit<SaveData, 'equipped'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
+  const oldShip = v8.equipped.ship;
+  const newShip = /-\d+$/.test(oldShip) ? oldShip : `${oldShip}-1`;
+  const renamedEquipped: SaveData['equipped'] = {
+    ...v8.equipped,
+    ship: newShip,
+    shield: v8.equipped.shield !== null ? renameId(v8.equipped.shield) : null,
+    generator: renameId(v8.equipped.generator),
+    motor: renameId(v8.equipped.motor),
+    sideWeapon: null,
+  };
+  return { ...v8, version: SAVE_VERSION, equipped: renamedEquipped };
+}
+
+/** v7 → v12: weapon and shield became nullable in SaveData; still needs sideWeapon added. */
+function migrateV7(parsed: ParsedSave): SaveData {
+  const v7 = parsed as unknown as Omit<SaveData, 'version' | 'equipped'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
+  return { ...v7, version: SAVE_VERSION, equipped: { ...v7.equipped, sideWeapon: null } };
+}
+
+/** v6 → v12: add rearWeapon: null and sideWeapon: null to equipped. */
+function migrateV6(parsed: ParsedSave): SaveData {
+  const v6 = parsed as unknown as Omit<SaveData, 'version' | 'equipped'> & { equipped: Omit<SaveData['equipped'], 'rearWeapon' | 'sideWeapon'> };
+  return { ...v6, version: SAVE_VERSION, equipped: { ...v6.equipped, rearWeapon: null, sideWeapon: null } };
+}
+
+/** v5 → v12: add ownedSubscriptions with Basic at Lv1, rearWeapon: null, sideWeapon: null. */
+function migrateV5(parsed: ParsedSave): SaveData {
+  const v5 = parsed as unknown as Omit<SaveData, 'version' | 'ownedSubscriptions' | 'equipped'> & { equipped: Omit<SaveData['equipped'], 'rearWeapon' | 'sideWeapon'> };
+  return {
+    ...v5,
+    version: SAVE_VERSION,
+    equipped: { ...v5.equipped, rearWeapon: null, sideWeapon: null },
+    ownedSubscriptions: { 'sub-basic': 1 },
+  };
+}
+
+/** v2/v3/v4 → v12: earliest supported shape — only coins/equipped/stars/supplies survive. */
+function migrateLegacy(parsed: ParsedSave): SaveData {
+  const rawEquipped = (parsed['equipped'] as Omit<SaveData['equipped'], 'rearWeapon' | 'sideWeapon' | 'ship'> | undefined) ?? defaultSave().equipped;
+  const baseEquipped: Omit<SaveData['equipped'], 'rearWeapon' | 'sideWeapon'> = parsed['version'] === 4
+    ? { ...(parsed['equipped'] as Omit<SaveData['equipped'], 'rearWeapon' | 'sideWeapon'> | undefined) ?? defaultSave().equipped }
+    : { ship: DEFAULT_SHIP_ID, ...rawEquipped };
+  const oldEquipped: SaveData['equipped'] = {
+    ...baseEquipped,
+    rearWeapon: null,
+    sideWeapon: null,
+    shield: baseEquipped.shield !== null ? renameId(baseEquipped.shield) || null : null,
+    generator: renameId(baseEquipped.generator),
+    motor: renameId(baseEquipped.motor),
+  };
+  return {
+    ...defaultSave(),
+    coins: typeof parsed['coins'] === 'number' ? parsed['coins'] : 0,
+    equipped: oldEquipped,
+    missionStars: (parsed['missionStars'] as SaveData['missionStars'] | undefined) ?? {},
+    ownedSupplyCharges: (parsed['ownedSupplyCharges'] as SaveData['ownedSupplyCharges'] | undefined) ?? {},
+  };
+}
+
+/** Picks the right migration for a parsed save's version; null for anything unsupported. */
+function migrateSave(parsed: ParsedSave): SaveData | null {
+  switch (parsed['version']) {
+    case 11: return migrateV11(parsed);
+    case 10: return migrateV10(parsed);
+    case 9: return migrateV9(parsed);
+    case 8: return migrateV8(parsed);
+    case 7: return migrateV7(parsed);
+    case 6: return migrateV6(parsed);
+    case 5: return migrateV5(parsed);
+    case 4: case 3: case 2: return migrateLegacy(parsed);
+    default: return null;
+  }
+}
+
+/** Loads the save; migrates v2–v11 (keeping coins/equipped/stars/supplies), resets anything older. */
 export function loadSave(): SaveData {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (raw === null) return defaultSave();
   try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const parsed = JSON.parse(raw) as ParsedSave;
+    // ownedItems (multi-ownership tracking, v10 and earlier) is gone: a system's only
+    // owned item is whatever is equipped, so there is nothing left to carry over.
+    delete parsed['ownedItems'];
     if (parsed['version'] === SAVE_VERSION) return parsed as unknown as SaveData;
-    // v9 → v10: shield/generator/motor IDs gain kind prefixes
-    if (parsed['version'] === 9) {
-      const v9 = parsed as unknown as SaveData;
-      const oldShip = v9.equipped.ship;
-      const newShip = /-\d+$/.test(oldShip) ? oldShip : `${oldShip}-1`;
-      const renamedEquipped: SaveData['equipped'] = {
-        ...v9.equipped,
-        ship: newShip,
-        shield: v9.equipped.shield !== null ? renameId(v9.equipped.shield) : null,
-        generator: renameId(v9.equipped.generator),
-        motor: renameId(v9.equipped.motor),
-      };
-      const renamedOwned = v9.ownedItems
-        .map((id) => (id.startsWith('ship-') && !/-\d+$/.test(id) ? `${id}-1` : renameId(id)));
-      const migrated: SaveData = { ...v9, version: SAVE_VERSION, equipped: renamedEquipped, ownedItems: renamedOwned };
-      persistSave(migrated);
-      return migrated;
-    }
-    // v8 → v9 (now v10): ship IDs gain level suffix, shield/generator/motor get kind prefixes
-    if (parsed['version'] === 8) {
-      const v8 = parsed as unknown as SaveData;
-      const oldShip = v8.equipped.ship;
-      const newShip = /-\d+$/.test(oldShip) ? oldShip : `${oldShip}-1`;
-      const renamedEquipped: SaveData['equipped'] = {
-        ...v8.equipped,
-        ship: newShip,
-        shield: v8.equipped.shield !== null ? renameId(v8.equipped.shield) : null,
-        generator: renameId(v8.equipped.generator),
-        motor: renameId(v8.equipped.motor),
-      };
-      const renamedOwned = v8.ownedItems
-        .map((id) => (id.startsWith('ship-') && !/-\d+$/.test(id) ? `${id}-1` : renameId(id)));
-      const migrated: SaveData = { ...v8, version: SAVE_VERSION, equipped: renamedEquipped, ownedItems: renamedOwned };
-      persistSave(migrated);
-      return migrated;
-    }
-    // v7 → v8: weapon and shield became nullable in SaveData (no data change, just version bump)
-    if (parsed['version'] === 7) {
-      const migrated: SaveData = { ...(parsed as unknown as SaveData), version: SAVE_VERSION };
-      persistSave(migrated);
-      return migrated;
-    }
-    // v6 → v7: add rearWeapon: null to equipped
-    if (parsed['version'] === 6) {
-      const v6 = parsed as unknown as Omit<SaveData, 'version' | 'equipped'> & { equipped: Omit<SaveData['equipped'], 'rearWeapon'> };
-      const migrated: SaveData = {
-        ...v6,
-        version: SAVE_VERSION,
-        equipped: { ...v6.equipped, rearWeapon: null },
-      };
-      persistSave(migrated);
-      return migrated;
-    }
-    // v5 → v6: add ownedSubscriptions with Basic at Lv1
-    if (parsed['version'] === 5) {
-      const migrated: SaveData = {
-        ...(parsed as unknown as Omit<SaveData, 'version' | 'ownedSubscriptions' | 'equipped'> & { equipped: Omit<SaveData['equipped'], 'rearWeapon'> }),
-        version: SAVE_VERSION,
-        equipped: { ...(parsed['equipped'] as Omit<SaveData['equipped'], 'rearWeapon'>), rearWeapon: null },
-        ownedSubscriptions: { 'sub-basic': 1 },
-      };
-      persistSave(migrated);
-      return migrated;
-    }
-    if (parsed['version'] === 4 || parsed['version'] === 3 || parsed['version'] === 2) {
-      const rawEquipped = (parsed['equipped'] as Omit<SaveData['equipped'], 'rearWeapon' | 'ship'> | undefined) ?? defaultSave().equipped;
-      const baseEquipped: Omit<SaveData['equipped'], 'rearWeapon'> = parsed['version'] === 4
-        ? { ...(parsed['equipped'] as Omit<SaveData['equipped'], 'rearWeapon'> | undefined) ?? defaultSave().equipped }
-        : { ship: DEFAULT_SHIP_ID, ...rawEquipped };
-      const oldEquipped: SaveData['equipped'] = {
-        ...baseEquipped,
-        rearWeapon: null,
-        shield: baseEquipped.shield !== null ? renameId(baseEquipped.shield) || null : null,
-        generator: renameId(baseEquipped.generator),
-        motor: renameId(baseEquipped.motor),
-      };
-      const equippedIds = [oldEquipped.ship, oldEquipped.weapon, oldEquipped.shield, oldEquipped.generator, oldEquipped.motor]
-        .filter((id): id is string => id !== null);
-      const withAncestors = equippedIds.flatMap((id) => [id, ...requiresAncestors(id)]);
-      const migrated: SaveData = {
-        ...defaultSave(),
-        coins: typeof parsed['coins'] === 'number' ? parsed['coins'] : 0,
-        equipped: oldEquipped,
-        missionStars: (parsed['missionStars'] as SaveData['missionStars'] | undefined) ?? {},
-        ownedSupplyCharges: (parsed['ownedSupplyCharges'] as SaveData['ownedSupplyCharges'] | undefined) ?? {},
-        ownedItems: [...new Set([...DEFAULT_EQUIPPED_ITEMS, ...withAncestors])],
-      };
-      persistSave(migrated);
-      return migrated;
-    }
-    return defaultSave();
+    const migrated = migrateSave(parsed);
+    if (migrated === null) return defaultSave();
+    persistSave(migrated);
+    return migrated;
   } catch {
     return defaultSave();
   }
@@ -208,6 +228,7 @@ export function buildLoadout(save: SaveData): LoadoutSnapshot {
     ship: shipById(save.equipped.ship),
     weapon: save.equipped.weapon !== null ? weaponSpecById(save.equipped.weapon) : null,
     rearWeapon: save.equipped.rearWeapon !== null ? rearWeaponSpecById(save.equipped.rearWeapon) : null,
+    sideWeapon: save.equipped.sideWeapon !== null ? sideWeaponSpecById(save.equipped.sideWeapon) : null,
     shield: save.equipped.shield !== null ? shieldSpecById(save.equipped.shield) : null,
     generator: generatorSpecById(save.equipped.generator),
     motor: motorSpecById(save.equipped.motor),
@@ -219,13 +240,17 @@ export function buildLoadout(save: SaveData): LoadoutSnapshot {
 }
 
 /**
- * Equip or unequip a rear weapon. Pass `null` to unequip (free).
- * Already-owned weapons: free re-equip. Within-kind upgrade: pay the level diff.
- * New kind: pay the flat price. Rear weapons are permanent — never deleted on switch.
+ * Equip or unequip a rear weapon. Pass `null` to unequip — same trade-in model as
+ * switching to any other kind, refunding the equipped item's full price. Switching
+ * to a different kind/level pays the price difference and discards whatever was
+ * equipped before — only one rear weapon can ever be owned at a time.
  */
 export function switchRearWeapon(save: SaveData, rearWeaponId: string | null): SaveData {
   if (rearWeaponId === null) {
-    const next: SaveData = { ...save, equipped: { ...save.equipped, rearWeapon: null } };
+    const currentId = save.equipped.rearWeapon;
+    if (currentId === null) return save;
+    const refund = REAR_WEAPON_ITEMS[currentId]?.price ?? 0;
+    const next: SaveData = { ...save, coins: save.coins + refund, equipped: { ...save.equipped, rearWeapon: null } };
     persistSave(next);
     return next;
   }
@@ -239,16 +264,46 @@ export function switchRearWeapon(save: SaveData, rearWeaponId: string | null): S
   if (cost > 0 && save.coins < cost) {
     throw new Error(`Not enough coins to buy rear weapon "${rearWeaponId}" (need ${String(cost)}, have ${String(save.coins)})`);
   }
-  const newOwned = new Set(save.ownedItems);
-  for (const id of save.ownedItems) {
-    if (REAR_WEAPON_ITEMS[id] !== undefined) newOwned.delete(id);
-  }
-  newOwned.add(rearWeaponId);
   const next: SaveData = {
     ...save,
     coins: save.coins - cost,
     equipped: { ...save.equipped, rearWeapon: rearWeaponId },
-    ownedItems: [...newOwned],
+  };
+  persistSave(next);
+  return next;
+}
+
+/**
+ * Equip or unequip a side weapon. Pass `null` to unequip — same trade-in model as
+ * switching to any other kind, refunding the equipped item's full price. Switching
+ * to a different kind/level pays the price difference and discards whatever was
+ * equipped before — only one side weapon can ever be owned at a time. Charges are
+ * a combat-only concept (ShipState.sideWeaponCharges); the save only tracks which
+ * item is equipped, not remaining charges.
+ */
+export function switchSideWeapon(save: SaveData, sideWeaponId: string | null): SaveData {
+  if (sideWeaponId === null) {
+    const currentId = save.equipped.sideWeapon;
+    if (currentId === null) return save;
+    const refund = SIDE_WEAPON_ITEMS[currentId]?.price ?? 0;
+    const next: SaveData = { ...save, coins: save.coins + refund, equipped: { ...save.equipped, sideWeapon: null } };
+    persistSave(next);
+    return next;
+  }
+  sideWeaponSpecById(sideWeaponId);
+  const currentId = save.equipped.sideWeapon;
+  if (currentId === sideWeaponId) return save;
+  const newItem = SIDE_WEAPON_ITEMS[sideWeaponId];
+  if (!newItem) throw new Error(`Unknown side weapon "${sideWeaponId}"`);
+  const currentPrice = currentId !== null ? (SIDE_WEAPON_ITEMS[currentId]?.price ?? 0) : 0;
+  const cost = newItem.price - currentPrice;
+  if (cost > 0 && save.coins < cost) {
+    throw new Error(`Not enough coins to buy side weapon "${sideWeaponId}" (need ${String(cost)}, have ${String(save.coins)})`);
+  }
+  const next: SaveData = {
+    ...save,
+    coins: save.coins - cost,
+    equipped: { ...save.equipped, sideWeapon: sideWeaponId },
   };
   persistSave(next);
   return next;
@@ -341,70 +396,61 @@ export function applyMissionResult(save: SaveData, result: MissionResult): Appli
   return { save: next, newStarIds };
 }
 
-/**
- * Equips an item. Cost = newPrice − currentPrice (trade-in model).
- * Positive cost = upgrade; negative cost = downgrade refund.
- * The previously equipped item is removed from ownedItems on downgrade so it
- * cannot be re-equipped for free after a refund.
- */
+/** cost = newPrice − currentPrice (trade-in model). Negative = refund. */
+export function switchCost(itemPrice: number, currentPrice: number): number {
+  return itemPrice - currentPrice;
+}
+
+/** Equips an item. Trade-in model (see `switchCost`) — the previously equipped item is gone either way. */
 export function switchItem(save: SaveData, itemId: string): SaveData {
   const item = itemById(itemId);
   const currentId = save.equipped[item.system];
   if (currentId === itemId) return save;
-  if (item.requires !== undefined && !save.ownedItems.includes(item.requires)) {
-    throw new Error(`Cannot buy "${itemId}": must own "${item.requires}" first`);
-  }
   const currentPrice = currentId !== null ? itemById(currentId).price : 0;
-  const cost = item.price - currentPrice;
+  const cost = switchCost(item.price, currentPrice);
   if (cost > 0 && save.coins < cost) {
     throw new Error(`Not enough coins to buy "${itemId}" (need ${String(cost)}, have ${String(save.coins)})`);
   }
-  const newOwned = new Set(save.ownedItems);
-  if (cost < 0 && currentId !== null) newOwned.delete(currentId);
-  newOwned.add(itemId);
   const next: SaveData = {
     ...save,
     coins: save.coins - cost,
     equipped: { ...save.equipped, [item.system]: itemId },
-    ownedItems: [...newOwned],
   };
   persistSave(next);
   return next;
 }
 
-/** Unequip the front weapon (sets weapon to null, no refund). */
+/** Unequip the front weapon. Same trade-in model as switchItem — refunds the equipped item's full price. */
 export function unequipWeapon(save: SaveData): SaveData {
   if (save.equipped.weapon === null) return save;
-  const next: SaveData = { ...save, equipped: { ...save.equipped, weapon: null } };
+  const refund = itemById(save.equipped.weapon).price;
+  const next: SaveData = { ...save, coins: save.coins + refund, equipped: { ...save.equipped, weapon: null } };
   persistSave(next);
   return next;
 }
 
-/** Unequip the shield (sets shield to null, no refund). */
+/** Unequip the shield. Same trade-in model as switchItem — refunds the equipped item's full price. */
 export function unequipShield(save: SaveData): SaveData {
   if (save.equipped.shield === null) return save;
-  const next: SaveData = { ...save, equipped: { ...save.equipped, shield: null } };
+  const refund = itemById(save.equipped.shield).price;
+  const next: SaveData = { ...save, coins: save.coins + refund, equipped: { ...save.equipped, shield: null } };
   persistSave(next);
   return next;
 }
 
-/** Equips a ship. Trade-in model: cost = newPrice − currentPrice (negative = refund). */
+/** Equips a ship. Trade-in model (see `switchCost`) — the previously equipped ship is gone either way. */
 export function switchShip(save: SaveData, shipId: string): SaveData {
   const ship = shipById(shipId);
-  if (save.equipped.ship === shipId) return save;
-  const cost = ship.price - shipById(save.equipped.ship).price;
+  const currentShipId = save.equipped.ship;
+  if (currentShipId === shipId) return save;
+  const cost = switchCost(ship.price, shipById(currentShipId).price);
   if (cost > 0 && save.coins < cost) {
     throw new Error(`Not enough coins to buy "${shipId}" (need ${String(cost)}, have ${String(save.coins)})`);
   }
-  const currentShipId = save.equipped.ship;
-  const newOwned = new Set(save.ownedItems);
-  if (cost < 0) newOwned.delete(currentShipId);
-  newOwned.add(shipId);
   const next: SaveData = {
     ...save,
     coins: save.coins - cost,
     equipped: { ...save.equipped, ship: shipId },
-    ownedItems: [...newOwned],
   };
   persistSave(next);
   return next;

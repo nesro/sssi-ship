@@ -221,18 +221,40 @@ Prices and exact stats: see `v2/src/data/items.ts`. Shop unlock: by mission comp
 ### Rear weapon
 
 **AoE — hits multiple enemies at once.** Mounted on the back of the ship, fires sideways into
-the queue. Where the front weapon picks off the strongest single target, the rear weapon clears
-clusters. Essential against swarms and fodder floods; less useful vs single high-HP targets.
+the queue at a fixed interval (toggled on/off, never disabled by low energy). Where the front
+weapon picks off the strongest single target, the rear weapon clears clusters. Essential
+against swarms and fodder floods; less useful vs single high-HP targets. Optional slot — no
+starter is auto-equipped.
 
-Types and levels: TBD.
+Five kinds, five levels each:
+
+| Kind | Character |
+|------|-----------|
+| Grenade Launcher | Balanced mid-queue burst — the baseline |
+| Cluster Bomb | Widest spread, lowest per-target damage |
+| Flak Turret | Wide shrapnel spray, anti-swarm specialist |
+| Arc Discharger | Electric chain between two enemies |
+| Plasma Cannon | Slow charge, massive blast — punishes high-HP targets |
+
+Prices and exact stats: see `v2/src/data/items.ts`.
 
 ### Side weapons
 
-**Manual-fire, limited-ammo** damage weapons tapped from the button panel. Unlike auto-firing
-front/rear weapons, side weapons require deliberate timing — saving them for a blocker, a
-swarm burst, or a boss window.
+**Manual-fire, limited-ammo.** The player taps a button to consume one charge for an immediate
+burst — unlike auto-firing front/rear weapons, side weapons require deliberate timing, saving
+them for a blocker, a swarm burst, or a boss window. Charges are set by the equipped kind/level
+and refill to full at the start of every mission. Optional slot — no starter is auto-equipped.
 
-Charges are fixed per mission (purchased in shop). Types and levels: TBD.
+Four kinds, five levels each:
+
+| Kind | Character |
+|------|-----------|
+| Focus Beam | Single massive hit to the front-most enemy — the baseline, most charges |
+| Flechette Spread | Partial-AOE burst across a front cluster |
+| Railgun | Devastating single hit, fewer charges — save it for a blocker or boss |
+| Orbital Strike | True AOE, hits every enemy on screen — rarest charges, top tier |
+
+Prices and exact stats: see `v2/src/data/items.ts`.
 
 ### Shield
 
@@ -613,8 +635,8 @@ median player earns T2/T3. Recalibrate whenever mission timeline changes.
 | Item | Notes |
 |------|-------|
 | **Landscape layout** | ✓ Implemented — 960×540, three-panel combat split, HubScene shop two-column layout |
-| **Rear weapon** | New module slot; not yet in core or shop |
-| **Side weapons** | New manual-fire module; not yet in core or shop |
+| **Rear weapon** | ✓ Implemented — 5 kinds × 5 levels, auto-fire toggle, shop tab, save model |
+| **Side weapons** | ✓ Implemented — 4 kinds × 5 levels, manual-fire button + per-mission charges, shop tab, save model, replay-recorded |
 | **Subscriptions** | ✓ Implemented — 5 subscription types × 3 levels, shop tab, save model, card pool wired |
 | **Motor toggles removed** | Motor is now always-on; toggle code to be removed |
 | **Three manual toggles** | Front weapon, rear weapon, shield recharge as button-panel toggles |

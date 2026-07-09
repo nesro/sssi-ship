@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import type { CoreState } from '../core/types';
+import { computeSupplyButtonsViewModel } from '../viewmodel/combat';
 import { cssColor, PALETTE } from './palette';
 import { BTN_PANEL_W, BTN_X, fontPx, px } from './layout';
 import { UI_FONT } from './widgets';
@@ -18,19 +19,20 @@ export class SupplyButtons {
     state: CoreState,
     onTap: (slot: number) => void,
   ) {
+    const vm = computeSupplyButtonsViewModel(state);
     const cx = px(BTN_X + BTN_PANEL_W / 2);
     scene.add.text(cx, px(BUTTONS_TOP - 14), 'BOOST', {
       fontFamily: UI_FONT,
       fontSize: `${String(fontPx(8))}px`,
       color: cssColor(PALETTE.generatorAmber),
-    }).setOrigin(0.5, 1).setDepth(12).setAlpha(state.supplies.length > 0 ? 0.6 : 0.2);
-    if (state.supplies.length === 0) {
+    }).setOrigin(0.5, 1).setDepth(12).setAlpha(vm.hasSupplies ? 0.6 : 0.2);
+    if (!vm.hasSupplies) {
       scene.add.text(cx, px(BUTTONS_TOP + 16), '—', {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`, color: '#334455',
       }).setOrigin(0.5).setDepth(12);
     }
 
-    state.supplies.forEach((supply, slot) => {
+    vm.buttons.forEach((button, slot) => {
       const y = px(BUTTONS_TOP + slot * (BUTTON_H + BUTTON_GAP));
       const panel = scene.add
         .rectangle(cx, y, px(BUTTON_W), px(BUTTON_H), 0x0a0a18, 0.9)
@@ -47,18 +49,24 @@ export class SupplyButtons {
         })
         .setOrigin(0.5)
         .setDepth(13);
-      this.buttons.push({ panel, label });
+      const entry = { panel, label };
+      this.buttons.push(entry);
+      this.applyButtonState(entry, button.label, button.empty);
     });
   }
 
   update(state: CoreState): void {
+    const vm = computeSupplyButtonsViewModel(state);
     this.buttons.forEach((button, slot) => {
-      const supply = state.supplies[slot];
+      const supply = vm.buttons[slot];
       if (supply === undefined) return;
-      const empty = supply.chargesLeft <= 0;
-      button.label.setText(`${supply.spec.name}  ×${String(supply.chargesLeft)}`);
-      button.panel.setAlpha(empty ? 0.3 : 1);
-      button.label.setAlpha(empty ? 0.3 : 1);
+      this.applyButtonState(button, supply.label, supply.empty);
     });
+  }
+
+  private applyButtonState(button: { panel: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text }, label: string, empty: boolean): void {
+    button.label.setText(label);
+    button.panel.setAlpha(empty ? 0.3 : 1);
+    button.label.setAlpha(empty ? 0.3 : 1);
   }
 }

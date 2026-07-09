@@ -1,5 +1,6 @@
 import { CARD_ACTION_SKIP } from './constants';
 import { resolveAbilityAction } from './cards';
+import { fireSideWeapon } from './combat';
 import { resolveNarrator } from './narrator';
 import { createCoreState } from './state';
 import { applyBoost } from './supplies';
@@ -21,10 +22,12 @@ export interface ReplayRecord {
   /** Ordered action stream: -2 = reroll, -1 = skip, 0..2 = pick index. */
   cardPicks: number[];
   boostTaps: { tick: number; slot: number }[];
+  /** Ticks at which the side weapon was manually fired. */
+  sideWeaponTaps: number[];
   resultHash: string;
 }
 
-const REPLAY_VERSION = 1;
+const REPLAY_VERSION = 2;
 
 /** Safety valve for headless runs; 10 minutes of simulated time, far above mission length. */
 const DEFAULT_MAX_TICKS = 6000;
@@ -35,9 +38,13 @@ export type PickPolicy = (state: CoreState, offer: AbilityOffer) => number;
 /** Returns a supply slot to tap before the next tick, or null. Defaults to never. */
 export type BoostPolicy = (state: CoreState) => number | null;
 
+/** Returns true to fire the side weapon before the next tick. Defaults to never. */
+export type SideWeaponPolicy = (state: CoreState) => boolean;
+
 export interface RunPolicies {
   pickAbility?: PickPolicy;
   useBoost?: BoostPolicy;
+  useSideWeapon?: SideWeaponPolicy;
   abilityPool?: AbilityDefinition[];
   maxTicks?: number;
 }
@@ -57,6 +64,7 @@ export function runMission(
   const maxTicks = policies.maxTicks ?? DEFAULT_MAX_TICKS;
   const pickAbility = policies.pickAbility ?? (() => CARD_ACTION_SKIP);
   const useBoost = policies.useBoost ?? (() => null);
+  const useSideWeapon = policies.useSideWeapon ?? (() => false);
   const state = createCoreState(mission, loadout, seed, policies.abilityPool ?? []);
 
   while (state.status === 'running' && state.tick < maxTicks) {
@@ -67,6 +75,7 @@ export function runMission(
     }
     const slot = useBoost(state);
     if (slot !== null) applyBoost(state, slot);
+    if (useSideWeapon(state)) fireSideWeapon(state);
     advanceTick(state);
   }
   if (state.status === 'running') {
@@ -85,6 +94,7 @@ function buildReplayRecord(state: CoreState): ReplayRecord {
     loadout: state.loadout,
     cardPicks: [...state.abilityActions],
     boostTaps: [...state.boostTaps],
+    sideWeaponTaps: [...state.sideWeaponTaps],
     resultHash: hashCoreState(state),
   };
 }
@@ -102,6 +112,7 @@ export function verifyReplay(
     abilityPool,
     pickAbility: replayCardPolicy(record),
     useBoost: replayBoostPolicy(record),
+    useSideWeapon: replaySideWeaponPolicy(record),
   });
   return rerun.replay.resultHash === record.resultHash;
 }
@@ -122,6 +133,18 @@ function replayBoostPolicy(record: ReplayRecord): BoostPolicy {
       return tap.slot;
     }
     return null;
+  };
+}
+
+/** Re-fires the side weapon at its originally recorded ticks, in order. */
+function replaySideWeaponPolicy(record: ReplayRecord): SideWeaponPolicy {
+  let cursor = 0;
+  return (state) => {
+    if (record.sideWeaponTaps[cursor] === state.tick) {
+      cursor += 1;
+      return true;
+    }
+    return false;
   };
 }
 

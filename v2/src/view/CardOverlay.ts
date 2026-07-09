@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import { CARD_ACTION_REROLL } from '../core/constants';
 import type { AbilityOffer, CoreState } from '../core/types';
-import { abilityById } from '../data/cards';
+import { computeCardOverlayViewModel } from '../viewmodel/combat';
+import type { CardOverlayViewModel, OfferCardViewModel } from '../viewmodel/combat';
 import { cssColor, PALETTE } from './palette';
 import { fontPx, px, SCREEN_HEIGHT, SCREEN_WIDTH } from './layout';
 import { addModalBackdrop, addTextButton, UI_FONT } from './widgets';
@@ -11,13 +12,6 @@ const DEPTH = 30;
 const CARD_WIDTH_LOGICAL = 150;
 const CARD_HEIGHT_LOGICAL = 200;
 const CARD_GAP_LOGICAL = 10;
-
-const COMPANY_COLORS: Record<string, number> = {
-  nexus: PALETTE.weaponCyan,
-  aegis: PALETTE.shieldBlue,
-  quantum: PALETTE.generatorAmber,
-  comet: PALETTE.motorMagenta,
-};
 
 /**
  * The support-call modal: a helper ship offers 3 cards; pick one, reroll, or skip.
@@ -36,6 +30,7 @@ export class CardOverlay {
   }
 
   show(offer: AbilityOffer, state: CoreState): void {
+    const vm = computeCardOverlayViewModel(offer, state);
     this.hide();
     this.objects.push(addModalBackdrop(this.scene, DEPTH));
     this.objects.push(
@@ -59,10 +54,8 @@ export class CardOverlay {
         .setAlpha(0.6)
         .setDepth(DEPTH + 1),
     );
-    offer.abilityIds.forEach((cardId, index) => {
-      this.addCard(cardId, index);
-    });
-    this.addFooterButtons(state);
+    vm.cards.forEach((card, index) => { this.addCard(card, index); });
+    this.addFooterButtons(vm);
   }
 
   hide(): void {
@@ -70,9 +63,8 @@ export class CardOverlay {
     this.objects = [];
   }
 
-  private addCard(cardId: string, index: number): void {
-    const card = abilityById(cardId);
-    const color = COMPANY_COLORS[card.company] ?? PALETTE.hullWhite;
+  private addCard(card: OfferCardViewModel, index: number): void {
+    const color = card.companyColor;
     const width = px(CARD_WIDTH_LOGICAL);
     const height = px(CARD_HEIGHT_LOGICAL);
     // 3 cards side by side, centered
@@ -99,8 +91,7 @@ export class CardOverlay {
     iconGfx.fillCircle(iconCX, iconCY, px(11));
     iconGfx.fillStyle(color, 0.80);
     iconGfx.fillCircle(iconCX, iconCY, px(6));
-    const COMPANY_CHARS: Record<string, string> = { nexus: 'N', aegis: 'A', quantum: 'Q', comet: 'C' };
-    const iconText = this.scene.add.text(iconCX, iconCY, COMPANY_CHARS[card.company] ?? '?', {
+    const iconText = this.scene.add.text(iconCX, iconCY, card.companyChar, {
       fontFamily: UI_FONT,
       fontSize: `${String(fontPx(9))}px`,
       color: cssColor(color),
@@ -129,14 +120,14 @@ export class CardOverlay {
     this.objects.push(panel, iconGfx, iconText, name, description);
   }
 
-  private addFooterButtons(state: CoreState): void {
-    if (state.rerollsLeft <= 0) return;
+  private addFooterButtons(vm: CardOverlayViewModel): void {
+    if (!vm.showReroll) return;
     const y = SCREEN_HEIGHT / 2 + px(CARD_HEIGHT_LOGICAL / 2) + px(40);
     this.objects.push(
       addTextButton(this.scene, {
         x: SCREEN_WIDTH / 2,
         y,
-        label: `REROLL (${String(state.rerollsLeft)})`,
+        label: `REROLL (${String(vm.rerollsLeft)})`,
         color: PALETTE.generatorAmber,
         onClick: () => { this.onAction(CARD_ACTION_REROLL); },
       }).setDepth(DEPTH + 2),

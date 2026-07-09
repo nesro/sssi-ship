@@ -13,41 +13,18 @@ export interface LaserBolt {
   targetY: number;
 }
 
-export interface ThrusterParams {
+interface ThrusterParams {
   speed: number; minBright: number; range: number; hBase: number; hScale: number;
 }
 
 /** Per-motor-level animation parameters — keyed by motor level (1|2|3). */
-export const THRUSTER_PARAMS: Readonly<Record<1 | 2 | 3, ThrusterParams>> = {
+const THRUSTER_PARAMS: Readonly<Record<1 | 2 | 3, ThrusterParams>> = {
   1: { speed: 0.014, minBright: 0.55, range: 0.45, hBase: 10, hScale: 10 },
   2: { speed: 0.020, minBright: 0.60, range: 0.40, hBase: 18, hScale: 14 },
   3: { speed: 0.030, minBright: 0.62, range: 0.38, hBase: 28, hScale: 22 },
 };
 
-export interface ThrusterOpts { flicker: number; motorLevel?: 1 | 2 | 3; kindColor?: number }
-
-/** Outer-flame color per motor kind. Inner flame is always amber/white (heat). */
-export const MOTOR_KIND_COLORS: Readonly<Record<string, number>> = {
-  rush:      0x00eeff,
-  tactical:  0x44ff88,
-  sentinel:  0xaaaaff,
-  overdrive: 0xff2244,
-};
-
-/** Extracts the outer-flame color from a motor item ID like 'motor-rush-3'. */
-export function motorKindColorFromId(motorId: string): number {
-  const kind = motorId.split('-')[1] ?? '';
-  return MOTOR_KIND_COLORS[kind] ?? 0xff44cc;
-}
-
-/** Extracts the visual tier (1|2|3) from a motor item ID like 'motor-rush-4'. Levels 3–5 all map to tier 3. */
-export function motorLevelFromId(motorId: string): 1 | 2 | 3 {
-  const parts = motorId.split('-');
-  const lv = parseInt(parts[parts.length - 1] ?? '1', 10);
-  if (lv >= 3) return 3;
-  if (lv === 2) return 2;
-  return 1;
-}
+interface ThrusterOpts { flicker: number; motorLevel?: 1 | 2 | 3; kindColor?: number }
 
 export interface ShieldRingOpts { intensity: number; flash?: number }
 
@@ -74,7 +51,7 @@ export function drawShieldRings(
 }
 
 /** Draws the animated thruster flame pointing DOWN. Clears `g` before drawing. */
-export function drawThruster(
+function drawThruster(
   g: Phaser.GameObjects.Graphics,
   cx: number, baseY: number, h: number,
   opts: ThrusterOpts,
@@ -120,7 +97,7 @@ export function drawThruster(
 }
 
 /** Draws engine-pod housing geometry on the ship hull. No-op for level 1. Clears `g` before drawing. */
-export function drawMotorHousing(
+function drawMotorHousing(
   g: Phaser.GameObjects.Graphics,
   cx: number, shipCY: number, motorLevel: 1 | 2 | 3,
   kindColor = 0xff44cc,
@@ -153,6 +130,33 @@ export function drawMotorHousing(
     g.fillCircle(cx - px(21), shipCY + px(8), px(3));
     g.fillCircle(cx + px(21), shipCY + px(8), px(3));
   }
+}
+
+/** Vertical offset from ship center to the thruster flame's base — shared by every scene. */
+const THRUSTER_FLAME_Y_OFFSET = 24;
+
+export interface ThrusterAssemblyOpts { motorLevel: 1 | 2 | 3; kindColor: number; phase: number }
+
+/**
+ * Draws the full thruster assembly (flame + housing) for a ship at (shipCenterX,
+ * shipCenterY). The only thing that differs between scenes is how they track the
+ * ship's own position (animated drift/bob in combat, static in the shop preview) —
+ * everything past that position is identical, so it lives here once.
+ */
+export function renderThrusterAssembly(
+  thrusterGfx: Phaser.GameObjects.Graphics,
+  motorGfx: Phaser.GameObjects.Graphics,
+  shipCenterX: number, shipCenterY: number,
+  opts: ThrusterAssemblyOpts,
+): void {
+  const { motorLevel, kindColor, phase } = opts;
+  const p = THRUSTER_PARAMS[motorLevel];
+  const flicker = p.minBright + p.range * Math.sin(phase * p.speed);
+  drawThruster(
+    thrusterGfx, shipCenterX, shipCenterY + px(THRUSTER_FLAME_Y_OFFSET),
+    px(p.hBase + p.hScale * flicker), { flicker, motorLevel, kindColor },
+  );
+  drawMotorHousing(motorGfx, shipCenterX, shipCenterY, motorLevel, kindColor);
 }
 
 /** Draws the weapon-kind indicator at the gun hardpoints. Clears `g` before drawing. */

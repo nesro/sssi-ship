@@ -22,6 +22,7 @@ export const FIXTURE_SHIP: ShipSpec = {
   passiveKind: 'enemy-miss-bonus',
   passiveValue: 0,
   passiveDescription: 'No passive',
+  blurb: 'Test fixture ship.',
 };
 
 export const FIXTURE_WEAPON: NonNullable<LoadoutSnapshot['weapon']> = {
@@ -50,10 +51,25 @@ export const FIXTURE_REAR_WEAPON: NonNullable<LoadoutSnapshot['rearWeapon']> = {
   critMult: 2.0,
 };
 
+export const FIXTURE_SIDE_WEAPON: NonNullable<LoadoutSnapshot['sideWeapon']> = {
+  id: 'fix-side',
+  kind: 'focus',
+  damagePerShot: 40,
+  ticksBetweenShots: 0,
+  energyPerShot: 0,
+  maxTargets: 1,
+  falloffPerTarget: 1,
+  critChance: 0,
+  missChance: 0,
+  critMult: 2.0,
+  maxCharges: 3,
+};
+
 export const FIXTURE_LOADOUT: LoadoutSnapshot = {
   ship: FIXTURE_SHIP,
   weapon: FIXTURE_WEAPON,
   rearWeapon: null,
+  sideWeapon: null,
   shield: { id: 'fix-shield', capacity: 30, pulseShieldFraction: 0.1 },
   generator: { id: 'fix-generator', outputPerTick: 2, capacity: 50, pulseDrainFraction: 0.5 },
   motor: { id: 'fix-motor', timelineMultiplier: 1, powerDrawPerTick: 0.3 },

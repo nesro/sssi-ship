@@ -22,40 +22,19 @@ import { mulberry32 } from '../src/core/rng';
 import type { AbilityOffer, CoreState, LoadoutSnapshot } from '../src/core/types';
 import { ALL_ABILITIES, abilityById } from '../src/data/cards';
 import { ALL_MISSIONS } from '../src/data/missions';
-import {
-  DEFAULT_SHIP_ID,
-  generatorSpecById,
-  motorSpecById,
-  shieldSpecById,
-  shipById,
-  weaponSpecById,
-} from '../src/data/items';
 import { STARTER_LOADOUT } from '../src/data/loadouts';
+import { starterKindLoadoutAtLevel, weaponAtKindIndex } from './loadoutPresets';
 
 // ── Loadout presets ──────────────────────────────────────────────────────────
+// mid/full read kind index + level from src/data/items.ts's *_KINDS arrays instead
+// of hardcoding item ids — see loadoutPresets.ts for why.
 
 const LOADOUTS: Record<string, LoadoutSnapshot> = {
   starter: STARTER_LOADOUT,
-  mid: {
-    ship: shipById(DEFAULT_SHIP_ID),
-    weapon: weaponSpecById('pulse-3'),
-    rearWeapon: null,
-    shield: shieldSpecById('shield-2'),
-    generator: generatorSpecById('generator-2'),
-    motor: motorSpecById('motor-1'),
-    supplies: [],
-    subscriptionCardIds: [],
-  },
-  full: {
-    ship: shipById(DEFAULT_SHIP_ID),
-    weapon: weaponSpecById('scatter-4'),
-    rearWeapon: null,
-    shield: shieldSpecById('shield-3'),
-    generator: generatorSpecById('generator-3'),
-    motor: motorSpecById('motor-2'),
-    supplies: [],
-    subscriptionCardIds: [],
-  },
+  // Weapon a level ahead of the rest — represents prioritizing the starter weapon.
+  mid: { ...starterKindLoadoutAtLevel(2), weapon: weaponAtKindIndex(0, 3) },
+  // Branched into the second weapon kind — represents having upgraded off the starter.
+  full: { ...starterKindLoadoutAtLevel(3), weapon: weaponAtKindIndex(1, 4) },
 };
 
 // ── Card strategies ──────────────────────────────────────────────────────────

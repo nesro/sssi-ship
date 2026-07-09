@@ -1,4 +1,4 @@
-import type { CoreState, LoadoutSnapshot, RunModifiers } from './types';
+import type { CoreState, LoadoutSnapshot, RunModifiers, ShipSpec, WeaponSpec } from './types';
 
 /** Loadout + card modifiers + timed boosts, folded once per use site (never recomputed). */
 export interface EffectiveStats {
@@ -14,6 +14,12 @@ export interface EffectiveStats {
   rearWeaponEnergyPerShot: number;
   rearWeaponMaxTargets: number;
   rearWeaponFalloff: number;
+  sideWeaponEquipped: boolean;
+  sideWeaponDamage: number;
+  sideWeaponMaxTargets: number;
+  sideWeaponFalloff: number;
+  /** Charges granted at mission start; 0 when unequipped. */
+  sideWeaponMaxCharges: number;
   shieldCapacity: number;
   /** Effective fraction of shieldCapacity restored per generator pulse (after card mods). */
   shieldPulseFraction: number;
@@ -84,16 +90,10 @@ export function defaultModifiers(): RunModifiers {
   };
 }
 
-export function computeEffectiveStats(
-  loadout: LoadoutSnapshot,
-  mods: RunModifiers,
-  damageBoostMult = 1,
-  fireRateBoostMult = 1,
-  generatorBoostMult = 1,
-): EffectiveStats {
-  const { ship, weapon, rearWeapon, shield, generator, motor } = loadout;
-  const reactorMult = ship.passiveKind === 'generator-capacity-bonus' ? ship.passiveValue : 1;
-  const generatorCapacity = generator.capacity * reactorMult + mods.generatorCapacityBonus;
+/** Front weapon fields — the only slot with fire-rate/energy modifier support. */
+function computeWeaponStats(
+  weapon: WeaponSpec | null, mods: RunModifiers, damageBoostMult: number, fireRateBoostMult: number,
+): Pick<EffectiveStats, 'weaponEquipped' | 'weaponDamage' | 'weaponInterval' | 'weaponEnergyPerShot' | 'weaponMaxTargets' | 'weaponFalloff'> {
   return {
     weaponEquipped: weapon !== null,
     weaponDamage: weapon !== null ? weapon.damagePerShot * mods.weaponDamageMult * damageBoostMult : 0,
@@ -101,12 +101,62 @@ export function computeEffectiveStats(
     weaponEnergyPerShot: weapon !== null ? weapon.energyPerShot * mods.weaponEnergyMult : 0,
     weaponMaxTargets: weapon !== null ? weapon.maxTargets + mods.extraPierce : 0,
     weaponFalloff: weapon !== null ? weapon.falloffPerTarget : 1,
+  };
+}
+
+/** Rear weapon fields — auto-fire on a fixed interval, no card modifiers applied. */
+function computeRearWeaponStats(
+  rearWeapon: WeaponSpec | null, damageBoostMult: number,
+): Pick<EffectiveStats, 'rearWeaponEquipped' | 'rearWeaponDamage' | 'rearWeaponInterval' | 'rearWeaponEnergyPerShot' | 'rearWeaponMaxTargets' | 'rearWeaponFalloff'> {
+  return {
     rearWeaponEquipped: rearWeapon !== null,
     rearWeaponDamage: rearWeapon !== null ? rearWeapon.damagePerShot * damageBoostMult : 0,
     rearWeaponInterval: rearWeapon !== null ? rearWeapon.ticksBetweenShots : 0,
     rearWeaponEnergyPerShot: rearWeapon !== null ? rearWeapon.energyPerShot : 0,
     rearWeaponMaxTargets: rearWeapon !== null ? rearWeapon.maxTargets : 0,
     rearWeaponFalloff: rearWeapon !== null ? rearWeapon.falloffPerTarget : 1,
+  };
+}
+
+/** Side weapon fields — manual-fire, no interval/energy (charges are consumed instead). */
+function computeSideWeaponStats(
+  sideWeapon: WeaponSpec | null, damageBoostMult: number,
+): Pick<EffectiveStats, 'sideWeaponEquipped' | 'sideWeaponDamage' | 'sideWeaponMaxTargets' | 'sideWeaponFalloff' | 'sideWeaponMaxCharges'> {
+  return {
+    sideWeaponEquipped: sideWeapon !== null,
+    sideWeaponDamage: sideWeapon !== null ? sideWeapon.damagePerShot * damageBoostMult : 0,
+    sideWeaponMaxTargets: sideWeapon !== null ? sideWeapon.maxTargets : 0,
+    sideWeaponFalloff: sideWeapon !== null ? sideWeapon.falloffPerTarget : 1,
+    sideWeaponMaxCharges: sideWeapon?.maxCharges ?? 0,
+  };
+}
+
+/** Ship passive fields — each ship overrides exactly one of these; the rest stay neutral. */
+function computeShipPassiveStats(
+  ship: ShipSpec,
+): Pick<EffectiveStats, 'shipEnemyMissBonus' | 'shipCollisionDamageMult' | 'shipCoinMult' | 'shipCritMultOverride'> {
+  return {
+    shipEnemyMissBonus: ship.passiveKind === 'enemy-miss-bonus' ? ship.passiveValue : 0,
+    shipCollisionDamageMult: ship.passiveKind === 'collision-reduction' ? ship.passiveValue : 1,
+    shipCoinMult: ship.passiveKind === 'coin-bonus' ? ship.passiveValue : 1,
+    shipCritMultOverride: ship.passiveKind === 'crit-mult-override' ? ship.passiveValue : null,
+  };
+}
+
+export function computeEffectiveStats(
+  loadout: LoadoutSnapshot,
+  mods: RunModifiers,
+  damageBoostMult = 1,
+  fireRateBoostMult = 1,
+  generatorBoostMult = 1,
+): EffectiveStats {
+  const { ship, weapon, rearWeapon, sideWeapon, shield, generator, motor } = loadout;
+  const reactorMult = ship.passiveKind === 'generator-capacity-bonus' ? ship.passiveValue : 1;
+  const generatorCapacity = generator.capacity * reactorMult + mods.generatorCapacityBonus;
+  return {
+    ...computeWeaponStats(weapon, mods, damageBoostMult, fireRateBoostMult),
+    ...computeRearWeaponStats(rearWeapon, damageBoostMult),
+    ...computeSideWeaponStats(sideWeapon, damageBoostMult),
     shieldCapacity: shield !== null ? (shield.capacity + mods.shieldCapacityBonus) * mods.shieldCapacityMult : 0,
     shieldPulseFraction: shield !== null ? shield.pulseShieldFraction * mods.shieldPulseMult : 0,
     generatorOutput: (generator.outputPerTick + mods.generatorOutputBonus) * generatorBoostMult,
@@ -114,10 +164,7 @@ export function computeEffectiveStats(
     generatorPulseDrain: generator.pulseDrainFraction * generatorCapacity,
     motorTimelineMultiplier: motor.timelineMultiplier * mods.motorTimelineMult,
     motorDraw: motor.powerDrawPerTick * mods.motorDrawMult,
-    shipEnemyMissBonus: ship.passiveKind === 'enemy-miss-bonus' ? ship.passiveValue : 0,
-    shipCollisionDamageMult: ship.passiveKind === 'collision-reduction' ? ship.passiveValue : 1,
-    shipCoinMult: ship.passiveKind === 'coin-bonus' ? ship.passiveValue : 1,
-    shipCritMultOverride: ship.passiveKind === 'crit-mult-override' ? ship.passiveValue : null,
+    ...computeShipPassiveStats(ship),
   };
 }
 

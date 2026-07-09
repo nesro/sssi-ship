@@ -4,13 +4,15 @@
 
 export type WeaponKind = 'pulse' | 'ion' | 'scatter' | 'nova';
 export type RearWeaponKind = 'grenade' | 'flak' | 'plasma' | 'arc' | 'cluster';
+export type SideWeaponKind = 'focus' | 'flechette' | 'railgun' | 'orbital';
 
 export interface WeaponSpec {
   id: string;
-  kind: WeaponKind | RearWeaponKind;
+  kind: WeaponKind | RearWeaponKind | SideWeaponKind;
   damagePerShot: number;
-  /** Base interval; stretched by brownout when energy is low. */
+  /** Base interval; stretched by brownout when energy is low. Unused (0) by side weapons — manual-fire has no interval. */
   ticksBetweenShots: number;
+  /** Unused (0) by side weapons — manual-fire costs a charge, never energy. */
   energyPerShot: number;
   /** How many enemies one shot can hit, front-most first. 1 = single-target. */
   maxTargets: number;
@@ -22,6 +24,8 @@ export interface WeaponSpec {
   missChance: number;
   /** Damage multiplier on a critical hit. */
   critMult: number;
+  /** Side weapons only: charges granted at mission start, refilled every mission. */
+  maxCharges?: number;
 }
 
 export interface ShieldSpec {
@@ -69,6 +73,8 @@ export interface ShipSpec {
   /** Numeric meaning depends on passiveKind: bonus fraction / multiplier / override value. */
   passiveValue: number;
   passiveDescription: string;
+  /** Flavor line shown in the shop detail panel — same text for every level of a kind. */
+  blurb: string;
 }
 
 export type SupplyKind = 'shield-restore' | 'energy-refill' | 'damage-boost';
@@ -96,6 +102,8 @@ export interface LoadoutSnapshot {
   ship: ShipSpec;
   weapon: WeaponSpec | null;
   rearWeapon: WeaponSpec | null;
+  /** Manual-fire, limited-ammo weapon (§5) — charges refill to maxCharges every mission. */
+  sideWeapon: WeaponSpec | null;
   shield: ShieldSpec | null;
   generator: GeneratorSpec;
   motor: MotorSpec;
@@ -274,6 +282,7 @@ export interface StarSpec {
 export interface ForcedLoadout {
   weaponId: string | null;
   rearWeaponId?: string | null;
+  sideWeaponId?: string | null;
   shieldId: string;
   generatorId: string;
   motorId: string;
@@ -355,6 +364,8 @@ export interface ShipState {
   fireTimer: number;
   /** Counts down in ticks for the rear weapon; independent of front fireTimer. */
   rearFireTimer: number;
+  /** Manual-fire charges remaining for the side weapon; refilled at mission start. */
+  sideWeaponCharges: number;
 }
 
 export interface SupplyState {
@@ -373,6 +384,7 @@ export type MissionStatus = 'running' | 'victory' | 'defeat';
 export interface RunStats {
   shotsFired: number;
   rearShotsFired: number;
+  sideShotsFired: number;
   damageDealt: number;
   /** Weapon kills only — a collision is not a kill (all-kills star tension). */
   kills: number;
@@ -416,6 +428,8 @@ export interface CoreState {
   supplies: SupplyState[];
   activeEffects: ActiveEffect[];
   boostTaps: { tick: number; slot: number }[];
+  /** Ticks at which the player manually fired the side weapon. Recorded in replays. */
+  sideWeaponTaps: number[];
   /** Tick the boss died to weapon fire, or null. Collisions don't count. */
   bossKillTick: number | null;
   shieldBroke: boolean;

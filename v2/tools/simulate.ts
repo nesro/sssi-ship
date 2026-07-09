@@ -16,14 +16,7 @@ import { ALL_ABILITIES, abilityById } from '../src/data/cards';
 import { ALL_NEW_ABILITIES } from '../src/data/abilities';
 import { ALL_MISSIONS, missionById } from '../src/data/missions';
 import { resolveForcedLoadout, STARTER_LOADOUT } from '../src/data/loadouts';
-import {
-  DEFAULT_SHIP_ID,
-  generatorSpecById,
-  motorSpecById,
-  shieldSpecById,
-  shipById,
-  weaponSpecById,
-} from '../src/data/items';
+import { starterKindLoadoutAtLevel } from './loadoutPresets';
 
 interface CliOptions {
   missionId: string;
@@ -35,26 +28,8 @@ interface CliOptions {
 
 const LOADOUTS: Record<'starter' | 'mid' | 'full', LoadoutSnapshot> = {
   starter: STARTER_LOADOUT,
-  mid: {
-    ship: shipById(DEFAULT_SHIP_ID),
-    weapon: weaponSpecById('pulse-2'),
-    rearWeapon: null,
-    shield: shieldSpecById('shield-2'),
-    generator: generatorSpecById('generator-2'),
-    motor: motorSpecById('motor-1'),
-    supplies: [],
-    subscriptionCardIds: [],
-  },
-  full: {
-    ship: shipById(DEFAULT_SHIP_ID),
-    weapon: weaponSpecById('ion-1'),
-    rearWeapon: null,
-    shield: shieldSpecById('shield-3'),
-    generator: generatorSpecById('generator-3'),
-    motor: motorSpecById('motor-2'),
-    supplies: [],
-    subscriptionCardIds: [],
-  },
+  mid: starterKindLoadoutAtLevel(2),
+  full: starterKindLoadoutAtLevel(3),
 };
 
 function parseArgs(rawArgv: string[]): CliOptions {
