@@ -46,7 +46,10 @@ const SHOP_ITEM_X = CONTENT_PAD + SHOP_TAB_W + 4;  // tabs + margin + gap
 /** Right edge of the shop item column — preview panel occupies the remaining width. */
 const SHOP_COL_W = 640;
 const SHOP_ITEM_W = SHOP_COL_W - SHOP_ITEM_X - 4;
-const SHOP_ROW_H = 54;        // taller rows for mobile tap targets
+const SHOP_ROW_H = 58;        // taller rows for mobile tap targets + a stat line under the name
+const SHOP_ROW_NAME_DY = -12; // name sits above row-centre so the stat line(s) fit below it
+const SHOP_ROW_STAT_DY = 4;   // first stat line's y offset from row-centre
+const SHOP_ROW_STAT_LINE_H = 11;
 const SHOP_ACTION_Y = 432;
 const SHOP_ICON_X_OFFSET = 18;   // icon centre x within row
 const SHOP_NAME_X_OFFSET = 38;   // name label left x within row
@@ -519,12 +522,23 @@ export class HubScene extends Phaser.Scene {
     this.addC(this.add.image(px(SHOP_ITEM_X + SHOP_ICON_X_OFFSET), y, row.iconKey)
       .setOrigin(0.5).setBlendMode(Phaser.BlendModes.ADD)
       .setScale(row.iconScale).setAlpha(iconAlpha));
-    this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_NAME_X_OFFSET), y, row.displayName, {
+    this.addC(this.add.text(px(SHOP_ITEM_X + SHOP_NAME_X_OFFSET), y + px(SHOP_ROW_NAME_DY), row.displayName, {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(14))}px`,
       color: cssColor(locked ? 0x555577 : (row.rowState === 'equipped' ? accentColorFor(config.systemKey) : PALETTE.hullWhite)),
     }).setOrigin(0, 0.5).setAlpha(nameAlpha));
+    this.renderKindRowStatLines(row, y, nameAlpha);
 
     this.renderKindBadge(row, y);
+  }
+
+  /** Compact "Lv1 <stat>" (and "LvN <stat>" if equipped elsewhere) lines under the kind name. */
+  private renderKindRowStatLines(row: KindRowViewModel, y: number, alpha: number): void {
+    row.statLines.forEach((line, i) => {
+      this.addC(this.add.text(
+        px(SHOP_ITEM_X + SHOP_NAME_X_OFFSET), y + px(SHOP_ROW_STAT_DY + i * SHOP_ROW_STAT_LINE_H), line,
+        { fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`, color: cssColor(0x8899aa) },
+      ).setOrigin(0, 0.5).setAlpha(alpha * 0.85));
+    });
   }
 
   private renderKindBadge(row: KindRowViewModel, y: number): void {

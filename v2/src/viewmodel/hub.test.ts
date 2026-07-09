@@ -75,7 +75,7 @@ describe('computeKindRows — states', () => {
     const pulse = rows.find((r) => r.kind === 'pulse');
     expect(pulse?.rowState).toBe('purchasable');
     // pulse-1 costs 100, ion-1 equipped at 3000 → refund 2900
-    expect(pulse?.badge).toEqual({ kind: 'refund', label: 'switching returns 2900 coins', coins: 2900 });
+    expect(pulse?.badge).toEqual({ kind: 'refund', label: '+2900⬤', coins: 2900 });
     expect(pulse?.tap.mutation).toEqual({ type: 'switch-item', itemId: 'pulse-1' });
   });
 
@@ -85,7 +85,7 @@ describe('computeKindRows — states', () => {
     const ion = rows.find((r) => r.kind === 'ion');
     expect(ion?.rowState).toBe('purchasable');
     // ion-1 (3000) - pulse-1 equipped (100) = 2900
-    expect(ion?.badge).toEqual({ kind: 'cost', label: 'switching costs 2900 coins', coins: 2900, affordable: true });
+    expect(ion?.badge).toEqual({ kind: 'cost', label: '-2900⬤', coins: 2900, affordable: true });
   });
 
   it('unaffordable: badge cost, affordable false', () => {
@@ -93,7 +93,7 @@ describe('computeKindRows — states', () => {
     const rows = computeKindRows({ config: WEAPON_SYSTEM, save, playerStars: 20 }, null);
     const ion = rows.find((r) => r.kind === 'ion');
     expect(ion?.rowState).toBe('unaffordable');
-    expect(ion?.badge).toEqual({ kind: 'cost', label: 'switching costs 2900 coins', coins: 2900, affordable: false });
+    expect(ion?.badge).toEqual({ kind: 'cost', label: '-2900⬤', coins: 2900, affordable: false });
   });
 
   it('locked: rowState locked, badge stars', () => {
@@ -111,7 +111,7 @@ describe('computeKindRows — states', () => {
     const rows = computeKindRows({ config: WEAPON_SYSTEM, save, playerStars: 20 }, 'ion');
     const scatter = rows.find((r) => r.kind === 'scatter');
     expect(scatter?.rowState).toBe('purchasable');
-    expect(scatter?.badge).toEqual({ kind: 'refund', label: 'switching returns 1800 coins', coins: 1800 });
+    expect(scatter?.badge).toEqual({ kind: 'refund', label: '+1800⬤', coins: 1800 });
   });
 
   it('free item + nothing equipped: badge still shows the real "0 coins" — never a blank that looks the same as NONE', () => {
@@ -122,7 +122,7 @@ describe('computeKindRows — states', () => {
     const freeItemConfig: ShopSystemConfig = { ...REAR_WEAPON_SYSTEM, itemPrice: () => 0 };
     const rows = computeKindRows({ config: freeItemConfig, save, playerStars: 0 }, null);
     const grenade = rows.find((r) => r.kind === 'grenade');
-    expect(grenade?.badge).toEqual({ kind: 'cost', label: 'switching costs 0 coins', coins: 0, affordable: true });
+    expect(grenade?.badge).toEqual({ kind: 'cost', label: '0⬤', coins: 0, affordable: true });
   });
 
   it('NONE row: isNoneRow true, kind null', () => {
@@ -138,7 +138,7 @@ describe('computeKindRows — states', () => {
     save = switchItem(save, 'ion-1'); // equip ion-1 (3000)
     const rows = computeKindRows({ config: WEAPON_SYSTEM, save, playerStars: 0 }, 'ion');
     const none = rows.find((r) => r.isNoneRow);
-    expect(none?.badge).toEqual({ kind: 'refund', label: 'switching returns 3000 coins', coins: 3000 });
+    expect(none?.badge).toEqual({ kind: 'refund', label: '+3000⬤', coins: 3000 });
   });
 
   it('NONE row badge shows the real "0 coins" when the equipped item is free — never a blank that looks like the current-state blank', () => {
@@ -148,7 +148,7 @@ describe('computeKindRows — states', () => {
     const freeEquippedConfig: ShopSystemConfig = { ...WEAPON_SYSTEM, equippedPrice: () => 0 };
     const rows = computeKindRows({ config: freeEquippedConfig, save, playerStars: 0 }, 'pulse');
     const none = rows.find((r) => r.isNoneRow);
-    expect(none?.badge).toEqual({ kind: 'cost', label: 'switching costs 0 coins', coins: 0, affordable: true });
+    expect(none?.badge).toEqual({ kind: 'cost', label: '0⬤', coins: 0, affordable: true });
   });
 
   it('NONE row badge is null when NONE is already the current selection', () => {
@@ -215,7 +215,7 @@ describe('computeKindRowTrace — debug cost breakdown', () => {
     const trace = computeKindRowTrace({ config: WEAPON_SYSTEM, save, kind: 'ion', playerStars: 20 });
     const rows = computeKindRows({ config: WEAPON_SYSTEM, save, playerStars: 20 }, null);
     const ionRow = rows.find((r) => r.kind === 'ion');
-    expect(ionRow?.badge).toEqual({ kind: 'cost', label: `switching costs ${String(trace.netCost)} coins`, coins: trace.netCost, affordable: trace.affordable });
+    expect(ionRow?.badge).toEqual({ kind: 'cost', label: `-${String(trace.netCost)}⬤`, coins: trace.netCost, affordable: trace.affordable });
   });
 });
 
@@ -227,7 +227,7 @@ describe('reachable-state matrix corrections', () => {
     const rows = computeKindRows({ config: REAR_WEAPON_SYSTEM, save, playerStars: 15 }, null);
     const flak = rows.find((r) => r.kind === 'flak'); // flak-1 price 890
     expect(flak?.rowState).toBe('purchasable');
-    expect(flak?.badge).toEqual({ kind: 'cost', label: 'switching costs 890 coins', coins: 890, affordable: true });
+    expect(flak?.badge).toEqual({ kind: 'cost', label: '-890⬤', coins: 890, affordable: true });
   });
 
   it('rear-weapon: non-starter kinds are locked at 0 stars now that star gates ramp per kind', () => {

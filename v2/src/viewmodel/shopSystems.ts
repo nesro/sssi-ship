@@ -9,16 +9,17 @@
 // only — never src/view/textures.ts, which imports Phaser.
 
 import {
-  GENERATOR_KINDS, generatorKindDisplayName, itemById, MAX_GENERATOR_LEVEL,
+  GENERATOR_KINDS, generatorKindDisplayName, generatorSpecAtLevel, itemById, MAX_GENERATOR_LEVEL,
   MAX_MOTOR_LEVEL, MAX_REAR_WEAPON_LEVEL, MAX_SHIELD_LEVEL, MAX_SHIP_LEVEL,
   MAX_SIDE_WEAPON_LEVEL, MAX_WEAPON_LEVEL,
-  MOTOR_KINDS, motorKindDisplayName, REAR_WEAPON_ITEMS, REAR_WEAPON_KINDS,
-  rearWeaponKindDisplayName, rearWeaponSpecAtLevel, SHIELD_KINDS, shieldKindDisplayName,
+  MOTOR_KINDS, motorKindDisplayName, motorSpecAtLevel, REAR_WEAPON_ITEMS, REAR_WEAPON_KINDS,
+  rearWeaponKindDisplayName, rearWeaponSpecAtLevel, SHIELD_KINDS, shieldKindDisplayName, shieldSpecAtLevel,
   SHIP_KINDS, shipKindDisplayName, SHIPS, SIDE_WEAPON_ITEMS, SIDE_WEAPON_KINDS,
   sideWeaponKindDisplayName, sideWeaponSpecAtLevel, WEAPON_KINDS, weaponKindDisplayName, weaponSpecAtLevel,
 } from '../data/items';
 import type { GeneratorKind, MotorKind, ShieldKind, ShipKind } from '../data/items';
-import type { RearWeaponKind, SideWeaponKind, WeaponKind } from '../core/types';
+import { TICKS_PER_SECOND } from '../core/constants';
+import type { RearWeaponKind, ShipPassiveKind, SideWeaponKind, WeaponKind } from '../core/types';
 import type { SaveData } from '../save/SaveManager';
 import {
   iconTextureForGeneratorKind, iconTextureForMotorKind, iconTextureForRearWeaponId,
@@ -45,6 +46,36 @@ export interface ShopSystemConfig {
   iconScale: (displayLevel: number) => number;
   /** Stat/blurb lines shown for the equipped level of the selected kind; [] if level is 0. */
   detailLines: (kind: string, equippedLevel: number) => string[];
+  /** Compact single-line stat summary for `kind` at `level` — shown directly in the row
+   * list (Lv1, and the currently equipped level too if it differs) so kinds are
+   * comparable without opening the level chips. */
+  rowStat: (kind: string, level: number) => string;
+}
+
+/** DPS for a weapon-like spec that fires every `ticksBetweenShots` ticks. */
+function weaponDps(damagePerShot: number, ticksBetweenShots: number): number {
+  return Math.round((damagePerShot * TICKS_PER_SECOND / ticksBetweenShots) * 10) / 10;
+}
+
+/** Shared detailLines shape for systems whose row detail is just the equipped item's blurb
+ * (shield/generator/motor) — `prefix` is the item-id prefix before `${kind}-${level}`. */
+function blurbDetailLines(prefix: string): (kind: string, equippedLevel: number) => string[] {
+  return (kind, equippedLevel) => {
+    if (equippedLevel <= 0) return [];
+    return [itemById(`${prefix}${kind}-${String(equippedLevel)}`).blurb];
+  };
+}
+
+/** Compact passive-effect label for a ship row — the full passiveDescription is a whole
+ * sentence, too long for a one-line row stat. */
+function shipPassiveShortLabel(passiveKind: ShipPassiveKind, passiveValue: number): string {
+  switch (passiveKind) {
+    case 'enemy-miss-bonus': return `MISS+${String(Math.round(passiveValue * 100))}%`;
+    case 'collision-reduction': return `DMGx${String(passiveValue)}`;
+    case 'coin-bonus': return `COINx${String(passiveValue)}`;
+    case 'generator-capacity-bonus': return `GENx${String(passiveValue)}`;
+    case 'crit-mult-override': return `CRITx${String(passiveValue)}`;
+  }
 }
 
 /** Parses the trailing `-N` level off an id whose prefix matches `kind`; 0 if it doesn't. */
@@ -82,6 +113,10 @@ export const WEAPON_SYSTEM: ShopSystemConfig = {
       `${targets} targets  ${String(spec.energyPerShot)} energy`,
     ];
   },
+  rowStat: (kind, level) => {
+    const spec = weaponSpecAtLevel(kind as WeaponKind, level);
+    return `DPS ${String(weaponDps(spec.damagePerShot, spec.ticksBetweenShots))}  ⚡${String(spec.energyPerShot)}`;
+  },
 };
 
 export const REAR_WEAPON_SYSTEM: ShopSystemConfig = {
@@ -105,6 +140,10 @@ export const REAR_WEAPON_SYSTEM: ShopSystemConfig = {
       `${String(spec.damagePerShot)}dmg  ${String(spec.ticksBetweenShots)}t`,
       `${String(spec.maxTargets)} targets  ${String(spec.energyPerShot)} energy`,
     ];
+  },
+  rowStat: (kind, level) => {
+    const spec = rearWeaponSpecAtLevel(kind as RearWeaponKind, level);
+    return `DPS ${String(weaponDps(spec.damagePerShot, spec.ticksBetweenShots))}  ⚡${String(spec.energyPerShot)}`;
   },
 };
 
@@ -131,6 +170,10 @@ export const SIDE_WEAPON_SYSTEM: ShopSystemConfig = {
       `${targets} targets`,
     ];
   },
+  rowStat: (kind, level) => {
+    const spec = sideWeaponSpecAtLevel(kind as SideWeaponKind, level);
+    return `${String(spec.damagePerShot)}dmg  ${String(spec.maxCharges ?? 0)}/mission`;
+  },
 };
 
 export const SHIELD_SYSTEM: ShopSystemConfig = {
@@ -146,9 +189,10 @@ export const SHIELD_SYSTEM: ShopSystemConfig = {
   equippedLevelForKind: (save, kind) => levelIfPrefixMatches(save.equipped.shield, `shield-${kind}-`),
   iconKey: (kind) => iconTextureForShieldKind(kind),
   iconScale: standardIconScale,
-  detailLines: (kind, equippedLevel) => {
-    if (equippedLevel <= 0) return [];
-    return [itemById(`shield-${kind}-${String(equippedLevel)}`).blurb];
+  detailLines: blurbDetailLines('shield-'),
+  rowStat: (kind, level) => {
+    const spec = shieldSpecAtLevel(kind as ShieldKind, level);
+    return `CAP ${String(spec.capacity)}  PULSE ${String(Math.round(spec.pulseShieldFraction * 100))}%`;
   },
 };
 
@@ -165,9 +209,10 @@ export const GENERATOR_SYSTEM: ShopSystemConfig = {
   equippedLevelForKind: (save, kind) => levelIfPrefixMatches(save.equipped.generator, `generator-${kind}-`),
   iconKey: (kind) => iconTextureForGeneratorKind(kind),
   iconScale: standardIconScale,
-  detailLines: (kind, equippedLevel) => {
-    if (equippedLevel <= 0) return [];
-    return [itemById(`generator-${kind}-${String(equippedLevel)}`).blurb];
+  detailLines: blurbDetailLines('generator-'),
+  rowStat: (kind, level) => {
+    const spec = generatorSpecAtLevel(kind as GeneratorKind, level);
+    return `OUT ${String(spec.outputPerTick)}  CAP ${String(spec.capacity)}`;
   },
 };
 
@@ -184,9 +229,10 @@ export const MOTOR_SYSTEM: ShopSystemConfig = {
   equippedLevelForKind: (save, kind) => levelIfPrefixMatches(save.equipped.motor, `motor-${kind}-`),
   iconKey: (kind) => iconTextureForMotorKind(kind),
   iconScale: standardIconScale,
-  detailLines: (kind, equippedLevel) => {
-    if (equippedLevel <= 0) return [];
-    return [itemById(`motor-${kind}-${String(equippedLevel)}`).blurb];
+  detailLines: blurbDetailLines('motor-'),
+  rowStat: (kind, level) => {
+    const spec = motorSpecAtLevel(kind as MotorKind, level);
+    return `SPD ${String(spec.timelineMultiplier)}x  PWR ${String(spec.powerDrawPerTick)}`;
   },
 };
 
@@ -210,6 +256,11 @@ export const SHIP_SYSTEM: ShopSystemConfig = {
     const ship = SHIPS[`ship-${kind}-${String(equippedLevel)}`];
     if (ship === undefined) return [];
     return [ship.blurb, `♥${String(ship.hull)}  ${ship.passiveDescription}`];
+  },
+  rowStat: (kind, level) => {
+    const ship = SHIPS[`ship-${kind}-${String(level)}`];
+    if (ship === undefined) return '';
+    return `♥${String(ship.hull)}  ${shipPassiveShortLabel(ship.passiveKind, ship.passiveValue)}`;
   },
 };
 

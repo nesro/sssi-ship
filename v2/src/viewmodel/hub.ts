@@ -54,6 +54,9 @@ export interface KindRowViewModel {
   badge: KindRowBadge;
   tap: KindRowTap;
   detailLines: string[];
+  /** Compact "Lv1 <stat>" line, plus a second "LvN <stat>" line if the currently equipped
+   * level differs from 1 — lets the player compare kinds without opening level chips. */
+  statLines: string[];
 }
 
 export interface LevelChipViewModel {
@@ -256,8 +259,8 @@ function isAnyKindEquipped(config: ShopSystemConfig, save: SaveData): boolean {
 // The badge always reflects that real refund; there is no free-forfeit special case.
 function computeNoneBadge(isCurrentlyNone: boolean, equippedPriceValue: number): KindRowBadge {
   if (isCurrentlyNone) return null;
-  if (equippedPriceValue === 0) return { kind: 'cost', label: 'switching costs 0 coins', coins: 0, affordable: true };
-  return { kind: 'refund', label: `switching returns ${String(equippedPriceValue)} coins`, coins: equippedPriceValue };
+  if (equippedPriceValue === 0) return { kind: 'cost', label: '0⬤', coins: 0, affordable: true };
+  return { kind: 'refund', label: `+${String(equippedPriceValue)}⬤`, coins: equippedPriceValue };
 }
 
 function computeNoneRow(config: ShopSystemConfig, save: SaveData, selectedKind: string | null): KindRowViewModel {
@@ -274,7 +277,15 @@ function computeNoneRow(config: ShopSystemConfig, save: SaveData, selectedKind: 
     badge: computeNoneBadge(isCurrentlyNone, config.equippedPrice(save)),
     tap: { selectKind: null, mutation: isCurrentlyNone ? null : { type: 'unequip' } },
     detailLines: [],
+    statLines: [],
   };
+}
+
+/** "Lv1 <stat>" always, plus "LvN <stat>" too when a different level is currently equipped. */
+function computeRowStatLines(config: ShopSystemConfig, kind: string, equippedLevel: number): string[] {
+  const lines = [`Lv1 ${config.rowStat(kind, 1)}`];
+  if (equippedLevel > 1) lines.push(`Lv${String(equippedLevel)} ${config.rowStat(kind, equippedLevel)}`);
+  return lines;
 }
 
 export interface KindRowCtx {
@@ -336,6 +347,7 @@ function computeKindRow(ctx: KindRowCtx, selectedKind: string | null): KindRowVi
       mutation: t.equipped ? null : { type: 'switch-item', itemId: config.itemId(kind, t.targetLevel) },
     },
     detailLines: config.detailLines(kind, t.equippedLevel),
+    statLines: computeRowStatLines(config, kind, t.equippedLevel),
   };
 }
 
@@ -349,10 +361,10 @@ function computeKindBadge(opts: KindRowTrace): KindRowBadge {
   if (opts.equipped) return null;
   if (opts.locked) return { kind: 'stars', label: `★${String(opts.starsNeeded)}`, stars: opts.starsNeeded };
   if (opts.netCost > 0) {
-    return { kind: 'cost', label: `switching costs ${String(opts.netCost)} coins`, coins: opts.netCost, affordable: opts.affordable };
+    return { kind: 'cost', label: `-${String(opts.netCost)}⬤`, coins: opts.netCost, affordable: opts.affordable };
   }
-  if (opts.netCost === 0) return { kind: 'cost', label: 'switching costs 0 coins', coins: 0, affordable: true };
-  return { kind: 'refund', label: `switching returns ${String(-opts.netCost)} coins`, coins: -opts.netCost };
+  if (opts.netCost === 0) return { kind: 'cost', label: '0⬤', coins: 0, affordable: true };
+  return { kind: 'refund', label: `+${String(-opts.netCost)}⬤`, coins: -opts.netCost };
 }
 
 // ── Level chips ──────────────────────────────────────────────────────────────
