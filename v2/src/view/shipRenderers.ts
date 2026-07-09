@@ -1,6 +1,12 @@
 import Phaser from 'phaser';
 import { px, SHIP_GUN_X_OFFSET, SHIP_GUN_Y_OFFSET } from './layout';
-import { weaponKindColor } from './textures';
+import { sideWeaponKindColor, weaponKindColor } from './textures';
+
+/** Horizontal offset from ship centre to each side-weapon wing mount — wider than the
+ * front (±SHIP_GUN_X_OFFSET) and rear mounts so it reads as its own hardpoint. Exported so
+ * bolt-spawning code (CombatScene, ShopPreviewPanel) launches from the same hardpoint the
+ * indicator is drawn at. */
+export const SIDE_WEAPON_MOUNT_X_OFFSET = 24;
 
 const PALETTE_AMBER = 0xffaa22;
 const PALETTE_CYAN = 0x00eeff;
@@ -266,6 +272,53 @@ export function drawRearWeaponIndicator(
     g.lineStyle(px(1.5), color, 0.9);
     g.strokeCircle(lx, mountY, px(3.5));
     g.strokeCircle(rx, mountY, px(3.5));
+  }
+}
+
+/** Draws side-weapon wing-mount indicators — shape varies by kind. Clears `g` before drawing. */
+export function drawSideWeaponIndicator(
+  g: Phaser.GameObjects.Graphics,
+  sideWeapon: { kind: string; id: string } | null,
+  cx: number, cy: number,
+): void {
+  g.clear();
+  if (sideWeapon === null) return;
+  const color = sideWeaponKindColor(sideWeapon.kind, sideWeapon.id);
+  const lx = cx - px(SIDE_WEAPON_MOUNT_X_OFFSET);
+  const rx = cx + px(SIDE_WEAPON_MOUNT_X_OFFSET);
+
+  if (sideWeapon.kind === 'focus') {
+    // Focused lens: ring + crosshair
+    for (const bx of [lx, rx]) {
+      g.lineStyle(px(1.2), color, 0.85);
+      g.strokeCircle(bx, cy, px(3.5));
+      g.lineBetween(bx - px(5), cy, bx + px(5), cy);
+      g.lineBetween(bx, cy - px(5), bx, cy + px(5));
+    }
+  } else if (sideWeapon.kind === 'flechette') {
+    // Small diverging fan of darts
+    for (const bx of [lx, rx]) {
+      g.lineStyle(px(1.3), color, 0.85);
+      g.lineBetween(bx, cy, bx - px(4), cy - px(4));
+      g.lineBetween(bx, cy, bx, cy - px(5));
+      g.lineBetween(bx, cy, bx + px(4), cy - px(4));
+    }
+  } else if (sideWeapon.kind === 'railgun') {
+    // Long thin barrel stub pointing outward
+    g.fillStyle(color, 0.85);
+    g.fillRect(lx - px(6), cy - px(1.2), px(6), px(2.4));
+    g.fillRect(rx, cy - px(1.2), px(6), px(2.4));
+    g.fillStyle(0xffffff, 0.6);
+    g.fillCircle(lx - px(6), cy, px(1.3));
+    g.fillCircle(rx + px(6), cy, px(1.3));
+  } else {
+    // Orbital: planet ring with a small orbiting satellite dot
+    for (const bx of [lx, rx]) {
+      g.lineStyle(px(1), color, 0.6);
+      g.strokeCircle(bx, cy, px(4.5));
+      g.fillStyle(color, 0.9);
+      g.fillCircle(bx, cy - px(4.5), px(1.2));
+    }
   }
 }
 

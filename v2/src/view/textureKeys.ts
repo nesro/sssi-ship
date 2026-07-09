@@ -40,6 +40,11 @@ export const TEXTURE_KEYS = {
   rearPlasma:  'rear-plasma',
   rearArc:     'rear-arc',
   rearCluster: 'rear-cluster',
+  // Side weapon projectiles — one per kind
+  sideFocusBolt: 'side-focus-bolt',
+  sideFlechetteBolt: 'side-flechette-bolt',
+  sideRailgunBolt: 'side-railgun-bolt',
+  sideOrbitalBolt: 'side-orbital-bolt',
   // Rear weapon icons (one per kind; level suffix appended at runtime)
   iconGrenade1: 'icon-grenade-1',
   iconGrenade2: 'icon-grenade-2',

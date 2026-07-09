@@ -4,6 +4,7 @@ import { defaultSave, resetSave, switchItem, switchRearWeapon } from '../save/Sa
 import {
   GENERATOR_SYSTEM, MOTOR_SYSTEM, REAR_WEAPON_SYSTEM, SHIELD_SYSTEM, SHIP_SYSTEM, SIDE_WEAPON_SYSTEM, WEAPON_SYSTEM,
 } from './shopSystems';
+import type { ShopSystemConfig } from './shopSystems';
 import {
   computeCumulativeCost, computeDispatch, computeGalaxyMap, computeKindRows, computeKindRowTrace,
   computeLevelChips, computeLoadoutRows, computeMissionDetail, computeSettings, computeSupplies,
@@ -73,8 +74,8 @@ describe('computeKindRows — states', () => {
     const rows = computeKindRows({ config: WEAPON_SYSTEM, save, playerStars: 0 }, 'ion');
     const pulse = rows.find((r) => r.kind === 'pulse');
     expect(pulse?.rowState).toBe('purchasable');
-    // pulse-1 is free (0), ion-1 equipped at 3000 → refund 3000, not a special "0 coins" case
-    expect(pulse?.badge).toEqual({ kind: 'refund', label: 'switching returns 3000 coins', coins: 3000 });
+    // pulse-1 costs 100, ion-1 equipped at 3000 → refund 2900
+    expect(pulse?.badge).toEqual({ kind: 'refund', label: 'switching returns 2900 coins', coins: 2900 });
     expect(pulse?.tap.mutation).toEqual({ type: 'switch-item', itemId: 'pulse-1' });
   });
 
@@ -83,7 +84,8 @@ describe('computeKindRows — states', () => {
     const rows = computeKindRows({ config: WEAPON_SYSTEM, save, playerStars: 20 }, null);
     const ion = rows.find((r) => r.kind === 'ion');
     expect(ion?.rowState).toBe('purchasable');
-    expect(ion?.badge).toEqual({ kind: 'cost', label: 'switching costs 3000 coins', coins: 3000, affordable: true });
+    // ion-1 (3000) - pulse-1 equipped (100) = 2900
+    expect(ion?.badge).toEqual({ kind: 'cost', label: 'switching costs 2900 coins', coins: 2900, affordable: true });
   });
 
   it('unaffordable: badge cost, affordable false', () => {
@@ -91,7 +93,7 @@ describe('computeKindRows — states', () => {
     const rows = computeKindRows({ config: WEAPON_SYSTEM, save, playerStars: 20 }, null);
     const ion = rows.find((r) => r.kind === 'ion');
     expect(ion?.rowState).toBe('unaffordable');
-    expect(ion?.badge).toEqual({ kind: 'cost', label: 'switching costs 3000 coins', coins: 3000, affordable: false });
+    expect(ion?.badge).toEqual({ kind: 'cost', label: 'switching costs 2900 coins', coins: 2900, affordable: false });
   });
 
   it('locked: rowState locked, badge stars', () => {
@@ -114,8 +116,12 @@ describe('computeKindRows — states', () => {
 
   it('free item + nothing equipped: badge still shows the real "0 coins" — never a blank that looks the same as NONE', () => {
     const save = defaultSave(); // rear weapon: nothing equipped
-    const rows = computeKindRows({ config: REAR_WEAPON_SYSTEM, save, playerStars: 0 }, null);
-    const grenade = rows.find((r) => r.kind === 'grenade'); // grenade-1 price 0
+    // Real catalog prices never hit 0 outside of NONE itself (a system with a NONE option
+    // never prices a real item at 0 — see SIDE_WEAPON_PRICES etc.) — force it here to
+    // exercise the zero-cost badge path directly.
+    const freeItemConfig: ShopSystemConfig = { ...REAR_WEAPON_SYSTEM, itemPrice: () => 0 };
+    const rows = computeKindRows({ config: freeItemConfig, save, playerStars: 0 }, null);
+    const grenade = rows.find((r) => r.kind === 'grenade');
     expect(grenade?.badge).toEqual({ kind: 'cost', label: 'switching costs 0 coins', coins: 0, affordable: true });
   });
 
@@ -136,8 +142,11 @@ describe('computeKindRows — states', () => {
   });
 
   it('NONE row badge shows the real "0 coins" when the equipped item is free — never a blank that looks like the current-state blank', () => {
-    const save = defaultSave(); // pulse-1 equipped, price 0
-    const rows = computeKindRows({ config: WEAPON_SYSTEM, save, playerStars: 0 }, 'pulse');
+    const save = defaultSave(); // pulse-1 equipped
+    // Real catalog data never leaves a NONE-having system's equipped item priced at 0 —
+    // force it here to exercise the zero-cost NONE-row badge path directly.
+    const freeEquippedConfig: ShopSystemConfig = { ...WEAPON_SYSTEM, equippedPrice: () => 0 };
+    const rows = computeKindRows({ config: freeEquippedConfig, save, playerStars: 0 }, 'pulse');
     const none = rows.find((r) => r.isNoneRow);
     expect(none?.badge).toEqual({ kind: 'cost', label: 'switching costs 0 coins', coins: 0, affordable: true });
   });
@@ -193,11 +202,11 @@ describe('computeKindRowTrace — debug cost breakdown', () => {
   it('does not special-case a kind that was previously equipped — netCost is always the plain trade-in formula', () => {
     let save = { ...defaultSave(), coins: 10000 };
     save = switchItem(save, 'ion-2'); // equip ion at Lv2 (6550)
-    save = switchItem(save, 'pulse-1'); // switch to pulse (free) — ion-2 is gone
+    save = switchItem(save, 'pulse-1'); // switch to pulse (100) — ion-2 is gone
     const trace = computeKindRowTrace({ config: WEAPON_SYSTEM, save, kind: 'ion', playerStars: 0 });
     expect(trace.targetLevel).toBe(1); // always Lv1 for a kind that isn't currently equipped
     expect(trace.entryPrice).toBe(3000); // ion-1's price, not ion-2's 6550
-    expect(trace.netCost).toBe(3000); // full price — no discount for having owned it before
+    expect(trace.netCost).toBe(2900); // 3000 - pulse-1's 100 — no discount for having owned it before
     expect(trace.affordable).toBe(true);
   });
 

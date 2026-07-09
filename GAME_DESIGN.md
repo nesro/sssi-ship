@@ -505,6 +505,13 @@ Every module is sold at 100% of its coin and star cost. Switching to a different
 only the price difference (net cost model). The player can never permanently lose coins by
 experimenting with gear.
 
+**Confirmed edge case (2026-07-09):** the refund/switch-cost model always uses the item's
+*current listed price*, not what the player actually paid. This is a no-op in almost every case
+(price paid == current price), but starter/default equipment was never actually purchased, so
+unequipping it once nets its listed price in coins. Decided: keep this as a small, one-time,
+bounded "welcome gift" — no per-item purchase-price ("cost basis") tracking. See
+`v2/src/save/SaveManager.ts`'s `switchCost`/`unequipShield`/`unequipWeapon`.
+
 ---
 
 ## 11. Visuals & Audio
@@ -541,6 +548,12 @@ rates. This is the mission editor — balance numbers here are exactly what play
 
 **Replay record:** `{ version, missionId, seed, loadout, cardPicks, boostTaps, resultHash }`.
 Re-running the core with the same record reproduces the run exactly. Playback UI not built yet.
+
+**Save data (`v2/src/save/SaveManager.ts`):** early development only — no player save data is
+worth preserving yet. Don't write backward-compatible migrations for save-shape or pricing
+changes; bumping `SAVE_VERSION` and falling back to `defaultSave()` for anything older is
+sufficient until closer to release. The existing `migrateV5`–`migrateV11`/`migrateLegacy`
+functions and `LEGACY_ID_MAP` are legacy scaffolding, not a pattern to keep extending.
 
 **Five constitutional rules** (violating any broke v1):
 1. `src/core/` is pure — no Phaser, no DOM, no `Math.random()`.

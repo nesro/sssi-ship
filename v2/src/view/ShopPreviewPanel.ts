@@ -6,20 +6,23 @@ import { computePreviewStatic, initPreviewSim, stepPreviewSim } from '../viewmod
 import type { PreviewSimState, PreviewSimStep } from '../viewmodel/preview';
 import { cssColor, PALETTE } from './palette';
 import { fontPx, px, SHIP_GUN_X_OFFSET, SHIP_GUN_Y_OFFSET } from './layout';
-import { laserTextureForWeaponId, rearBoltTextureKey } from './textures';
+import { laserTextureForWeaponId, rearBoltTextureKey, sideBoltTextureKey } from './textures';
 import { TEXTURE_KEYS } from './textureKeys';
-import { drawGeneratorCore, drawRearWeaponIndicator, drawShieldRings, renderGunIndicator, renderThrusterAssembly, tickLaserBolts, tickMuzzleFlashes } from './shipRenderers';
+import { drawGeneratorCore, drawRearWeaponIndicator, drawShieldRings, drawSideWeaponIndicator, renderGunIndicator, renderThrusterAssembly, SIDE_WEAPON_MOUNT_X_OFFSET, tickLaserBolts, tickMuzzleFlashes } from './shipRenderers';
 import type { LaserBolt, MuzzleFlash } from './shipRenderers';
 import { UI_FONT } from './widgets';
 
 // Geometry constants (logical units)
 const BAR_SPACING = 30;     // energy-bar top → shield-bar top
 const BAR_HEIGHT = 12;      // logical bar height
-const LASER_RISE = 70;      // how far laser bolts travel up before recycling
+const LASER_RISE = 130;     // how far laser bolts travel up before recycling — stays clear of CONTENT_TOP (48) above shipY (220)
 
 const PALETTE_AMBER = 0xffaa22;
-const LASER_TRAVEL_MS = 280;
+const LASER_TRAVEL_MS = 420;
 const MUZZLE_FLASH_MS = 100;
+// Manual-fire side weapons have no natural interval stat — demo-fire on a fixed cadence instead.
+const SIDE_DEMO_INTERVAL_MS = 1500;
+const SIDE_BOLT_SCALE = 1.5;
 // Sim runs faster than real-time so the charge cycle is clearly visible
 const SIM_SPEED_MULT = 4;
 
@@ -64,6 +67,7 @@ export class ShopPreviewPanel {
   private readonly shieldGfx: Phaser.GameObjects.Graphics;
   private readonly gunGfx: Phaser.GameObjects.Graphics;
   private readonly rearGunGfx: Phaser.GameObjects.Graphics;
+  private readonly sideGunGfx: Phaser.GameObjects.Graphics;
   private readonly muzzleFlashGfx: Phaser.GameObjects.Graphics;
   private readonly barGfx: Phaser.GameObjects.Graphics;
   private readonly energyLabel: Phaser.GameObjects.Text;
@@ -80,13 +84,16 @@ export class ShopPreviewPanel {
   private gunToggle = false;
   private laserBolts: LaserBolt[] = [];
   private rearLaserBolts: LaserBolt[] = [];
+  private sideLaserBolts: LaserBolt[] = [];
   private muzzleFlashes: MuzzleFlash[] = [];
   private visualFireTimer = 0;
   private rearVisualFireTimer = 0;
+  private sideVisualFireTimer = 0;
 
   // Active weapons — null when the equipped loadout has none
   private currentWeapon: { id: string; kind: WeaponKind | RearWeaponKind | SideWeaponKind } | null = null;
   private currentRearWeapon: { id: string; kind: RearWeaponKind } | null = null;
+  private currentSideWeapon: { id: string; kind: SideWeaponKind } | null = null;
 
   // Simulation state (resets on each show() call)
   // The sim shows generator vs shield regen efficiency without weapon drain — the player
@@ -118,6 +125,7 @@ export class ShopPreviewPanel {
     this.shieldGfx   = scene.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
     this.gunGfx      = scene.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
     this.rearGunGfx  = scene.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
+    this.sideGunGfx  = scene.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
     this.muzzleFlashGfx = scene.add.graphics().setDepth(6).setBlendMode(Phaser.BlendModes.ADD);
     this.barGfx      = scene.add.graphics().setDepth(8);
 
@@ -155,10 +163,12 @@ export class ShopPreviewPanel {
     this.panelVisible = v;
     this.ship.setVisible(v);
     this.thrusterGfx.setVisible(v);
+    this.motorGfx.setVisible(v);
     this.generatorGfx.setVisible(v);
     this.shieldGfx.setVisible(v);
     this.gunGfx.setVisible(v);
     this.rearGunGfx.setVisible(v);
+    this.sideGunGfx.setVisible(v);
     this.muzzleFlashGfx.setVisible(v);
     this.barGfx.setVisible(v);
     this.energyLabel.setVisible(v);
@@ -170,8 +180,10 @@ export class ShopPreviewPanel {
       this.barGfx.clear();
       for (const bolt of this.laserBolts) { bolt.sprite.destroy(); }
       for (const bolt of this.rearLaserBolts) { bolt.sprite.destroy(); }
+      for (const bolt of this.sideLaserBolts) { bolt.sprite.destroy(); }
       this.laserBolts = [];
       this.rearLaserBolts = [];
+      this.sideLaserBolts = [];
       this.muzzleFlashes = [];
       this.muzzleFlashGfx.clear();
     }
@@ -188,12 +200,16 @@ export class ShopPreviewPanel {
     this.simState = initPreviewSim(vm.stats);
     this.visualFireTimer = 0;
     this.rearVisualFireTimer = 0;
+    this.sideVisualFireTimer = 0;
     this.gunToggle = false;
     this.currentWeapon = activeLoadout.weapon !== null
       ? { id: activeLoadout.weapon.id, kind: activeLoadout.weapon.kind }
       : null;
     this.currentRearWeapon = activeLoadout.rearWeapon !== null
       ? { id: activeLoadout.rearWeapon.id, kind: activeLoadout.rearWeapon.kind as RearWeaponKind }
+      : null;
+    this.currentSideWeapon = activeLoadout.sideWeapon !== null
+      ? { id: activeLoadout.sideWeapon.id, kind: activeLoadout.sideWeapon.kind as SideWeaponKind }
       : null;
 
     this.dpsLabel.setText(vm.dpsLabel);
@@ -212,6 +228,7 @@ export class ShopPreviewPanel {
     this.renderShield();
     this.renderGuns();
     this.renderRearGuns();
+    this.renderSideGuns();
     this.renderBars();
     this.renderMuzzleFlashes(deltaMs);
     this.updateLasers(deltaMs);
@@ -240,6 +257,13 @@ export class ShopPreviewPanel {
       if (this.rearVisualFireTimer <= 0) {
         this.rearVisualFireTimer += stats.rearWeaponInterval * MS_PER_TICK;
         this.spawnRearBolt();
+      }
+    }
+    if (this.currentSideWeapon !== null && stats.sideWeaponEquipped) {
+      this.sideVisualFireTimer -= deltaMs;
+      if (this.sideVisualFireTimer <= 0) {
+        this.sideVisualFireTimer += SIDE_DEMO_INTERVAL_MS;
+        this.spawnSideBolt();
       }
     }
   }
@@ -293,6 +317,7 @@ export class ShopPreviewPanel {
   private updateLasers(deltaMs: number): void {
     this.laserBolts = tickLaserBolts(this.laserBolts, deltaMs);
     this.rearLaserBolts = tickLaserBolts(this.rearLaserBolts, deltaMs);
+    this.sideLaserBolts = tickLaserBolts(this.sideLaserBolts, deltaMs);
   }
 
   private renderMuzzleFlashes(deltaMs: number): void {
@@ -305,6 +330,10 @@ export class ShopPreviewPanel {
 
   private renderRearGuns(): void {
     drawRearWeaponIndicator(this.rearGunGfx, this.currentRearWeapon, this.shipX, this.shipY);
+  }
+
+  private renderSideGuns(): void {
+    drawSideWeaponIndicator(this.sideGunGfx, this.currentSideWeapon, this.shipX, this.shipY);
   }
 
   private renderGenerator(): void {
@@ -324,6 +353,25 @@ export class ShopPreviewPanel {
         .setBlendMode(Phaser.BlendModes.ADD)
         .setDepth(5);
       this.rearLaserBolts.push({ sprite, vy: (targetY - gy) / LASER_TRAVEL_MS, targetY });
+      this.muzzleFlashes.push({ x: gx, y: gy, life: MUZZLE_FLASH_MS });
+    }
+  }
+
+  /** Demo-fires the side weapon from its wing mounts — periodic, not charge-limited (§2.4 preview). */
+  private spawnSideBolt(): void {
+    if (this.currentSideWeapon === null) return;
+    const texKey = sideBoltTextureKey(this.currentSideWeapon.id);
+    const targetY = this.shipY - px(LASER_RISE);
+    for (const side of [-1, 1]) {
+      const gx = this.shipX + px(SIDE_WEAPON_MOUNT_X_OFFSET) * side;
+      const gy = this.shipY;
+      if (gy <= targetY) continue;
+      const sprite = this.scene.add
+        .image(gx, gy, texKey)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setScale(SIDE_BOLT_SCALE)
+        .setDepth(5);
+      this.sideLaserBolts.push({ sprite, vy: (targetY - gy) / LASER_TRAVEL_MS, targetY });
       this.muzzleFlashes.push({ x: gx, y: gy, life: MUZZLE_FLASH_MS });
     }
   }

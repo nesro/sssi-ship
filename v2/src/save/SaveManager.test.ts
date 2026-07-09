@@ -103,15 +103,15 @@ describe('shop transactions', () => {
     expect(save.equipped.shield).toBe('shield-wall-2');
     expect(buildLoadout(save).shield?.id).toBe('shield-wall-2');
     // net cost = shield-wall-2.price - shield-wall-1.price (shield-wall-1 is the starter)
-    const shield1Price = 0; // starters are free
+    const shield1Price = 80; // starters are priced low, never 0 (0 is reserved for NONE)
     const shield2Price = 780;
     expect(save.coins).toBe(1000 - (shield2Price - shield1Price));
   });
 
   it('switchItem downgrade refunds the difference and replaces the previous item', () => {
     let save = { ...defaultSave(), coins: 3000 };
-    save = switchItem(save, 'shield-wall-3'); // net cost 1700 (wall-1 starter is free)
-    const coinsAfterUp = save.coins; // 3000 - 1700 = 1300
+    save = switchItem(save, 'shield-wall-3'); // net cost 1700-80=1620 (wall-1 starter costs 80)
+    const coinsAfterUp = save.coins; // 3000 - 1620 = 1380
     save = switchItem(save, 'shield-wall-2'); // downgrade: refund = 1700-780=920
     expect(save.equipped.shield).toBe('shield-wall-2');
     expect(save.coins).toBe(coinsAfterUp + (1700 - 780));
@@ -119,11 +119,11 @@ describe('shop transactions', () => {
 
   it('switching to a new kind always pays the full trade-in cost — there is no owned-kind discount', () => {
     let save = { ...defaultSave(), coins: 5000 };
-    save = switchItem(save, 'shield-reflex-2'); // cost 1950-0=1950
+    save = switchItem(save, 'shield-reflex-2'); // cost 1950-80=1870 (wall-1 starter costs 80)
     const coinsAfterReflex = save.coins;
-    save = switchItem(save, 'shield-wall-1'); // back to the starter: refund 1950
+    save = switchItem(save, 'shield-wall-1'); // back to the starter: refund 1950-80=1870
     expect(save.equipped.shield).toBe('shield-wall-1');
-    expect(save.coins).toBe(coinsAfterReflex + 1950);
+    expect(save.coins).toBe(coinsAfterReflex + 1870);
     // Switching back to reflex-2 pays the full 1950 again — there is no memory of
     // ever having owned it; only one shield can ever be owned at a time.
     save = switchItem(save, 'shield-reflex-2');
@@ -234,25 +234,27 @@ describe('switchCost', () => {
 describe('single-ownership model — a system only ever owns whatever is equipped', () => {
   it('unequipShield refunds the equipped item\'s full price — same trade-in model as any other switch', () => {
     let save = { ...defaultSave(), coins: 2000 };
-    save = switchItem(save, 'shield-wall-2'); // cost 780-0=780, coins now 1220
+    save = switchItem(save, 'shield-wall-2'); // cost 780-80=700 (wall-1 starter costs 80), coins now 1300
     save = unequipShield(save);
     expect(save.equipped.shield).toBeNull();
-    expect(save.coins).toBe(2000); // full 780 refunded
+    // unequip always refunds the equipped item's full price (780), not the net cost paid to
+    // reach it (700) — so this nets +80 (wall-1's price) over the starting 2000.
+    expect(save.coins).toBe(2080);
   });
 
   it('unequipping then re-equipping the same item pays the trade-in cost again — nothing is remembered as owned', () => {
     let save = { ...defaultSave(), coins: 2000 };
-    save = switchItem(save, 'shield-wall-2'); // cost 780-0=780
-    save = unequipShield(save); // refunds 780
+    save = switchItem(save, 'shield-wall-2'); // cost 780-80=700 (wall-1 starter costs 80)
+    save = unequipShield(save); // refunds 700
     const coinsAfterUnequip = save.coins;
-    save = switchItem(save, 'shield-wall-2'); // pays the full 780 again, not free
+    save = switchItem(save, 'shield-wall-2'); // nothing equipped now, so pays the full 780 again
     expect(save.equipped.shield).toBe('shield-wall-2');
     expect(save.coins).toBe(coinsAfterUnequip - 780);
   });
 
   it('switching to a different kind always uses the trade-in formula against whatever is currently equipped', () => {
     let save = { ...defaultSave(), coins: 5000 };
-    save = switchItem(save, 'shield-reflex-2'); // cost 1950-0=1950
+    save = switchItem(save, 'shield-reflex-2'); // cost 1950-80=1870 (wall-1 starter costs 80)
     const coinsAfterReflex = save.coins;
     save = switchItem(save, 'shield-wall-2'); // cheaper (780) → refund 1170
     expect(save.equipped.shield).toBe('shield-wall-2');

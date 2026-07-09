@@ -53,9 +53,10 @@ const WEAPON_STARS: Record<WeaponKind, [number, number, number, number, number]>
   nova:    [32, 35, 39, 42, 46],
 };
 
-/** Coin cost per level (index = level − 1). Pulse level 1 is free (mandatory starter). */
+// Coin cost per level (index = level − 1). Weapon has a NONE option, so pulse level 1 — the
+// mandatory starter — is priced low but never 0, or it would be indistinguishable from NONE.
 const WEAPON_PRICES: Record<WeaponKind, [number, number, number, number, number]> = {
-  pulse:   [0,    1050,  2300,  5100,  11200],
+  pulse:   [100,  1050,  2300,  5100,  11200],
   scatter: [1200, 2650,  5800,  12700, 28000],
   ion:     [3000, 6550,  14500, 31800, 70000],
   nova:    [7450, 16400, 36200, 79500, 175000],
@@ -153,9 +154,10 @@ const REAR_WEAPON_STARS: Record<RearWeaponKind, [number, number, number, number,
   plasma:  [30, 32, 35, 37, 40],
 };
 
-/** Coin cost per level (index = level − 1). Grenade level 1 is free (mandatory starter). */
+// Coin cost per level (index = level − 1). Rear weapon has a NONE option, so grenade level 1
+// is priced low but never 0, or it would be indistinguishable from NONE.
 const REAR_WEAPON_PRICES: Record<RearWeaponKind, [number, number, number, number, number]> = {
-  grenade: [0,   310,  690,   1500,  3350],
+  grenade: [30,  310,  690,   1500,  3350],
   cluster: [350, 780,  1700,  3750,  8300],
   flak:    [890, 1950, 4300,  9450,  20800],
   arc:     [2200, 4900, 10700, 23600, 52000],
@@ -258,9 +260,10 @@ const SIDE_WEAPON_STARS: Record<SideWeaponKind, [number, number, number, number,
   orbital:   [27, 30, 33, 37, 40],
 };
 
-/** Coin cost per level (index = level − 1). Focus level 1 is free (mandatory starter). */
+// Coin cost per level (index = level − 1). Side weapon has a NONE option, so focus level 1
+// is priced low but never 0, or it would be indistinguishable from NONE.
 const SIDE_WEAPON_PRICES: Record<SideWeaponKind, [number, number, number, number, number]> = {
-  focus:     [0,   780,  1700,  3750,  8300],
+  focus:     [80,  780,  1700,  3750,  8300],
   flechette: [890, 1950, 4300,  9450,  20800],
   railgun:   [2200, 4900, 10700, 23600, 52000],
   orbital:   [5550, 12200, 26900, 59100, 130000],
@@ -332,7 +335,9 @@ const SHIELD_BASE: Record<ShieldKind, {
 // 42-star top end for bulwark Lv5. See docs/plans/shop-economy-rebalance.md.
 // (Budget shrunk from 150,000 when side weapons were added — see that file's update.)
 }> = {
-  wall:    { displayName: 'Wall',    blurb: 'Thick plate — survives hits, slow recharge.',         caps: [ 30,  60, 100, 150, 220], fractions: [0.08, 0.09, 0.10, 0.12, 0.14], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0,  1,  2,  3,  4] },
+  // Shield has a NONE option, so wall level 1 (mandatory starter) is priced low but never 0,
+  // or it would be indistinguishable from NONE.
+  wall:    { displayName: 'Wall',    blurb: 'Thick plate — survives hits, slow recharge.',         caps: [ 30,  60, 100, 150, 220], fractions: [0.08, 0.09, 0.10, 0.12, 0.14], prices: [  80,  780,  1700,  3750,  8300], stars: [ 0,  1,  2,  3,  4] },
   reflex:  { displayName: 'Reflex',  blurb: 'Thin plate, instant snap-back. Loves fast pulses.',   caps: [ 15,  22,  30,  40,  55], fractions: [0.35, 0.42, 0.52, 0.62, 0.75], prices: [ 890, 1950,  4300,  9450, 20800], stars: [ 5,  7,  8, 11, 13] },
   flux:    { displayName: 'Flux',    blurb: 'Balanced cap and pulse rate. Works with anything.',   caps: [ 40,  70, 105, 150, 210], fractions: [0.18, 0.22, 0.26, 0.32, 0.38], prices: [2200, 4900, 10700, 23600, 52000], stars: [15, 18, 20, 23, 26] },
   bulwark: { displayName: 'Bulwark', blurb: 'Extreme capacity, minimal regen. True tank armour.',  caps: [ 60, 100, 155, 225, 320], fractions: [0.05, 0.06, 0.07, 0.08, 0.10], prices: [5550,12200, 26900, 59100,130000], stars: [29, 32, 35, 39, 42] },

@@ -24,9 +24,9 @@ import { NarratorBar } from './NarratorBar';
 import { SupplyButtons } from './SupplyButtons';
 import { cssColor, PALETTE } from './palette';
 import { BTN_PANEL_W, BTN_X, fontPx, GAME_WIDTH, GAME_X, INFO_PANEL_W, LOGICAL_HEIGHT, LOGICAL_WIDTH, px, SHIP_GUN_X_OFFSET, SHIP_GUN_Y_OFFSET } from './layout';
-import { buildGameTextures, laserTextureForWeaponId, rearBoltTextureKey, sideWeaponKindColor, textureForEnemyKind } from './textures';
+import { buildGameTextures, laserTextureForWeaponId, rearBoltTextureKey, sideBoltTextureKey, sideWeaponKindColor, textureForEnemyKind } from './textures';
 import { motorKindColorFromId, motorLevelFromId, splitWeaponId, textureForShipId } from './textureKeys';
-import { drawGeneratorCore, drawRearWeaponIndicator, drawShieldRings, renderGunIndicator, renderThrusterAssembly, tickLaserBolts, tickMuzzleFlashes } from './shipRenderers';
+import { drawGeneratorCore, drawRearWeaponIndicator, drawShieldRings, drawSideWeaponIndicator, renderGunIndicator, renderThrusterAssembly, tickLaserBolts, tickMuzzleFlashes } from './shipRenderers';
 import type { LaserBolt, MuzzleFlash } from './shipRenderers';
 import { addModalBackdrop, addTextButton, drawDevBorder, UI_FONT } from './widgets';
 
@@ -35,6 +35,13 @@ const SHIP_CENTER_X = GAME_X + Math.floor(GAME_WIDTH / 2); // 480 logical
 const SHIP_Y = LOGICAL_HEIGHT - 80;                         // 460 logical
 const GAME_TOP_Y = 30;                                      // top margin for progress bar
 const LASER_TRAVEL_MS = 180;
+// Slower than LASER_TRAVEL_MS — a manual charged shot should read as heavier than autofire.
+const SIDE_BOLT_TRAVEL_MS = 420;
+// Guaranteed minimum flight distance (logical px) so a shot at a near enemy still reads as a
+// launch rather than an instant flash right at the ship.
+const SIDE_BOLT_MIN_TRAVEL = 180;
+// Side-weapon bolts are a manual charged shot — bigger and brighter than autofire lasers.
+const SIDE_BOLT_SCALE = 1.7;
 const MUZZLE_FLASH_MS = 100;
 // Cap per-frame catch-up: if the tab is backgrounded on mobile, deltaMs can spike to many
 // seconds. Without this the accumulator would fast-forward dozens of ticks in one frame and
@@ -95,9 +102,11 @@ export class CombatScene extends Phaser.Scene {
   private muzzleFlashGfx!: Phaser.GameObjects.Graphics;
   private gunGfx!: Phaser.GameObjects.Graphics;
   private rearGunGfx!: Phaser.GameObjects.Graphics;
+  private sideGunGfx!: Phaser.GameObjects.Graphics;
   private generatorGfx!: Phaser.GameObjects.Graphics;
   private gunToggle = false;
   private rearLaserBolts: LaserBolt[] = [];
+  private sideLaserBolts: LaserBolt[] = [];
   private hpBarGfx!: Phaser.GameObjects.Graphics;
 
   private shieldGfx!: Phaser.GameObjects.Graphics;
@@ -213,6 +222,7 @@ export class CombatScene extends Phaser.Scene {
     this.muzzleFlashGfx = this.add.graphics().setDepth(6).setBlendMode(Phaser.BlendModes.ADD);
     this.gunGfx        = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
     this.rearGunGfx    = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
+    this.sideGunGfx    = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
     this.particleGfx   = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
     this.hpBarGfx = this.add.graphics().setDepth(7);
     this.vignetteGfx = this.add.graphics().setDepth(9);
@@ -237,6 +247,7 @@ export class CombatScene extends Phaser.Scene {
     this.previousHps.clear();
     this.enemyCoinRewards.clear();
     this.laserBolts = [];
+    this.sideLaserBolts = [];
     this.enemyBolts = [];
     this.muzzleFlashes = [];
     this.burstParticles = [];
@@ -484,6 +495,7 @@ export class CombatScene extends Phaser.Scene {
     this.renderShieldPulseRings(deltaMs);
     this.renderGuns();
     this.renderRearGuns();
+    this.renderSideGuns();
     this.renderMuzzleFlashes(deltaMs);
     this.renderLowHullVignette();
     this.shipSprite.setX(px(SHIP_CENTER_X) + this.driftX());
@@ -491,6 +503,7 @@ export class CombatScene extends Phaser.Scene {
     this.renderEnemies(alpha);
     this.updateLasers(deltaMs);
     this.updateRearLasers(deltaMs);
+    this.updateSideLasers(deltaMs);
     this.updateEnemyBolts(deltaMs);
     this.updateBurstParticles(deltaMs);
     this.updateFloatingTexts(deltaMs);
@@ -668,9 +681,14 @@ export class CombatScene extends Phaser.Scene {
   private handleSideWeaponTap(): void {
     if (!computeSideWeaponButtonViewModel(this.core).canFire) return;
     const sideWeapon = this.core.loadout.sideWeapon;
+    if (sideWeapon === null) return;
+    // Snapshot targets before firing — fireSideWeapon can kill and remove enemies from
+    // state.enemies before this function regains control.
+    const targets = [...this.core.enemies].sort((a, b) => a.distance - b.distance).slice(0, sideWeapon.maxTargets);
     fireSideWeapon(this.core);
     Sound.boost();
-    if (sideWeapon !== null) this.spawnSideWeaponBurst(sideWeaponKindColor(sideWeapon.kind, sideWeapon.id));
+    this.spawnSideWeaponBurst(sideWeaponKindColor(sideWeapon.kind, sideWeapon.id));
+    this.spawnSideWeaponBolts(sideWeapon, targets);
   }
 
   private syncCardOverlay(): void {
@@ -840,6 +858,11 @@ export class CombatScene extends Phaser.Scene {
       px(SHIP_CENTER_X) + this.driftX(), px(SHIP_Y) + this.bobY());
   }
 
+  private renderSideGuns(): void {
+    drawSideWeaponIndicator(this.sideGunGfx, this.core.loadout.sideWeapon,
+      px(SHIP_CENTER_X) + this.driftX(), px(SHIP_Y) + this.bobY());
+  }
+
   private renderGenerator(): void {
     const genCap = this.core.loadout.generator.capacity;
     const frac = genCap > 0 ? this.core.ship.energy / genCap : 0;
@@ -857,6 +880,30 @@ export class CombatScene extends Phaser.Scene {
 
   private updateRearLasers(deltaMs: number): void {
     this.rearLaserBolts = tickLaserBolts(this.rearLaserBolts, deltaMs);
+  }
+
+  private updateSideLasers(deltaMs: number): void {
+    this.sideLaserBolts = tickLaserBolts(this.sideLaserBolts, deltaMs);
+  }
+
+  /** Spawns one traveling bolt per target — targets must be captured before fireSideWeapon()
+   * runs, since it can kill and remove them from state.enemies before the view reacts.
+   * Always travels at least SIDE_BOLT_MIN_TRAVEL so a shot at a near enemy still reads as a
+   * launch, not an instant flash — the exact target position only stretches the flight further. */
+  private spawnSideWeaponBolts(sideWeapon: { kind: string; id: string }, targets: EnemyState[]): void {
+    const texKey = sideBoltTextureKey(sideWeapon.id);
+    const cx = px(SHIP_CENTER_X) + this.driftX();
+    const cy = px(SHIP_Y - 6) + this.bobY();
+    const nearTargetY = cy - px(SIDE_BOLT_MIN_TRAVEL);
+    for (const enemy of targets) {
+      const targetY = Math.min(this.laneToY(enemy.distance), nearTargetY);
+      const sprite = this.add
+        .image(cx, cy, texKey)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setScale(SIDE_BOLT_SCALE)
+        .setDepth(5);
+      this.sideLaserBolts.push({ sprite, vy: (targetY - cy) / SIDE_BOLT_TRAVEL_MS, targetY });
+    }
   }
 
   private spawnRearBolt(): void {

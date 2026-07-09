@@ -78,6 +78,7 @@ export function buildGameTextures(scene: Phaser.Scene): void {
   buildEnemyTextures(scene);
   buildProjectileTextures(scene);
   buildRearProjectileTextures(scene);
+  buildSideProjectileTextures(scene);
   buildWeaponIconTextures(scene);
   buildRearWeaponIconTextures(scene);
   buildSideWeaponIconTextures(scene);
@@ -337,6 +338,59 @@ function buildRearProjectileTextures(scene: Phaser.Scene): void {
     g.fillStyle(0xffaa22, a * 0.6);
     g.fillCircle(px(7), px(7), px(2));
   });
+}
+
+function buildSideProjectileTextures(scene: Phaser.Scene): void {
+  // Focus: bright cyan beam — thick core, wide glow, bright flare at the tip
+  bake(scene, TEXTURE_KEYS.sideFocusBolt, px(16), px(36), (g, w, a) => {
+    g.lineStyle(w * 1.8, 0x99ddff, a);
+    g.lineBetween(px(8), px(4), px(8), px(34));
+    g.fillStyle(0xffffff, a);
+    g.fillCircle(px(8), px(6), w * 1.1);
+    g.lineStyle(w, 0xffffff, a * 0.8);
+    g.lineBetween(px(3), px(6), px(13), px(6));
+  });
+  // Flechette: orange dart — bigger head, double-line tail for a sense of motion
+  bake(scene, TEXTURE_KEYS.sideFlechetteBolt, px(20), px(32), (g, w, a) => {
+    g.fillStyle(0xff7755, a * 0.95);
+    g.fillTriangle(px(10), px(0), px(2), px(20), px(18), px(20));
+    g.fillStyle(0xffffff, a * 0.8);
+    g.fillTriangle(px(10), px(4), px(6), px(16), px(14), px(16));
+    g.lineStyle(w, 0xff7755, a * 0.7);
+    g.lineBetween(px(5), px(18), px(3), px(30));
+    g.lineBetween(px(15), px(18), px(17), px(30));
+  });
+  // Railgun: bright red-pink streak — long thick slug with a hot white core
+  bake(scene, TEXTURE_KEYS.sideRailgunBolt, px(10), px(46), (g, w, a) => {
+    g.lineStyle(w * 2.2, 0xff3355, a);
+    g.lineBetween(px(5), px(4), px(5), px(42));
+    g.lineStyle(w * 0.8, 0xffffff, a);
+    g.lineBetween(px(5), px(4), px(5), px(30));
+    g.fillStyle(0xffffff, a);
+    g.fillCircle(px(5), px(5), w * 0.9);
+  });
+  // Orbital: purple bombardment charge — big ring, bright core, faint outer halo ring
+  bake(scene, TEXTURE_KEYS.sideOrbitalBolt, px(28), px(28), (g, w, a) => {
+    g.lineStyle(w * 0.6, 0xaa66ff, a * 0.5);
+    g.strokeCircle(px(14), px(14), px(13));
+    g.fillStyle(0xaa66ff, a * 0.55);
+    g.fillCircle(px(14), px(14), px(9));
+    g.lineStyle(w, 0xaa66ff, a);
+    g.strokeCircle(px(14), px(14), px(8));
+    g.fillStyle(0xddaaff, a);
+    g.fillCircle(px(14), px(14), px(3.5));
+  });
+}
+
+/** Returns the bolt texture key for a side weapon id like 'orbital-2'. */
+export function sideBoltTextureKey(sideWeaponId: string): string {
+  const kind = sideWeaponId.split('-')[0] ?? 'focus';
+  switch (kind) {
+    case 'flechette': return TEXTURE_KEYS.sideFlechetteBolt;
+    case 'railgun':   return TEXTURE_KEYS.sideRailgunBolt;
+    case 'orbital':   return TEXTURE_KEYS.sideOrbitalBolt;
+    default:          return TEXTURE_KEYS.sideFocusBolt;
+  }
 }
 
 function buildWeaponIconTextures(scene: Phaser.Scene): void {
