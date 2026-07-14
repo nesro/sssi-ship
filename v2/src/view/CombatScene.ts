@@ -7,14 +7,13 @@ import { buildMissionResult } from '../core/result';
 import { createCoreState } from '../core/state';
 import { applyBoost } from '../core/supplies';
 import { advanceTick } from '../core/tick';
-import type { CoreState, EnemyState, LoadoutSnapshot } from '../core/types';
-import type { AbilityDefinition } from '../core/types';
-import { ALL_ABILITIES, abilityById } from '../data/cards';
-import { ALL_NEW_ABILITIES } from '../data/abilities';
+import type { CoreState, EnemyState } from '../core/types';
+import { abilityById, abilityPoolForLoadout } from '../data/cards';
 import { missionById } from '../data/missions';
 import { getStoryLine } from '../data/story';
 import { resolveForcedLoadout } from '../data/loadouts';
 import { computeSideWeaponButtonViewModel } from '../viewmodel/combat';
+import { ABILITY_COMPANY_COLORS } from '../viewmodel/companyColors';
 import { applyMissionResult, buildLoadout, loadSave } from '../save/SaveManager';
 import type { SaveData } from '../save/SaveManager';
 import { Sound } from '../audio/SoundManager';
@@ -22,10 +21,10 @@ import { CardOverlay } from './CardOverlay';
 import { CombatHud } from './CombatHud';
 import { NarratorBar } from './NarratorBar';
 import { SupplyButtons } from './SupplyButtons';
-import { cssColor, PALETTE } from './palette';
-import { BTN_PANEL_W, BTN_X, fontPx, GAME_WIDTH, GAME_X, INFO_PANEL_W, LOGICAL_HEIGHT, LOGICAL_WIDTH, px, SHIP_GUN_X_OFFSET, SHIP_GUN_Y_OFFSET } from './layout';
+import { cssColor } from './palette';
+import { BTN_PANEL_W, BTN_X, DPR, fontPx, GAME_WIDTH, GAME_X, INFO_PANEL_W, LOGICAL_HEIGHT, LOGICAL_WIDTH, px, SHIP_GUN_X_OFFSET, SHIP_GUN_Y_OFFSET } from './layout';
 import { buildGameTextures, laserTextureForWeaponId, rearBoltTextureKey, sideBoltTextureKey, sideWeaponKindColor, textureForEnemyKind } from './textures';
-import { motorKindColorFromId, motorLevelFromId, splitWeaponId, textureForShipId } from './textureKeys';
+import { iconTextureForSideWeaponId, motorKindColorFromId, motorLevelFromId, splitWeaponId, textureForShipId } from './textureKeys';
 import { drawGeneratorCore, drawRearWeaponIndicator, drawShieldRings, drawSideWeaponIndicator, renderGunIndicator, renderThrusterAssembly, tickLaserBolts, tickMuzzleFlashes } from './shipRenderers';
 import type { LaserBolt, MuzzleFlash } from './shipRenderers';
 import { addModalBackdrop, addTextButton, drawDevBorder, UI_FONT } from './widgets';
@@ -34,6 +33,17 @@ import { addModalBackdrop, addTextButton, drawDevBorder, UI_FONT } from './widge
 const SHIP_CENTER_X = GAME_X + Math.floor(GAME_WIDTH / 2); // 480 logical
 const SHIP_Y = LOGICAL_HEIGHT - 80;                         // 460 logical
 const GAME_TOP_Y = 30;                                      // top margin for progress bar
+// Half of the ship's baked 52px-tall texture (textures.ts's buildShipTextures) — used by
+// laneToY so a collision (core distance=0) reads as the enemy's edge touching the ship's
+// edge, not the two sprites' centers overlapping.
+const SHIP_VISUAL_RADIUS = 26;
+// Half of each enemy kind's baked texture size (textures.ts's buildEnemyTextures) — same
+// edge-touching purpose as SHIP_VISUAL_RADIUS above.
+const ENEMY_VISUAL_RADIUS: Record<string, number> = {
+  fodder: 24, striker: 26, tank: 28, swarm: 15, blocker: 32,
+  guardian: 26, turret: 30, kamikaze: 20, boss: 48,
+};
+const ENEMY_VISUAL_RADIUS_FALLBACK = ENEMY_VISUAL_RADIUS['fodder'] ?? 24;
 const LASER_TRAVEL_MS = 180;
 // Slower than LASER_TRAVEL_MS — a manual charged shot should read as heavier than autofire.
 const SIDE_BOLT_TRAVEL_MS = 420;
@@ -47,6 +57,23 @@ const MUZZLE_FLASH_MS = 100;
 // seconds. Without this the accumulator would fast-forward dozens of ticks in one frame and
 // the mission could resolve the instant the player returns. 250 ms = at most ~3 ticks/frame.
 const MAX_CATCH_UP_MS = 250;
+// Ability activation slots — must clear the 4 toggle buttons above (last one, side weapon,
+// ends at y≈83) and leave room below for SupplyButtons.BUTTONS_TOP.
+const ABILITY_SLOTS_TOP = 100;
+const ABILITY_SLOT_GAP = 34;
+const ABILITY_SLOT_H = 28;
+
+// Button-panel fill colors — the fill (not just the label text) now signals on/off state,
+// since text-color-only feedback was too easy to miss at a glance.
+const TOGGLE_OFF_FILL = 0x0a0a1a;
+const FIRE_ON_FILL = 0x0a2614;
+const REAR_ON_FILL = 0x142c0a;
+const SHIELD_ON_FILL = 0x0a1830;
+const SIDE_WEAPON_READY_FILL = 0x2a0f1c;
+const SIDE_WEAPON_EMPTY_FILL = 0x160a12;
+const ABILITY_SLOT_EMPTY_FILL = 0x080818;
+const ABILITY_SLOT_READY_FILL = 0x0f3a14;
+const ABILITY_SLOT_COOLDOWN_FILL = 0x2a1f0a;
 
 // How fast shield hit-flash decays (full fade in ~550ms, matching v1 ShieldVisual).
 const SHIELD_FLASH_DECAY = 1.8;
@@ -70,6 +97,12 @@ interface BurstParticle {
 }
 interface FloatingText { text: Phaser.GameObjects.Text; vy: number; life: number; maxLife: number }
 interface ShieldPulseRing { radius: number; alpha: number }
+/** Pre-tick core-state snapshot — compared against post-tick state to detect events worth
+ * a visual/audio reaction (shots fired, kills, shield/hull deltas, collisions, enemy shots). */
+interface PreTickSnapshot {
+  hull: number; shield: number; shots: number; rearShots: number; kills: number; collisions: number;
+  timers: Map<number, number>;
+}
 
 export interface CombatSceneData {
   missionId: string;
@@ -127,16 +160,25 @@ export class CombatScene extends Phaser.Scene {
   private cardsHeader!: Phaser.GameObjects.Text;
   /** Ability name + description labels — rebuilt on every new pick. */
   private cardEntries: Phaser.GameObjects.Text[] = [];
-  /** Toggle button labels for auto-fire, rear weapon, and auto-shield in the left panel. */
+  /** Toggle button backgrounds + labels for auto-fire, rear weapon, and auto-shield — the
+   * backgrounds are class fields (not locals) so updateAbilityBar() can recolor their fill
+   * per on/off state, not just the label text. */
+  private fireBg!: Phaser.GameObjects.Rectangle;
   private autoFireLabel!: Phaser.GameObjects.Text;
+  private rearBg!: Phaser.GameObjects.Rectangle;
   private rearWeaponLabel!: Phaser.GameObjects.Text;
+  private shieldBg!: Phaser.GameObjects.Rectangle;
   private autoShieldLabel!: Phaser.GameObjects.Text;
   /** Manual-fire side weapon button — label shows kind + charges, e.g. "RAILGUN 2/3". */
   private sideWeaponBg!: Phaser.GameObjects.Rectangle;
   private sideWeaponLabel!: Phaser.GameObjects.Text;
-  /** Ability bar slots: up to 3 active ability buttons. */
+  private sideWeaponIcon!: Phaser.GameObjects.Image;
+  /** Ability bar slots: up to 3 active ability buttons. `dot` is a small company-color
+   * indicator at the slot's left edge — the only "icon" an ability has (no per-ability
+   * texture exists, only a per-company color, same as the card-offer overlay). */
   private abilitySlots: Array<{
     bg: Phaser.GameObjects.Rectangle;
+    dot: Phaser.GameObjects.Arc;
     nameText: Phaser.GameObjects.Text;
     cooldownText: Phaser.GameObjects.Text;
   }> = [];
@@ -423,59 +465,14 @@ export class CombatScene extends Phaser.Scene {
     this.accumulatorMs += Math.min(deltaMs, MAX_CATCH_UP_MS);
     this.thrusterPhase += deltaMs;
 
-    // Snapshot pre-tick state for visual effect detection
-    const hullBefore = this.core.ship.hull;
-    const shieldBefore = this.core.ship.shield;
-    const timersBefore = new Map<number, number>();
-    for (const e of this.core.enemies) timersBefore.set(e.id, e.shootTimer);
-
-    const shotsBefore = this.core.stats.shotsFired;
-    const rearShotsBefore = this.core.stats.rearShotsFired;
-    const killsBefore = this.core.stats.kills;
+    const before = this.snapshotPreTickState();
     while (this.accumulatorMs >= MS_PER_TICK) {
       this.accumulatorMs -= MS_PER_TICK;
       this.snapshotDistances();
       advanceTick(this.core);
       this.detectHits();
     }
-
-    // Detect events and trigger visual/audio feedback
-    const shotsFired = this.core.stats.shotsFired - shotsBefore;
-    const rearShotsFired = this.core.stats.rearShotsFired - rearShotsBefore;
-    const playerBoltKind = this.resolvePlayerBoltKind();
-    for (let i = 0; i < shotsFired; i++) this.spawnLaserBolt(playerBoltKind);
-    for (let i = 0; i < rearShotsFired; i++) this.spawnRearBolt();
-    if (shotsFired > 0) Sound.fire();
-    if (this.core.stats.kills > killsBefore) Sound.kill();
-
-    if (this.core.ship.hull < hullBefore - 0.5) {
-      this.cameras.main.shake(120, 0.005);
-    }
-    if (this.core.ship.shield < shieldBefore - 0.5) {
-      this.shieldHitFlash = 1.0;
-    }
-    if (this.core.ship.shield > shieldBefore + 0.5) {
-      Sound.shieldPulse();
-      this.shieldPulseRings.push({ radius: px(28), alpha: 0.75 });
-    }
-    const enemyMissIds = new Set(
-      this.core.pendingVisualEvents
-        .filter((e) => e.kind === 'enemy-miss' && e.enemyId !== undefined)
-        .map((e) => e.enemyId as number),
-    );
-    const enemyCritIds = new Set(
-      this.core.pendingVisualEvents
-        .filter((e) => e.kind === 'enemy-crit' && e.enemyId !== undefined)
-        .map((e) => e.enemyId as number),
-    );
-    for (const e of this.core.enemies) {
-      const before = timersBefore.get(e.id);
-      if (before !== undefined && e.shootTimer > before) {
-        const outcome = enemyMissIds.has(e.id) ? 'miss' : enemyCritIds.has(e.id) ? 'crit' : 'normal';
-        this.spawnEnemyBolt(e, outcome);
-        if (outcome === 'miss') this.spawnDeflectionSpark();
-      }
-    }
+    this.detectCombatFeedback(before);
 
     // Decay flash
     this.shieldHitFlash = Math.max(0, this.shieldHitFlash - SHIELD_FLASH_DECAY * deltaMs / 1000);
@@ -514,6 +511,66 @@ export class CombatScene extends Phaser.Scene {
     this.maybeFinish();
   }
 
+  /** Everything `detectCombatFeedback` needs to compare against post-tick state. */
+  private snapshotPreTickState(): PreTickSnapshot {
+    const timers = new Map<number, number>();
+    for (const e of this.core.enemies) timers.set(e.id, e.shootTimer);
+    return {
+      hull: this.core.ship.hull,
+      shield: this.core.ship.shield,
+      shots: this.core.stats.shotsFired,
+      rearShots: this.core.stats.rearShotsFired,
+      kills: this.core.stats.kills,
+      collisions: this.core.stats.collisions,
+      timers,
+    };
+  }
+
+  /** Compares the pre-tick snapshot to current core state and triggers the matching
+   * visual/audio feedback (bolts, sounds, shield flash, collision burst, enemy shots).
+   * Pure side effects — reads core state, never mutates it. */
+  private detectCombatFeedback(before: PreTickSnapshot): void {
+    const shotsFired = this.core.stats.shotsFired - before.shots;
+    const rearShotsFired = this.core.stats.rearShotsFired - before.rearShots;
+    const playerBoltKind = this.resolvePlayerBoltKind();
+    for (let i = 0; i < shotsFired; i++) this.spawnLaserBolt(playerBoltKind);
+    for (let i = 0; i < rearShotsFired; i++) this.spawnRearBolt();
+    if (shotsFired > 0) Sound.fire();
+    if (rearShotsFired > 0) Sound.rearFire();
+    if (this.core.stats.kills > before.kills) Sound.kill();
+
+    if (this.core.ship.hull < before.hull - 0.5) {
+      this.cameras.main.shake(120, 0.005);
+    }
+    if (this.core.ship.shield < before.shield - 0.5) {
+      this.shieldHitFlash = 1.0;
+    }
+    if (this.core.stats.collisions > before.collisions) this.spawnCollisionFeedback();
+    if (this.core.ship.shield > before.shield + 0.5) {
+      Sound.shieldPulse();
+      this.shieldPulseRings.push({ radius: px(28), alpha: 0.75 });
+    }
+
+    const enemyMissIds = new Set(
+      this.core.pendingVisualEvents
+        .filter((e) => e.kind === 'enemy-miss' && e.enemyId !== undefined)
+        .map((e) => e.enemyId as number),
+    );
+    const enemyCritIds = new Set(
+      this.core.pendingVisualEvents
+        .filter((e) => e.kind === 'enemy-crit' && e.enemyId !== undefined)
+        .map((e) => e.enemyId as number),
+    );
+    for (const e of this.core.enemies) {
+      const beforeTimer = before.timers.get(e.id);
+      if (beforeTimer !== undefined && e.shootTimer > beforeTimer) {
+        const outcome = enemyMissIds.has(e.id) ? 'miss' : enemyCritIds.has(e.id) ? 'crit' : 'normal';
+        this.spawnEnemyBolt(e, outcome);
+        if (outcome === 'miss') this.spawnDeflectionSpark();
+      }
+    }
+  }
+
   private handleCardAction(action: number): void {
     const prevCount = this.core.pickedAbilityIds.length;
     resolveAbilityAction(this.core, action);
@@ -527,10 +584,10 @@ export class CombatScene extends Phaser.Scene {
 
   /**
    * Rebuilds the picked-card list from scratch on every new pick.
-   * ≤6 cards → single column, fontPx(9), 14px row height.
-   * ≤6 cards: single column, name fontPx(9) + full description fontPx(8), 24px rows.
-   * 7+ cards: two columns, name fontPx(8) + single-line description fontPx(7), 20px rows.
-   * 20 cards in 2-col = 10 rows × 20px = 200px, fits in the 206px slot above BOOST.
+   * ≤6 cards: single column, full (possibly multi-line) descriptions — row height is
+   * measured from each description's actual rendered height rather than assumed, since a
+   * fixed row height previously let long descriptions overlap the next ability's name.
+   * 7+ cards: two columns, single-line descriptions (bounded height, grid-safe).
    */
   private rebuildCardDisplay(): void {
     for (const t of this.cardEntries) t.destroy();
@@ -538,39 +595,61 @@ export class CombatScene extends Phaser.Scene {
 
     const total = this.core.pickedAbilityIds.length;
     if (total === 0) return;
+    if (total > 6) this.rebuildCardDisplayGrid();
+    else this.rebuildCardDisplaySingleColumn();
+  }
 
-    const useTwoCols = total > 6;
-    const cols   = useTwoCols ? 2 : 1;
-    const namePx = useTwoCols ? 7 : 8;
-    const descPx = useTwoCols ? 6 : 7;
-    const rowH   = useTwoCols ? 16 : 20;
-    const colW   = (INFO_PANEL_W - 6) / cols;
+  private rebuildCardDisplaySingleColumn(): void {
+    const namePx = 8;
+    const descPx = 7;
+    const colW = INFO_PANEL_W - 6;
+    const textX = 3 + colW / 2;
+    let y = 192;
+
+    this.core.pickedAbilityIds.forEach((abilityId) => {
+      const ability = abilityById(abilityId);
+      const nameT = this.add.text(px(textX), px(y), ability.name, {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(namePx))}px`,
+        color: abilityCompanyColor(ability.company), align: 'center',
+      }).setOrigin(0.5, 0).setDepth(10);
+      y += namePx + 2;
+
+      const descT = this.add.text(px(textX), px(y), ability.description, {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(descPx))}px`,
+        color: '#668899', align: 'center', wordWrap: { width: px(colW - 4) },
+      }).setOrigin(0.5, 0).setDepth(10);
+
+      this.cardEntries.push(nameT, descT);
+      y += descT.height / DPR + 6; // descT.height is device px; convert back to logical
+    });
+  }
+
+  private rebuildCardDisplayGrid(): void {
+    const namePx = 7;
+    const descPx = 6;
+    const rowH = 16;
+    const cols = 2;
+    const colW = (INFO_PANEL_W - 6) / cols;
     const startX = 3;
     const startY = 192;
 
     this.core.pickedAbilityIds.forEach((abilityId, i) => {
       const ability = abilityById(abilityId);
-      const col    = i % cols;
-      const row    = Math.floor(i / cols);
-      const textX  = startX + (col + 0.5) * colW;
-      const nameY  = startY + row * rowH;
-      const descY  = nameY + namePx + 2;
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const textX = startX + (col + 0.5) * colW;
+      const nameY = startY + row * rowH;
+      const descY = nameY + namePx + 2;
 
       const nameT = this.add.text(px(textX), px(nameY), ability.name, {
-        fontFamily: UI_FONT,
-        fontSize: `${String(fontPx(namePx))}px`,
-        color: abilityCompanyColor(ability.company),
-        align: 'center',
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(namePx))}px`,
+        color: abilityCompanyColor(ability.company), align: 'center',
       }).setOrigin(0.5, 0).setDepth(10);
 
       const descT = this.add.text(px(textX), px(descY), ability.description, {
-        fontFamily: UI_FONT,
-        fontSize: `${String(fontPx(descPx))}px`,
-        color: '#668899',
-        align: 'center',
-        wordWrap: { width: px(colW - 4) },
-      }).setOrigin(0.5, 0).setDepth(10);
-      if (useTwoCols) descT.setMaxLines(1);
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(descPx))}px`,
+        color: '#668899', align: 'center', wordWrap: { width: px(colW - 4) },
+      }).setOrigin(0.5, 0).setDepth(10).setMaxLines(1);
 
       this.cardEntries.push(nameT, descT);
     });
@@ -581,92 +660,104 @@ export class CombatScene extends Phaser.Scene {
     const btnW = px(BTN_PANEL_W - 40);
     const btnH = px(14);
 
-    const fireBg = this.add.rectangle(cx, px(22), btnW, btnH, 0x0a0a1a)
+    this.fireBg = this.add.rectangle(cx, px(22), btnW, btnH, TOGGLE_OFF_FILL)
       .setStrokeStyle(px(1), 0x225533).setDepth(10).setInteractive({ useHandCursor: true });
-    fireBg.on('pointerdown', () => { toggleAutoFire(this.core); });
+    this.fireBg.on('pointerdown', () => { toggleAutoFire(this.core); });
     this.autoFireLabel = this.add.text(cx, px(22), 'AUTO-FIRE  ON', {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#44ff66',
     }).setOrigin(0.5).setDepth(11);
 
-    const rearBg = this.add.rectangle(cx, px(40), btnW, btnH, 0x0a0a1a)
+    this.rearBg = this.add.rectangle(cx, px(40), btnW, btnH, TOGGLE_OFF_FILL)
       .setStrokeStyle(px(1), 0x336622).setDepth(10).setInteractive({ useHandCursor: true });
-    rearBg.on('pointerdown', () => { toggleRearWeapon(this.core); });
+    this.rearBg.on('pointerdown', () => { toggleRearWeapon(this.core); });
     this.rearWeaponLabel = this.add.text(cx, px(40), 'REAR  ON', {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#88ff44',
     }).setOrigin(0.5).setDepth(11);
-    if (this.core.loadout.rearWeapon === null) { rearBg.setAlpha(0.3); this.rearWeaponLabel.setAlpha(0.3); }
+    if (this.core.loadout.rearWeapon === null) { this.rearBg.setAlpha(0.3); this.rearWeaponLabel.setAlpha(0.3); }
 
-    const shieldBg = this.add.rectangle(cx, px(58), btnW, btnH, 0x0a0a1a)
+    this.shieldBg = this.add.rectangle(cx, px(58), btnW, btnH, TOGGLE_OFF_FILL)
       .setStrokeStyle(px(1), 0x223355).setDepth(10).setInteractive({ useHandCursor: true });
-    shieldBg.on('pointerdown', () => { toggleAutoShield(this.core); });
+    this.shieldBg.on('pointerdown', () => { toggleAutoShield(this.core); });
     this.autoShieldLabel = this.add.text(cx, px(58), 'AUTO-SHIELD  ON', {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#4488ff',
     }).setOrigin(0.5).setDepth(11);
 
-    this.sideWeaponBg = this.add.rectangle(cx, px(76), btnW, btnH, 0x0a0a1a)
+    this.sideWeaponBg = this.add.rectangle(cx, px(76), btnW, btnH, TOGGLE_OFF_FILL)
       .setStrokeStyle(px(1), 0x552233).setDepth(10).setInteractive({ useHandCursor: true });
     this.sideWeaponBg.on('pointerdown', () => { this.handleSideWeaponTap(); });
-    this.sideWeaponLabel = this.add.text(cx, px(76), '—', {
+    const sideWeapon = this.core.loadout.sideWeapon;
+    // Fall back to a always-baked icon key when unequipped — the image just stays hidden.
+    this.sideWeaponIcon = this.add.image(cx - btnW / 2 + px(9), px(76), iconTextureForSideWeaponId(sideWeapon?.id ?? 'focus-1'))
+      .setOrigin(0.5).setScale(0.4).setDepth(11).setVisible(sideWeapon !== null);
+    this.sideWeaponLabel = this.add.text(cx + px(4), px(76), '—', {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#ff6688',
     }).setOrigin(0.5).setDepth(11);
-    if (this.core.loadout.sideWeapon === null) { this.sideWeaponBg.setAlpha(0.3); this.sideWeaponLabel.setAlpha(0.3); }
+    if (sideWeapon === null) { this.sideWeaponBg.setAlpha(0.3); this.sideWeaponLabel.setAlpha(0.3); }
   }
 
   private buildAbilitySlots(): void {
     const cx = px(BTN_X + BTN_PANEL_W / 2);
     const slotW = px(BTN_PANEL_W - 40);
-    const slotH = px(16);
+    const slotH = px(ABILITY_SLOT_H);
 
     for (let i = 0; i < 3; i++) {
-      const y = px(96 + i * 22);
-      const bg = this.add.rectangle(cx, y, slotW, slotH, 0x080818)
+      const y = px(ABILITY_SLOTS_TOP + i * ABILITY_SLOT_GAP);
+      const bg = this.add.rectangle(cx, y, slotW, slotH, ABILITY_SLOT_EMPTY_FILL)
         .setStrokeStyle(px(1), 0x334455)
         .setDepth(10)
         .setInteractive({ useHandCursor: true });
       const idx = i;
       bg.on('pointerdown', () => { activateAbility(this.core, idx); });
-      const nameText = this.add.text(cx, y - px(2), '—', {
-        fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#334455',
+      const dot = this.add.circle(cx - slotW / 2 + px(9), y, px(3.5), 0x334455).setDepth(11);
+      const nameText = this.add.text(cx + px(4), y - px(5), '—', {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: '#334455',
       }).setOrigin(0.5).setDepth(11);
-      const cooldownText = this.add.text(cx, y + px(5), '', {
-        fontFamily: UI_FONT, fontSize: `${String(fontPx(6))}px`, color: '#556677',
+      const cooldownText = this.add.text(cx + px(4), y + px(7), '', {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: '#556677',
       }).setOrigin(0.5).setDepth(11);
-      this.abilitySlots.push({ bg, nameText, cooldownText });
+      this.abilitySlots.push({ bg, dot, nameText, cooldownText });
     }
   }
 
   private updateAbilityBar(): void {
     this.autoFireLabel.setText(`AUTO-FIRE  ${this.core.autoFireEnabled ? 'ON' : 'OFF'}`);
     this.autoFireLabel.setColor(this.core.autoFireEnabled ? '#44ff66' : '#664422');
+    this.fireBg.setFillStyle(this.core.autoFireEnabled ? FIRE_ON_FILL : TOGGLE_OFF_FILL);
     if (this.core.loadout.rearWeapon !== null) {
       this.rearWeaponLabel.setText(`REAR  ${this.core.rearWeaponEnabled ? 'ON' : 'OFF'}`);
       this.rearWeaponLabel.setColor(this.core.rearWeaponEnabled ? '#88ff44' : '#446622');
+      this.rearBg.setFillStyle(this.core.rearWeaponEnabled ? REAR_ON_FILL : TOGGLE_OFF_FILL);
     }
     this.autoShieldLabel.setText(`AUTO-SHIELD  ${this.core.autoShieldEnabled ? 'ON' : 'OFF'}`);
     this.autoShieldLabel.setColor(this.core.autoShieldEnabled ? '#4488ff' : '#334466');
+    this.shieldBg.setFillStyle(this.core.autoShieldEnabled ? SHIELD_ON_FILL : TOGGLE_OFF_FILL);
 
     const sideWeaponVm = computeSideWeaponButtonViewModel(this.core);
     this.sideWeaponLabel.setText(sideWeaponVm.equipped ? `${sideWeaponVm.label}  ${sideWeaponVm.chargesLabel}` : '—');
     this.sideWeaponLabel.setColor(sideWeaponVm.canFire ? '#ff6688' : '#663344');
+    this.sideWeaponBg.setFillStyle(sideWeaponVm.canFire ? SIDE_WEAPON_READY_FILL : SIDE_WEAPON_EMPTY_FILL);
     this.sideWeaponBg.setAlpha(sideWeaponVm.equipped ? 1 : 0.3);
     this.sideWeaponLabel.setAlpha(sideWeaponVm.equipped ? 1 : 0.3);
+    this.sideWeaponIcon.setAlpha(sideWeaponVm.equipped ? 1 : 0.3);
 
     this.abilitySlots.forEach((slot, i) => {
       const equipped = this.core.equippedAbilities[i];
       if (equipped === undefined) {
         slot.nameText.setText('—').setColor('#334455');
         slot.cooldownText.setText('');
-        slot.bg.setFillStyle(0x080818);
+        slot.bg.setFillStyle(ABILITY_SLOT_EMPTY_FILL);
+        slot.dot.setFillStyle(0x334455);
         return;
       }
       const def = abilityById(equipped.abilityId);
       slot.nameText.setText(def.name).setColor(abilityCompanyColor(def.company));
+      slot.dot.setFillStyle(ABILITY_COMPANY_COLORS[def.company] ?? 0xaabbcc);
       if (equipped.cooldownLeft > 0) {
         slot.cooldownText.setText(`CD ${String(equipped.cooldownLeft)}`);
-        slot.bg.setFillStyle(0x0a0a12);
+        slot.bg.setFillStyle(ABILITY_SLOT_COOLDOWN_FILL);
       } else {
         slot.cooldownText.setText('READY');
-        slot.bg.setFillStyle(0x0a1a0a);
+        slot.bg.setFillStyle(ABILITY_SLOT_READY_FILL);
       }
     });
   }
@@ -686,7 +777,7 @@ export class CombatScene extends Phaser.Scene {
     // state.enemies before this function regains control.
     const targets = [...this.core.enemies].sort((a, b) => a.distance - b.distance).slice(0, sideWeapon.maxTargets);
     fireSideWeapon(this.core);
-    Sound.boost();
+    Sound.sideWeaponFire();
     this.spawnSideWeaponBurst(sideWeaponKindColor(sideWeapon.kind, sideWeapon.id));
     this.spawnSideWeaponBolts(sideWeapon, targets);
   }
@@ -786,12 +877,12 @@ export class CombatScene extends Phaser.Scene {
     const gy = px(SHIP_Y - SHIP_GUN_Y_OFFSET) + this.bobY();
     let targetY = px(GAME_TOP_Y);
     if (!isNova) {
-      let front: { distance: number } | undefined;
+      let front: { distance: number; kind: string } | undefined;
       for (const e of this.core.enemies) {
         if (front === undefined || e.distance < front.distance) front = e;
       }
       if (front === undefined) return;
-      targetY = this.laneToY(front.distance);
+      targetY = this.laneToY(front.distance, front.kind);
     }
     if (!isNova && targetY >= gy) return;
     const textureKey = laserTextureForWeaponId(weapon.id);
@@ -828,6 +919,22 @@ export class CombatScene extends Phaser.Scene {
         vy: Math.sin(angle) * speed,
         color: 0x44aaff, life: 200, maxLife: 200,
       });
+    }
+  }
+
+  /** Distinct feedback for a collision + shield burst-back event (GAME_DESIGN.md §6) —
+   * bigger and redder than a normal shield hit, and radiates out to every currently
+   * visible enemy, so "shield absorbed a hit, then nearby enemies took damage" reads as
+   * one causal event instead of an unexplained shield drop plus enemies taking damage
+   * from nowhere. Purely visual — the mechanic itself lives in core/conveyor.ts and is
+   * not touched here. */
+  private spawnCollisionFeedback(): void {
+    const cx = px(SHIP_CENTER_X) + this.driftX();
+    const cy = px(SHIP_Y - 6) + this.bobY();
+    this.cameras.main.shake(180, 0.008);
+    this.spawnBurst(cx, cy, 0xff3300, 24);
+    for (const sprite of this.enemySprites.values()) {
+      this.spawnBurst(sprite.x, sprite.y, 0xff6633, 8);
     }
   }
 
@@ -896,7 +1003,7 @@ export class CombatScene extends Phaser.Scene {
     const cy = px(SHIP_Y - 6) + this.bobY();
     const nearTargetY = cy - px(SIDE_BOLT_MIN_TRAVEL);
     for (const enemy of targets) {
-      const targetY = Math.min(this.laneToY(enemy.distance), nearTargetY);
+      const targetY = Math.min(this.laneToY(enemy.distance, enemy.kind), nearTargetY);
       const sprite = this.add
         .image(cx, cy, texKey)
         .setBlendMode(Phaser.BlendModes.ADD)
@@ -927,7 +1034,7 @@ export class CombatScene extends Phaser.Scene {
   }
 
   private spawnEnemyBolt(enemy: EnemyState, outcome: 'normal' | 'crit' | 'miss' = 'normal'): void {
-    const startY = this.laneToY(enemy.distance) + px(12);
+    const startY = this.laneToY(enemy.distance, enemy.kind) + px(12);
     const targetY = px(SHIP_Y - 20);
     if (startY >= targetY) return;
     const color = outcome === 'crit' ? 0xff9900 : outcome === 'miss' ? 0x334455 : 0xff6600;
@@ -995,7 +1102,7 @@ export class CombatScene extends Phaser.Scene {
       }
       const previous = this.previousDistances.get(enemy.id) ?? enemy.distance;
       const distance = previous + (enemy.distance - previous) * alpha;
-      sprite.setY(this.laneToY(distance));
+      sprite.setY(this.laneToY(distance, enemy.kind));
       sprite.setAlpha(0.4 + 0.6 * (enemy.hp / enemy.maxHp));
       this.drawEnemyHpBar(sprite.x, sprite.y, enemy.hp / enemy.maxHp);
     }
@@ -1050,9 +1157,20 @@ export class CombatScene extends Phaser.Scene {
     }
   }
 
-  /** Maps core distance (0 = at ship, LANE_LENGTH = top) to canvas Y coordinate. */
-  private laneToY(distance: number): number {
-    const shipY = px(SHIP_Y);
+  /**
+   * Maps core distance (0 = collision, LANE_LENGTH = spawn point) to canvas Y
+   * coordinate. Core distance is an abstract point value with no notion of sprite
+   * size, so distance=0 mapped straight to SHIP_Y would draw an enemy's *center* over
+   * the ship's center at the moment of collision — visually the enemy flies into the
+   * ship rather than stopping when its edge touches the ship's edge. `enemyKind`
+   * (defaults to fodder's radius for callers without one, e.g. hypothetical targets)
+   * offsets the effective ship Y by both sprites' baked-texture radii (textures.ts's
+   * `buildEnemyTextures`/ship texture, both halved) so distance=0 reads as edge-to-edge
+   * contact instead of center-to-center overlap.
+   */
+  private laneToY(distance: number, enemyKind = 'fodder'): number {
+    const edgeOffset = px(SHIP_VISUAL_RADIUS + (ENEMY_VISUAL_RADIUS[enemyKind] ?? ENEMY_VISUAL_RADIUS_FALLBACK));
+    const shipY = px(SHIP_Y) - edgeOffset;
     const topY = px(GAME_TOP_Y);
     return shipY - (distance / LANE_LENGTH) * (shipY - topY);
   }
@@ -1122,25 +1240,9 @@ function boltScaleForLevel(level: number): number {
 }
 
 
+// Derives from the same ABILITY_COMPANY_COLORS map CardOverlay's icon circles use, so the
+// two never drift apart (this used to be a separate hardcoded copy of the same 4 colors).
 function abilityCompanyColor(company: string): string {
-  if (company === 'nexus')   return cssColor(PALETTE.weaponCyan);
-  if (company === 'aegis')   return cssColor(PALETTE.shieldBlue);
-  if (company === 'quantum') return cssColor(PALETTE.generatorAmber);
-  if (company === 'comet')   return cssColor(PALETTE.motorMagenta);
-  return '#aabbcc';
+  return cssColor(ABILITY_COMPANY_COLORS[company] ?? 0xaabbcc);
 }
 
-/**
- * Builds the ability pool for a mission from the subscription card IDs in the loadout.
- * Falls back to the full pool for tutorial forced-loadouts that have no subscriptions.
- * Nexus (weapon) cards are excluded when no weapon is equipped (e.g. tutorial t1).
- */
-function abilityPoolForLoadout(loadout: LoadoutSnapshot): AbilityDefinition[] {
-  const allById = new Map([...ALL_ABILITIES, ...ALL_NEW_ABILITIES].map((a) => [a.id, a]));
-  const ids = loadout.subscriptionCardIds;
-  const pool = ids.length > 0
-    ? ids.map((id) => allById.get(id)).filter((a): a is AbilityDefinition => a !== undefined)
-    : [...ALL_ABILITIES, ...ALL_NEW_ABILITIES];
-  if (loadout.weapon === null) return pool.filter((a) => a.company !== 'nexus');
-  return pool;
-}

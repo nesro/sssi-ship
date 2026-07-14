@@ -12,7 +12,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "sim": "tsx tools/simulate.ts",
-    "balance": "tsx tools/balance-sweep.ts"
+    "balance": "tsx tools/balance-sweep.ts",
+    "campaign": "tsx tools/campaign-simulate.ts",
+    "tune": "tsx tools/tune-loadouts.ts"
   },
   "dependencies": {
     "@capacitor/android": "^7.2.0",

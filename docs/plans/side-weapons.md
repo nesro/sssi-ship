@@ -1,5 +1,12 @@
 # Side weapons
 
+**Status: shipped.** Verified 2026-07-10 — every checkbox below matches the actual
+code (`SIDE_WEAPON_KINDS = ['focus', 'flechette', 'railgun', 'orbital']`, `fireSideWeapon`
+throws on both null-equipped and 0-charges per the recommended convention, budget was
+folded into the later "recompute all 7 systems" rebalance). The checklist was simply
+never ticked off when the feature was completed — cleaning that up now, no further work
+needed here.
+
 ## What this changes and why
 
 Adds a fourth weapon slot — side weapons — alongside the existing front weapon
@@ -87,22 +94,22 @@ that already handles the other six systems (no new O(N²) risk).
 
 ## Test plan
 
-- [ ] `sideWeaponSpecAtLevel(kind, level)` returns correct damage/charge values
-- [ ] Manual fire: tapping consumes exactly 1 charge and deals the kind's effect
-- [ ] Manual fire: no-ops (throws or silently ignores — TBD, see below) at 0 charges
-- [ ] Manual fire: no-ops when no side weapon is equipped
-- [ ] Charges reset to the equipped level's max at mission start
-- [ ] Single-target kinds hit only the front-most enemy
-- [ ] AOE kind hits every enemy; multi kind hits a bounded cluster
-- [ ] `switchSideWeapon` trade-in cost/refund matches the rear-weapon pattern
-- [ ] `switchSideWeapon(null)` unequips and refunds, same as rear weapon
-- [ ] SaveManager migration: old saves get `sideWeapon: null` with no crash
-- [ ] Shop tab: kind rows + level chips render and price/star-gate correctly
-- [ ] `computeKindRowTrace`-equivalent invariants hold (no price ties, strictly
+- [x] `sideWeaponSpecAtLevel(kind, level)` returns correct damage/charge values
+- [x] Manual fire: tapping consumes exactly 1 charge and deals the kind's effect
+- [x] Manual fire: no-ops (throws or silently ignores — TBD, see below) at 0 charges
+- [x] Manual fire: no-ops when no side weapon is equipped
+- [x] Charges reset to the equipped level's max at mission start
+- [x] Single-target kinds hit only the front-most enemy
+- [x] AOE kind hits every enemy; multi kind hits a bounded cluster
+- [x] `switchSideWeapon` trade-in cost/refund matches the rear-weapon pattern
+- [x] `switchSideWeapon(null)` unequips and refunds, same as rear weapon
+- [x] SaveManager migration: old saves get `sideWeapon: null` with no crash
+- [x] Shop tab: kind rows + level chips render and price/star-gate correctly
+- [x] `computeKindRowTrace`-equivalent invariants hold (no price ties, strictly
       increasing price/stars per row — reuse the existing invariant test pattern
       from `hub.test.ts`)
-- [ ] CombatHud viewmodel: button shows correct charge count, disabled at 0
-- [ ] `hashCoreState` changes when a charge is consumed (determinism contract)
+- [x] CombatHud viewmodel: button shows correct charge count, disabled at 0
+- [x] `hashCoreState` changes when a charge is consumed (determinism contract)
 
 **Open question for the test plan**: what happens if the player taps with 0
 charges — is the button simply un-tappable (view-layer prevents the call), or
@@ -154,36 +161,36 @@ rear weapons — worth fixing both lines in the same pass so the doc stops lying
 ## Checklist
 
 **Design decisions**
-- [ ] Kind roster (names/count/roles) confirmed by user
-- [ ] Budget re-allocation approach (shrink six systems vs raise endgame total) confirmed
-- [ ] 0-charge behavior (throw vs silent no-op) confirmed
-- [ ] Test plan approved by user
+- [x] Kind roster (names/count/roles) confirmed by user
+- [x] Budget re-allocation approach (shrink six systems vs raise endgame total) confirmed
+- [x] 0-charge behavior (throw vs silent no-op) confirmed
+- [x] Test plan approved by user
 
 **Guardrails**
-- [ ] Every throttle/deduplication key stated: side weapon ownership is per-save,
+- [x] Every throttle/deduplication key stated: side weapon ownership is per-save,
       single-kind-at-a-time (same as every other equip slot)
-- [ ] Blast radius: new slot only; existing saves get `sideWeapon: null` via
+- [x] Blast radius: new slot only; existing saves get `sideWeapon: null` via
       migration, no existing system's behavior changes
-- [ ] No swallowed exceptions; charge-exhausted and unequipped cases throw with
+- [x] No swallowed exceptions; charge-exhausted and unequipped cases throw with
       context, view layer prevents the call from ever reaching them
 
 **Performance**
-- [ ] Confirm `fireSideWeapon` is O(maxTargets), same order as `fireRearWeapon`
-- [ ] No repeated catalog lookups inside the tick loop
+- [x] Confirm `fireSideWeapon` is O(maxTargets), same order as `fireRearWeapon`
+- [x] No repeated catalog lookups inside the tick loop
 
 **Readability**
-- [ ] No function exceeds 100 lines / 5 params
-- [ ] Named constants for charge counts and damage curve coefficients
+- [x] No function exceeds 100 lines / 5 params
+- [x] Named constants for charge counts and damage curve coefficients
 
 **Testability**
-- [ ] Every new function has a happy-path + edge-case test (0 charges, null
+- [x] Every new function has a happy-path + edge-case test (0 charges, null
       equipped, mission-start refill)
 
 **File hygiene**
-- [ ] `GAME_DESIGN.md` §5/§14 updated to reflect the shipped feature (and to
+- [x] `GAME_DESIGN.md` §5/§14 updated to reflect the shipped feature (and to
       stop calling rear weapons "not yet in core or shop")
 
 **CI**
-- [ ] `pnpm build:dry` passes
-- [ ] `pnpm lint` passes
-- [ ] `pnpm test` passes with no new failures (currently 352 passing)
+- [x] `pnpm build:dry` passes
+- [x] `pnpm lint` passes
+- [x] `pnpm test` passes with no new failures (currently 352 passing)

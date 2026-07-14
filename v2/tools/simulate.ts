@@ -3,27 +3,52 @@
 //
 // Usage: pnpm sim -- --mission m1 --runs 1000 --strategy greedy --loadout starter
 // Usage: pnpm sim -- --mission t1 --runs 500 --strategy greedy --loadout forced
+// Usage: pnpm sim -- --mission m1 --runs 2000 --strategy random --loadout starter --percentiles
+// Usage: pnpm sim -- --mission t4 --runs 1000 --strategy greedy --loadout forced --use-supplies
 // Strategies: random (uniform pick) | greedy (biggest damage boost) | skip (never picks)
-// Loadouts: starter | mid | full | forced (uses the mission's own forcedLoadout — required for tutorials)
+// Loadouts: starter | mid | full | intended | forced
+//   intended = the mission's own specific target loadout from GAME_DESIGN.md §13's
+//   balance table (a partial upgrade, e.g. m3 = Lv2 weapon + Lv2 generator, not a
+//   uniform tier) — use this, not starter/mid/full, when checking against that table.
+//   forced uses the mission's own forcedLoadout, required for tutorials.
+// --percentiles: suggests T4-T1 time-star thresholds from successful-run durations only,
+// per the 10th/25th/50th/75th percentile method in GAME_DESIGN.md §13. Output is a
+// suggestion to review, not an instruction to apply — mission-star values are tuned by
+// hand, same as every other number in src/data/missions.ts.
+// --use-supplies: models a player who actually uses gifted/purchased supplies rather
+// than ignoring them. Off by default (matches every strategy's historical behavior);
+// needed for missions whose difficulty assumes supply usage, e.g. tutorial t4 ("Battle
+// Supplies") — without this flag, the measured clear-rate is for a player who never
+// taps the mechanic the mission is teaching.
+// --supplies-policy naive|reactive (default naive, only matters with --use-supplies):
+//   naive    — taps the first charged supply every tick, as soon as it's available,
+//              even at full health/shield. A lower bound: "uses supplies, no judgment."
+//   reactive — shield-restore only when shield is below 40% of capacity (using it at
+//              full shield wastes it); damage-boost only when 3+ enemies are on screen
+//              (its 5s window is wasted on a lull). Models "uses supplies with
+//              reasonable judgment," not perfect optimal play.
 
 import { TICKS_PER_SECOND } from '../src/core/constants';
 import { runMission } from '../src/core/replay';
 import type { RunPolicies } from '../src/core/replay';
 import { buildMissionResult } from '../src/core/result';
 import { mulberry32 } from '../src/core/rng';
-import type { AbilityDefinition, AbilityOffer, CoreState, LoadoutSnapshot } from '../src/core/types';
-import { ALL_ABILITIES, abilityById } from '../src/data/cards';
-import { ALL_NEW_ABILITIES } from '../src/data/abilities';
+import type { LoadoutSnapshot } from '../src/core/types';
+import { abilityPoolForLoadout } from '../src/data/cards';
 import { ALL_MISSIONS, missionById } from '../src/data/missions';
 import { resolveForcedLoadout, STARTER_LOADOUT } from '../src/data/loadouts';
-import { starterKindLoadoutAtLevel } from './loadoutPresets';
+import { intendedLoadoutForMission, starterKindLoadoutAtLevel } from './loadoutPresets';
+import { greedyPick, tapFirstChargedSupply, tapSuppliesReactively } from './policies';
 
 interface CliOptions {
   missionId: string;
   runs: number;
   baseSeed: number;
   strategy: 'random' | 'greedy' | 'skip';
-  loadout: 'starter' | 'mid' | 'full' | 'forced';
+  loadout: 'starter' | 'mid' | 'full' | 'intended' | 'forced';
+  percentiles: boolean;
+  useSupplies: boolean;
+  suppliesPolicy: 'naive' | 'reactive';
 }
 
 const LOADOUTS: Record<'starter' | 'mid' | 'full', LoadoutSnapshot> = {
@@ -37,17 +62,37 @@ function parseArgs(rawArgv: string[]): CliOptions {
   const argv = rawArgv.filter((arg) => arg !== '--');
   const options: CliOptions = {
     missionId: 'm1', runs: 1000, baseSeed: 1, strategy: 'random', loadout: 'starter',
+    percentiles: false, useSupplies: false, suppliesPolicy: 'naive',
   };
-  for (let i = 0; i < argv.length; i += 2) {
+  let i = 0;
+  while (i < argv.length) {
     const flag = argv[i];
+    // --percentiles and --use-supplies are boolean switches (no value) — every other flag takes one.
+    if (flag === '--percentiles') {
+      options.percentiles = true;
+      i += 1;
+      continue;
+    }
+    if (flag === '--use-supplies') {
+      options.useSupplies = true;
+      i += 1;
+      continue;
+    }
     const value = argv[i + 1];
     if (flag === undefined || value === undefined) break;
     if (flag === '--mission') options.missionId = value;
     else if (flag === '--runs') options.runs = parsePositiveInt(value, flag);
     else if (flag === '--seed') options.baseSeed = parsePositiveInt(value, flag);
     else if (flag === '--strategy') options.strategy = parseChoice(value, ['random', 'greedy', 'skip']);
-    else if (flag === '--loadout') options.loadout = parseChoice(value, ['starter', 'mid', 'full', 'forced']);
-    else throw new Error(`Unknown flag "${flag}". Known: --mission --runs --seed --strategy --loadout`);
+    else if (flag === '--loadout') options.loadout = parseChoice(value, ['starter', 'mid', 'full', 'intended', 'forced']);
+    else if (flag === '--supplies-policy') options.suppliesPolicy = parseChoice(value, ['naive', 'reactive']);
+    else {
+      throw new Error(
+        `Unknown flag "${flag}". Known: --mission --runs --seed --strategy --loadout ` +
+          `--percentiles --use-supplies --supplies-policy`,
+      );
+    }
+    i += 2;
   }
   return options;
 }
@@ -66,35 +111,16 @@ function parseChoice<T extends string>(value: string, choices: T[]): T {
   return match;
 }
 
-function abilityPoolForLoadout(loadout: LoadoutSnapshot): AbilityDefinition[] {
-  const all = [...ALL_ABILITIES, ...ALL_NEW_ABILITIES];
-  if (loadout.weapon !== null) return all;
-  return all.filter((a) => a.company !== 'nexus');
-}
-
-function policiesFor(strategy: CliOptions['strategy'], seed: number, loadout: LoadoutSnapshot): RunPolicies {
+function policiesFor(options: CliOptions, seed: number, loadout: LoadoutSnapshot): RunPolicies {
   const abilityPool = abilityPoolForLoadout(loadout);
-  if (strategy === 'skip') return { abilityPool };
-  if (strategy === 'random') {
+  const boostPolicy = options.suppliesPolicy === 'reactive' ? tapSuppliesReactively : tapFirstChargedSupply;
+  const boost = options.useSupplies ? { useBoost: boostPolicy } : {};
+  if (options.strategy === 'skip') return { abilityPool, ...boost };
+  if (options.strategy === 'random') {
     const rng = mulberry32(seed ^ 0x5f3759df);
-    return { abilityPool, pickAbility: () => Math.floor(rng() * 3) };
+    return { abilityPool, pickAbility: () => Math.floor(rng() * 3), ...boost };
   }
-  return { abilityPool, pickAbility: greedyPick };
-}
-
-/** Casual-player model: prefer weapon cards, then generator, never reroll. */
-function greedyPick(_state: CoreState, offer: AbilityOffer): number {
-  const priorities: Record<string, number> = { nexus: 0, quantum: 1, aegis: 2, comet: 3 };
-  let best = 0;
-  let bestRank = Number.POSITIVE_INFINITY;
-  offer.abilityIds.forEach((cardId, index) => {
-    const rank = priorities[abilityById(cardId).company] ?? 9;
-    if (rank < bestRank) {
-      bestRank = rank;
-      best = index;
-    }
-  });
-  return best;
+  return { abilityPool, pickAbility: greedyPick, ...boost };
 }
 
 function resolveLoadout(options: CliOptions, mission: ReturnType<typeof missionById>): LoadoutSnapshot {
@@ -104,6 +130,7 @@ function resolveLoadout(options: CliOptions, mission: ReturnType<typeof missionB
     }
     return resolveForcedLoadout(mission.forcedLoadout);
   }
+  if (options.loadout === 'intended') return intendedLoadoutForMission(mission.id);
   return LOADOUTS[options.loadout];
 }
 
@@ -115,11 +142,17 @@ function main(): void {
   let victories = 0;
   let totalTicks = 0;
   const starCounts = new Map<string, number>();
+  // Successful-run durations only — the ones already-printed avg-duration mixes in
+  // defeat-truncated runs, which skews it toward "died fast" rather than "cleared fast".
+  const successfulDurationsTicks: number[] = [];
   for (let i = 0; i < options.runs; i++) {
     const seed = options.baseSeed + i;
-    const { state } = runMission(mission, loadout, seed, policiesFor(options.strategy, seed, loadout));
+    const { state } = runMission(mission, loadout, seed, policiesFor(options, seed, loadout));
     const result = buildMissionResult(state);
-    if (result.status === 'victory') victories += 1;
+    if (result.status === 'victory') {
+      victories += 1;
+      successfulDurationsTicks.push(result.durationTicks);
+    }
     totalTicks += result.durationTicks;
     for (const starId of result.earnedStarIds) {
       starCounts.set(starId, (starCounts.get(starId) ?? 0) + 1);
@@ -128,15 +161,42 @@ function main(): void {
 
   const clearRate = (victories / options.runs) * 100;
   const avgSeconds = totalTicks / options.runs / TICKS_PER_SECOND;
+  const suppliesLabel = options.useSupplies ? options.suppliesPolicy : 'false';
   console.log(
-    `mission=${mission.id} runs=${String(options.runs)} strategy=${options.strategy} loadout=${options.loadout}`,
+    `mission=${mission.id} runs=${String(options.runs)} strategy=${options.strategy} ` +
+      `loadout=${options.loadout} use-supplies=${suppliesLabel}`,
   );
-  console.log(`clear-rate=${clearRate.toFixed(1)}%  avg-duration=${avgSeconds.toFixed(1)}s`);
+  console.log(`clear-rate=${clearRate.toFixed(1)}%  avg-duration=${avgSeconds.toFixed(1)}s (all runs, defeats included)`);
   for (const star of mission.stars) {
     const rate = ((starCounts.get(star.id) ?? 0) / options.runs) * 100;
     console.log(`  star ${star.id.padEnd(16)} ${rate.toFixed(1)}%`);
   }
   console.log(`missions available: ${ALL_MISSIONS.map((m) => m.id).join(', ')}`);
+
+  if (options.percentiles) printTimeStarPercentiles(successfulDurationsTicks);
+}
+
+/**
+ * Suggests T4-T1 time-star thresholds from successful-run durations only, per the
+ * 10th/25th/50th/75th percentile method in GAME_DESIGN.md §13 (10th → T4, tightest;
+ * 75th → T1, loosest). A suggestion to review, not a value to apply automatically —
+ * mission star thresholds in src/data/missions.ts are tuned by hand.
+ */
+function printTimeStarPercentiles(successfulDurationsTicks: number[]): void {
+  if (successfulDurationsTicks.length === 0) {
+    console.log('\nNo successful runs — cannot suggest time-star thresholds.');
+    return;
+  }
+  const sorted = [...successfulDurationsTicks].sort((a, b) => a - b);
+  const percentileSeconds = (p: number): number => {
+    const index = Math.min(sorted.length - 1, Math.floor(p * sorted.length));
+    return (sorted[index] ?? 0) / TICKS_PER_SECOND;
+  };
+  console.log(`\nSuggested time-star thresholds from ${String(sorted.length)} successful runs (seconds):`);
+  console.log(`  T4 (10th percentile, tightest): ${percentileSeconds(0.10).toFixed(1)}s`);
+  console.log(`  T3 (25th percentile):           ${percentileSeconds(0.25).toFixed(1)}s`);
+  console.log(`  T2 (50th percentile):           ${percentileSeconds(0.50).toFixed(1)}s`);
+  console.log(`  T1 (75th percentile, loosest):  ${percentileSeconds(0.75).toFixed(1)}s`);
 }
 
 main();

@@ -1,4 +1,4 @@
-import type { AbilityDefinition, CompanyId, CoreState, RunModifiers } from '../core/types';
+import type { AbilityDefinition, CompanyId, CoreState, LoadoutSnapshot, RunModifiers } from '../core/types';
 import { ALL_NEW_ABILITIES } from './abilities';
 
 // Helper for flat-modifier cards
@@ -64,6 +64,15 @@ const FLAT_BOOSTS: AbilityDefinition[] = [
     (m) => ({ ...m, motorTimelineMult: m.motorTimelineMult * 1.35 })),
   flat('m-eff-50', 'comet', 'FRICTIONLESS HUB', 'Motor draws 50% less power',
     (m) => ({ ...m, motorDrawMult: m.motorDrawMult * 0.5 })),
+  // Added 2026-07-10 (docs/plans/game-identity-and-design-review-followup.md,
+  // decision 3) — sub-basic's Lv1 pool was 5 cards with zero real draft variance for
+  // most of the early campaign. These two round it out with a survivability and an
+  // economy option, at half the magnitude of their nearest existing card, matching
+  // sub-basic's entry-tier identity rather than power-creeping it.
+  flat('g-hull-02', 'quantum', 'RECYCLED PLATING', '+0.03 hull restored per kill',
+    (m) => ({ ...m, hullPerKill: m.hullPerKill + 0.03 })),
+  flat('m-eco-01', 'comet', 'SCRAP CONVERTER', '+0.01 energy restored per coin earned',
+    (m) => ({ ...m, coinsEnergyRestore: m.coinsEnergyRestore + 0.01 })),
 ];
 
 // ── Situational (per-target multipliers) ──────────────────────────────────────
@@ -356,4 +365,26 @@ export function abilityById(id: string): AbilityDefinition {
   const ability = ABILITIES_BY_ID[id];
   if (ability === undefined) throw new Error(`Unknown ability id "${id}"`);
   return ability;
+}
+
+/**
+ * The ability pool a loadout actually draws support-call offers from. Shared by the
+ * live game (CombatScene.ts) and every simulator tool — this was previously duplicated
+ * in three places, and two of the three copies (tools/simulate.ts,
+ * tools/balance-sweep.ts) had silently diverged to always use the full catalog,
+ * ignoring `subscriptionCardIds` entirely. Never re-duplicate this.
+ *
+ * An empty `subscriptionCardIds` means "no subscription owned at all" and falls back
+ * to the full catalog; a non-empty list (even sub-basic's default 5 cards) restricts
+ * the pool to exactly those ids. No weapon equipped excludes nexus-company cards
+ * (nexus cards boost front-weapon damage, meaningless with no weapon to boost).
+ */
+export function abilityPoolForLoadout(loadout: LoadoutSnapshot): AbilityDefinition[] {
+  const allById = new Map([...ALL_ABILITIES, ...ALL_NEW_ABILITIES].map((a) => [a.id, a]));
+  const ids = loadout.subscriptionCardIds;
+  const pool = ids.length > 0
+    ? ids.map((id) => allById.get(id)).filter((a): a is AbilityDefinition => a !== undefined)
+    : [...ALL_ABILITIES, ...ALL_NEW_ABILITIES];
+  if (loadout.weapon === null) return pool.filter((a) => a.company !== 'nexus');
+  return pool;
 }

@@ -1,5 +1,16 @@
 # Shop economy rebalance
 
+**Status: superseded.** The six-system price/star tables this document proposes were
+never applied as-is. A later pass (folding side weapons in as a 7th system — see
+`docs/plans/side-weapons.md`) redid the whole budget split with different numbers, to
+make room for the new slot within the same 1,000,000-coin/46-star endgame target. Current
+`src/data/items.ts` prices don't match this document's proposed tables (verified
+2026-07-10) — e.g. this doc proposes `wall` prices `0, 900, 2000, 4350, 9600`; the
+shipped values are `80, 780, 1700, 3750, 8300`. The underlying *goals* (strictly
+increasing rows, wide multiplicative gaps, 1,000,000-coin endgame anchor) were kept;
+the specific numbers below were not. Left unchecked below as an accurate record —
+don't implement this document's tables.
+
 ## What this changes and why
 
 Every shop system (ship, weapon, rear-weapon, shield, generator, motor) currently has

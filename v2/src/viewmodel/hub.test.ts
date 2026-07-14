@@ -70,48 +70,51 @@ describe('computeKindRows — states', () => {
 
   it('switching away and back always uses the trade-in formula — nothing is remembered as owned', () => {
     let save = { ...defaultSave(), coins: 5000 };
-    save = switchItem(save, 'ion-1'); // buy+equip ion (3000); pulse-1 is gone, not "kept owned"
-    const rows = computeKindRows({ config: WEAPON_SYSTEM, save, playerStars: 0 }, 'ion');
+    save = switchItem(save, 'ion-3'); // buy+equip ion-3 (2300); pulse-1 is gone, not "kept owned"
+    const rows = computeKindRows({ config: WEAPON_SYSTEM, save, playerStars: 20 }, 'ion');
     const pulse = rows.find((r) => r.kind === 'pulse');
     expect(pulse?.rowState).toBe('purchasable');
-    // pulse-1 costs 100, ion-1 equipped at 3000 → refund 2900
-    expect(pulse?.badge).toEqual({ kind: 'refund', label: '+2900⬤', coins: 2900 });
+    // pulse-1 costs 100, ion-3 equipped at 2300 → refund 2200
+    expect(pulse?.badge).toEqual({ kind: 'refund', label: '+2200⬤', coins: 2200 });
     expect(pulse?.tap.mutation).toEqual({ type: 'switch-item', itemId: 'pulse-1' });
   });
 
   it('purchasable: badge cost, affordable true', () => {
-    const save = { ...defaultSave(), coins: 5000 };
+    // A kind row's tap target is always Lv1, and every kind now shares one price
+    // ladder — so a row-level switch away from any equipped weapon nets to 0. Start
+    // from NONE (price 0) instead, so ion's Lv1 (100) is a genuine, nonzero cost.
+    const save = { ...defaultSave(), coins: 5000, equipped: { ...defaultSave().equipped, weapon: null } };
     const rows = computeKindRows({ config: WEAPON_SYSTEM, save, playerStars: 20 }, null);
     const ion = rows.find((r) => r.kind === 'ion');
     expect(ion?.rowState).toBe('purchasable');
-    // ion-1 (3000) - pulse-1 equipped (100) = 2900
-    expect(ion?.badge).toEqual({ kind: 'cost', label: '-2900⬤', coins: 2900, affordable: true });
+    expect(ion?.badge).toEqual({ kind: 'cost', label: '-100⬤', coins: 100, affordable: true });
   });
 
   it('unaffordable: badge cost, affordable false', () => {
-    const save = { ...defaultSave(), coins: 10 };
+    const save = { ...defaultSave(), coins: 10, equipped: { ...defaultSave().equipped, weapon: null } };
     const rows = computeKindRows({ config: WEAPON_SYSTEM, save, playerStars: 20 }, null);
     const ion = rows.find((r) => r.kind === 'ion');
     expect(ion?.rowState).toBe('unaffordable');
-    expect(ion?.badge).toEqual({ kind: 'cost', label: '-2900⬤', coins: 2900, affordable: false });
+    expect(ion?.badge).toEqual({ kind: 'cost', label: '-100⬤', coins: 100, affordable: false });
   });
 
-  it('locked: rowState locked, badge stars', () => {
+  it('a kind row can never be locked — every kind\'s Lv1 (the row tap target) needs 0 stars since the 2026-07-10 redesign', () => {
     const save = defaultSave(); // 0 stars
     const rows = computeKindRows({ config: MOTOR_SYSTEM, save, playerStars: 0 }, null);
-    const overdrive = rows.find((r) => r.kind === 'overdrive'); // starsRequired 30 at Lv1
-    expect(overdrive?.rowState).toBe('locked');
-    expect(overdrive?.badge).toEqual({ kind: 'stars', label: '★30', stars: 30 });
+    const overdrive = rows.find((r) => r.kind === 'overdrive');
+    expect(overdrive?.rowState).not.toBe('locked');
+    // Locking now only happens at the level-chip tier (Lv2+) — see the
+    // 'computeLevelChips' describe block's 'locked' test below.
   });
 
   it('refund: badge refund with correct label', () => {
     let save = { ...defaultSave(), coins: 5000 };
-    save = switchItem(save, 'ion-1'); // equip pricier ion (3000)
-    // scatter-1 (1200) is cheaper than the equipped ion-1 (3000) → refund path
+    save = switchItem(save, 'ion-3'); // equip pricier ion-3 (2300)
+    // scatter-1 (100) is cheaper than the equipped ion-3 (2300) → refund path
     const rows = computeKindRows({ config: WEAPON_SYSTEM, save, playerStars: 20 }, 'ion');
     const scatter = rows.find((r) => r.kind === 'scatter');
     expect(scatter?.rowState).toBe('purchasable');
-    expect(scatter?.badge).toEqual({ kind: 'refund', label: '+1800⬤', coins: 1800 });
+    expect(scatter?.badge).toEqual({ kind: 'refund', label: '+2200⬤', coins: 2200 });
   });
 
   it('free item + nothing equipped: badge still shows the real "0 coins" — never a blank that looks the same as NONE', () => {
@@ -135,10 +138,10 @@ describe('computeKindRows — states', () => {
 
   it('NONE row badge shows the real refund for the equipped item — never a blank "looks free" badge', () => {
     let save = { ...defaultSave(), coins: 5000 };
-    save = switchItem(save, 'ion-1'); // equip ion-1 (3000)
+    save = switchItem(save, 'ion-3'); // equip ion-3 (2300)
     const rows = computeKindRows({ config: WEAPON_SYSTEM, save, playerStars: 0 }, 'ion');
     const none = rows.find((r) => r.isNoneRow);
-    expect(none?.badge).toEqual({ kind: 'refund', label: '+3000⬤', coins: 3000 });
+    expect(none?.badge).toEqual({ kind: 'refund', label: '+2300⬤', coins: 2300 });
   });
 
   it('NONE row badge shows the real "0 coins" when the equipped item is free — never a blank that looks like the current-state blank', () => {
@@ -182,18 +185,18 @@ describe('computeKindRows — tap targets', () => {
 describe('computeKindRowTrace — debug cost breakdown', () => {
   it('exposes every intermediate value the badge/rowState math is built from', () => {
     let save = { ...defaultSave(), coins: 5000 };
-    save = switchItem(save, 'ion-1'); // equip ion-1 (3000)
+    save = switchItem(save, 'ion-3'); // equip ion-3 (2300)
     const trace = computeKindRowTrace({ config: WEAPON_SYSTEM, save, kind: 'scatter', playerStars: 20 });
     expect(trace).toEqual({
       kind: 'scatter',
       equippedLevel: 0,
       equipped: false,
-      starsNeeded: 5,
+      starsNeeded: 0,
       locked: false,
       targetLevel: 1,
-      entryPrice: 1200,
-      equippedPriceValue: 3000,
-      netCost: -1800,
+      entryPrice: 100,
+      equippedPriceValue: 2300,
+      netCost: -2200,
       affordable: true,
       displayLevel: 1,
     });
@@ -201,17 +204,19 @@ describe('computeKindRowTrace — debug cost breakdown', () => {
 
   it('does not special-case a kind that was previously equipped — netCost is always the plain trade-in formula', () => {
     let save = { ...defaultSave(), coins: 10000 };
-    save = switchItem(save, 'ion-2'); // equip ion at Lv2 (6550)
-    save = switchItem(save, 'pulse-1'); // switch to pulse (100) — ion-2 is gone
+    save = switchItem(save, 'ion-2'); // equip ion at Lv2 (1050)
+    save = switchItem(save, 'pulse-3'); // switch to pulse-3 (2300) — ion-2 is gone
     const trace = computeKindRowTrace({ config: WEAPON_SYSTEM, save, kind: 'ion', playerStars: 0 });
     expect(trace.targetLevel).toBe(1); // always Lv1 for a kind that isn't currently equipped
-    expect(trace.entryPrice).toBe(3000); // ion-1's price, not ion-2's 6550
-    expect(trace.netCost).toBe(2900); // 3000 - pulse-1's 100 — no discount for having owned it before
+    expect(trace.entryPrice).toBe(100); // ion-1's price, not ion-2's 1050
+    expect(trace.netCost).toBe(-2200); // 100 - pulse-3's 2300 — no discount for having owned it before
     expect(trace.affordable).toBe(true);
   });
 
   it('the trace is exactly what computeKindRow/computeKindBadge derive their output from — no drift possible', () => {
-    const save = { ...defaultSave(), coins: 10 };
+    // Start from NONE (price 0): every kind's Lv1 now shares one price (100), so any
+    // two equipped weapons would tie at netCost 0 and never exercise the real formula.
+    const save = { ...defaultSave(), coins: 10, equipped: { ...defaultSave().equipped, weapon: null } };
     const trace = computeKindRowTrace({ config: WEAPON_SYSTEM, save, kind: 'ion', playerStars: 20 });
     const rows = computeKindRows({ config: WEAPON_SYSTEM, save, playerStars: 20 }, null);
     const ionRow = rows.find((r) => r.kind === 'ion');
@@ -225,18 +230,18 @@ describe('reachable-state matrix corrections', () => {
     save = switchRearWeapon(save, 'grenade-3'); // cost 690
     save = switchRearWeapon(save, null); // unequip via NONE, refunds 690
     const rows = computeKindRows({ config: REAR_WEAPON_SYSTEM, save, playerStars: 15 }, null);
-    const flak = rows.find((r) => r.kind === 'flak'); // flak-1 price 890
+    const flak = rows.find((r) => r.kind === 'flak'); // flak-1 price 30 (kinds share one price ladder)
     expect(flak?.rowState).toBe('purchasable');
-    expect(flak?.badge).toEqual({ kind: 'cost', label: '-890⬤', coins: 890, affordable: true });
+    expect(flak?.badge).toEqual({ kind: 'cost', label: '-30⬤', coins: 30, affordable: true });
   });
 
-  it('rear-weapon: non-starter kinds are locked at 0 stars now that star gates ramp per kind', () => {
+  it('rear-weapon: no kind row is ever locked — every kind\'s Lv1 needs 0 stars since the 2026-07-10 redesign', () => {
     const save = defaultSave(); // 0 stars
     const rows = computeKindRows({ config: REAR_WEAPON_SYSTEM, save, playerStars: 0 }, null);
     const grenade = rows.find((r) => r.kind === 'grenade');
     const cluster = rows.find((r) => r.kind === 'cluster');
-    expect(grenade?.rowState).not.toBe('locked'); // starter kind, 0★ at Lv1
-    expect(cluster?.rowState).toBe('locked'); // cluster-1 requires 5★
+    expect(grenade?.rowState).not.toBe('locked');
+    expect(cluster?.rowState).not.toBe('locked'); // cluster-1 now needs 0★ too — see computeLevelChips's 'locked' test for Lv2+ gating
   });
 });
 
@@ -275,18 +280,18 @@ describe('computeLevelChips', () => {
   it('locked: state locked, subLabel is the star requirement', () => {
     const save = defaultSave(); // 0 stars
     const chips = computeLevelChips({ config: WEAPON_SYSTEM, save, kind: 'pulse', playerStars: 0 });
-    const lv3 = chips.find((c) => c.itemId === 'pulse-3'); // starsRequired 2
+    const lv3 = chips.find((c) => c.itemId === 'pulse-3'); // starsRequired 8 (shared ladder)
     expect(lv3?.state).toBe('locked');
-    expect(lv3?.subLabel).toBe('★2');
+    expect(lv3?.subLabel).toBe('★8');
   });
 
   it('refund: a different kind cheaper than the currently equipped item', () => {
     let save = { ...defaultSave(), coins: 5000 };
-    save = switchItem(save, 'ion-1'); // equip ion-1 (3000)
+    save = switchItem(save, 'ion-3'); // equip ion-3 (2300)
     const chips = computeLevelChips({ config: WEAPON_SYSTEM, save, kind: 'scatter', playerStars: 100 });
-    const scatter1 = chips.find((c) => c.itemId === 'scatter-1'); // price 1200 < 3000
+    const scatter1 = chips.find((c) => c.itemId === 'scatter-1'); // price 100 < 2300
     expect(scatter1?.state).toBe('refund');
-    expect(scatter1?.subLabel).toBe('+1800⬤');
+    expect(scatter1?.subLabel).toBe('+2200⬤');
   });
 
   it('purchasable vs unaffordable', () => {
@@ -300,16 +305,27 @@ describe('computeLevelChips', () => {
 });
 
 // A price tie within a system would let a switch land on a coincidental net-zero
-// cost that isn't a genuine price match — the earlier "switching is free" bug came
-// from exactly this. These invariants guard the whole catalog, not just one pair.
+// Redesigned 2026-07-10 (docs/plans/game-identity-and-design-review-followup.md):
+// kinds are situational sidegrades, not a tier ladder — every kind now shares one
+// price/star ladder per system, by design (a lateral kind switch at the same level
+// costs 0, not a coincidence to guard against). The invariant that still matters is
+// level-to-level strict increase *within* one kind, and that every kind matches every
+// other kind's ladder exactly (no kind is quietly cheaper/pricier than its siblings).
 describe('price and star table invariants', () => {
   const ALL_SYSTEMS = [WEAPON_SYSTEM, REAR_WEAPON_SYSTEM, SIDE_WEAPON_SYSTEM, SHIELD_SYSTEM, GENERATOR_SYSTEM, MOTOR_SYSTEM, SHIP_SYSTEM];
 
-  it('every price within a system is unique across all kinds and levels', () => {
+  it('every kind within a system shares an identical price/star ladder — no kind is a hidden tier', () => {
     for (const config of ALL_SYSTEMS) {
-      const prices = config.kinds.flatMap((kind) =>
-        Array.from({ length: config.maxLevel }, (_, i) => config.itemPrice(kind, i + 1)));
-      expect(new Set(prices).size).toBe(prices.length);
+      const [firstKind, ...restKinds] = config.kinds;
+      if (firstKind === undefined) continue;
+      const referencePrices = Array.from({ length: config.maxLevel }, (_, i) => config.itemPrice(firstKind, i + 1));
+      const referenceStars = Array.from({ length: config.maxLevel }, (_, i) => config.itemStarsRequired(firstKind, i + 1));
+      for (const kind of restKinds) {
+        for (let level = 1; level <= config.maxLevel; level++) {
+          expect(config.itemPrice(kind, level)).toBe(referencePrices[level - 1]);
+          expect(config.itemStarsRequired(kind, level)).toBe(referenceStars[level - 1]);
+        }
+      }
     }
   });
 
@@ -444,11 +460,15 @@ describe('computeSettings', () => {
 });
 
 describe('computeGalaxyMap / computeMissionDetail', () => {
-  it('m1 is unlocked from the start; m3 is locked', () => {
+  it('t1 is unlocked from the start; m1 is locked until t1 clears', () => {
     const save = defaultSave();
     const map = computeGalaxyMap(save, null);
-    expect(map.missions.find((m) => m.id === 'm1')?.unlocked).toBe(true);
-    expect(map.missions.find((m) => m.id === 'm3')?.unlocked).toBe(false);
+    expect(map.missions.find((m) => m.id === 't1')?.unlocked).toBe(true);
+    expect(map.missions.find((m) => m.id === 'm1')?.unlocked).toBe(false);
+
+    const afterT1 = computeGalaxyMap({ ...save, completedMissionIds: ['t1'] }, null);
+    expect(afterT1.missions.find((m) => m.id === 'm1')?.unlocked).toBe(true);
+    expect(afterT1.missions.find((m) => m.id === 'm3')?.unlocked).toBe(false);
   });
 
   it('a locked mission shows "???" as its label', () => {

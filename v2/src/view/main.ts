@@ -6,6 +6,7 @@ import { ResultScene } from './ResultScene';
 import { PALETTE } from './palette';
 import { DPR, SCREEN_HEIGHT, SCREEN_WIDTH } from './layout';
 import { defaultSave, loadSave, persistSave, resetSave, switchItem, switchShip, switchRearWeapon, switchSideWeapon } from '../save/SaveManager';
+import { ALL_MISSIONS } from '../data/missions';
 
 // dpr-sharp canvas (V2_HANDOFF.md §4.2): render at native resolution, zoom back to
 // logical CSS size. Never Scale.FIT on a small canvas — that was v1's blurry-text bug.
@@ -34,7 +35,7 @@ if (import.meta.env.DEV) {
     coins: (amount: number) => { persistSave({ ...loadSave(), coins: loadSave().coins + amount }); goTo('HubScene'); },
     /** Set coins to an exact amount. Usage: __cheat.setCoins(9999) */
     setCoins: (amount: number) => { persistSave({ ...loadSave(), coins: amount }); goTo('HubScene'); },
-    /** Unlock all missions by granting hull/kill/shield stars. Usage: __cheat.unlockAll() */
+    /** Unlock every mission by marking each one completed. Usage: __cheat.unlockAll() */
     unlockAll: () => {
       const save = loadSave();
       const allStars: Record<string, string[]> = {
@@ -49,7 +50,11 @@ if (import.meta.env.DEV) {
         m5: ['m5-hull-50', 'm5-hull-90', 'm5-all-kills', 'm5-shield'],
         m6: ['m6-hull-50', 'm6-all-kills', 'm6-shield'],
       };
-      persistSave({ ...save, missionStars: { ...save.missionStars, ...allStars } });
+      persistSave({
+        ...save,
+        missionStars: { ...save.missionStars, ...allStars },
+        completedMissionIds: ALL_MISSIONS.map((m) => m.id),
+      });
       goTo('HubScene');
     },
     /** Reset save to factory defaults. Usage: __cheat.reset() */

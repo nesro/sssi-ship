@@ -17,7 +17,6 @@ const TEST_MISSION: MissionSpec = {
   supportCallTicks: [],
   stars: [],
   completionCoins: 0,
-  starGate: 0,
 };
 
 function stateWithMotor(timelineMultiplier: number): CoreState {

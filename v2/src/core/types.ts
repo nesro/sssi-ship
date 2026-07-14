@@ -309,8 +309,6 @@ export interface MissionSpec {
   supportCallTicks: number[];
   stars: StarSpec[];
   completionCoins: number;
-  /** Total stars required to unlock this mission in the tree. */
-  starGate: number;
   /** Narrator popup events — time-based, pause the sim like pendingOffer. */
   narratorEvents?: NarratorEvent[];
   /**
@@ -324,6 +322,13 @@ export interface MissionSpec {
    * The save is never mutated — the player's real equipment is unaffected.
    */
   forcedLoadout?: ForcedLoadout;
+  /**
+   * t1-t4 only: a defeat still counts as "completed" (full reward, unlocks the next
+   * mission) — the teaching moment is seeing the mechanic once, not surviving it.
+   * Deliberately NOT reused from forcedLoadout !== undefined (which also matches w0,
+   * a different narrative beat that still requires a real victory).
+   */
+  completesOnDefeat?: boolean;
 }
 
 // ---------- Live state ----------

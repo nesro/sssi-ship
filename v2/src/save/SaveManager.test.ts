@@ -89,10 +89,53 @@ describe('applyMissionResult', () => {
 });
 
 describe('mission gating', () => {
-  it('m1 is open from the start; m3 needs stars', () => {
+  it('t1 is unlocked from the start; m1 is locked until t1 clears', () => {
     const save = defaultSave();
-    expect(isMissionUnlocked(save, 'm1')).toBe(true);
-    expect(isMissionUnlocked(save, 'm3')).toBe(false);
+    expect(isMissionUnlocked(save, 't1')).toBe(true);
+    expect(isMissionUnlocked(save, 'm1')).toBe(false);
+
+    const { save: afterT1 } = applyMissionResult(save, victoryResult({ missionId: 't1', earnedStarIds: [] }));
+    expect(isMissionUnlocked(afterT1, 'm1')).toBe(true);
+    expect(isMissionUnlocked(afterT1, 'm2')).toBe(false);
+  });
+
+  it('a loss does not unlock the next mission (non-tutorial — t1-t4 are the deliberate exception, see below)', () => {
+    const { save: afterLoss } = applyMissionResult(
+      defaultSave(),
+      victoryResult({ missionId: 'm1', status: 'defeat', earnedStarIds: [] }),
+    );
+    expect(isMissionUnlocked(afterLoss, 'm2')).toBe(false);
+  });
+
+  it('a tutorial loss still unlocks the next mission and pays full completion coins (completesOnDefeat)', () => {
+    const before = defaultSave();
+    const { save: afterLoss } = applyMissionResult(
+      before,
+      victoryResult({ missionId: 't1', status: 'defeat', earnedStarIds: [], coins: 30 }),
+    );
+    expect(isMissionUnlocked(afterLoss, 'm1')).toBe(true);
+    expect(afterLoss.coins).toBe(before.coins + 30);
+  });
+
+  it('a non-tutorial mission never unlocks the next one on defeat, even repeatedly (regression guard)', () => {
+    const { save: afterLoss } = applyMissionResult(
+      defaultSave(),
+      victoryResult({ missionId: 'm1', status: 'defeat', earnedStarIds: [] }),
+    );
+    const { save: afterSecondLoss } = applyMissionResult(
+      afterLoss,
+      victoryResult({ missionId: 'm1', status: 'defeat', earnedStarIds: [] }),
+    );
+    expect(isMissionUnlocked(afterSecondLoss, 'm2')).toBe(false);
+  });
+
+  it('unlock chains through the main missions regardless of stars earned (§9)', () => {
+    let save = defaultSave();
+    for (const missionId of ['t1', 'm1', 'm2']) {
+      ({ save } = applyMissionResult(save, victoryResult({ missionId, earnedStarIds: [] })));
+    }
+    expect(isMissionUnlocked(save, 'm3')).toBe(true);
+    expect(isMissionUnlocked(save, 'm4')).toBe(false);
   });
 });
 
@@ -119,12 +162,12 @@ describe('shop transactions', () => {
 
   it('switching to a new kind always pays the full trade-in cost — there is no owned-kind discount', () => {
     let save = { ...defaultSave(), coins: 5000 };
-    save = switchItem(save, 'shield-reflex-2'); // cost 1950-80=1870 (wall-1 starter costs 80)
+    save = switchItem(save, 'shield-reflex-2'); // cost 780-80=700 (wall-1 starter costs 80; kinds share one price ladder)
     const coinsAfterReflex = save.coins;
-    save = switchItem(save, 'shield-wall-1'); // back to the starter: refund 1950-80=1870
+    save = switchItem(save, 'shield-wall-1'); // back to the starter: refund 780-80=700
     expect(save.equipped.shield).toBe('shield-wall-1');
-    expect(save.coins).toBe(coinsAfterReflex + 1870);
-    // Switching back to reflex-2 pays the full 1950 again — there is no memory of
+    expect(save.coins).toBe(coinsAfterReflex + 700);
+    // Switching back to reflex-2 pays the full 780 again — there is no memory of
     // ever having owned it; only one shield can ever be owned at a time.
     save = switchItem(save, 'shield-reflex-2');
     expect(save.equipped.shield).toBe('shield-reflex-2');
@@ -149,11 +192,11 @@ describe('shop transactions', () => {
 describe('shop transactions — ships, migrations, supplies', () => {
   it('switchShip deducts net cost and equips it', () => {
     let save = { ...defaultSave(), coins: 1500 };
-    // ship-salvager-1 costs 480; interceptor-1 (starter) costs 0 → net 480
-    save = switchShip(save, 'ship-salvager-1');
-    expect(save.equipped.ship).toBe('ship-salvager-1');
-    expect(save.coins).toBe(1020);
-    expect(buildLoadout(save).ship.id).toBe('ship-salvager-1');
+    // ship-salvager-3 costs 930; interceptor-1 (starter) costs 0 → net 930
+    save = switchShip(save, 'ship-salvager-3');
+    expect(save.equipped.ship).toBe('ship-salvager-3');
+    expect(save.coins).toBe(570);
+    expect(buildLoadout(save).ship.id).toBe('ship-salvager-3');
   });
 
   it('switchShip is a no-op when already equipped', () => {
@@ -163,7 +206,7 @@ describe('shop transactions — ships, migrations, supplies', () => {
   });
 
   it('switchShip refuses without enough coins', () => {
-    expect(() => switchShip(defaultSave(), 'ship-warship-1')).toThrow(/Not enough coins/);
+    expect(() => switchShip(defaultSave(), 'ship-warship-5')).toThrow(/Not enough coins/);
   });
 
   it('buildLoadout returns the ship spec matching equipped.ship', () => {
@@ -254,11 +297,11 @@ describe('single-ownership model — a system only ever owns whatever is equippe
 
   it('switching to a different kind always uses the trade-in formula against whatever is currently equipped', () => {
     let save = { ...defaultSave(), coins: 5000 };
-    save = switchItem(save, 'shield-reflex-2'); // cost 1950-80=1870 (wall-1 starter costs 80)
+    save = switchItem(save, 'shield-reflex-3'); // cost 1700-80=1620 (wall-1 starter costs 80)
     const coinsAfterReflex = save.coins;
-    save = switchItem(save, 'shield-wall-2'); // cheaper (780) → refund 1170
+    save = switchItem(save, 'shield-wall-2'); // cheaper (780) → refund 920
     expect(save.equipped.shield).toBe('shield-wall-2');
-    expect(save.coins).toBe(coinsAfterReflex + (1950 - 780));
+    expect(save.coins).toBe(coinsAfterReflex + (1700 - 780));
   });
 });
 
@@ -285,9 +328,9 @@ describe('switchRearWeapon — destructive switch, single ownership', () => {
     let save = { ...defaultSave(), coins: 5000 };
     save = switchRearWeapon(save, 'grenade-4'); // cost 1500
     const coinsAfterGrenade = save.coins;
-    save = switchRearWeapon(save, 'flak-1'); // cost 890-1500=-610 → refund 610
+    save = switchRearWeapon(save, 'flak-1'); // cost 30-1500=-1470 → refund 1470 (kinds share one price ladder)
     expect(save.equipped.rearWeapon).toBe('flak-1');
-    expect(save.coins).toBe(coinsAfterGrenade + 610);
+    expect(save.coins).toBe(coinsAfterGrenade + 1470);
   });
 });
 
@@ -314,9 +357,9 @@ describe('switchSideWeapon — destructive switch, single ownership', () => {
     let save = { ...defaultSave(), coins: 5000 };
     save = switchSideWeapon(save, 'focus-4'); // cost 3750
     const coinsAfterFocus = save.coins;
-    save = switchSideWeapon(save, 'flechette-1'); // cost 890-3750=-2860 → refund 2860
+    save = switchSideWeapon(save, 'flechette-1'); // cost 80-3750=-3670 → refund 3670 (kinds share one price ladder)
     expect(save.equipped.sideWeapon).toBe('flechette-1');
-    expect(save.coins).toBe(coinsAfterFocus + 2860);
+    expect(save.coins).toBe(coinsAfterFocus + 3670);
   });
 
   it('refuses to equip an unaffordable side weapon', () => {

@@ -1,0 +1,266 @@
+[
+  {
+    "missionId": "m1",
+    "recommended": {
+      "weapon": "pulse",
+      "generator": "surge",
+      "shield": "wall",
+      "motor": "rush",
+      "rearWeapon": "grenade",
+      "sideWeapon": "focus",
+      "ship": "interceptor"
+    },
+    "spreadReport": [
+      {
+        "system": "weapon×generator",
+        "spreadPp": 89,
+        "dominant": true
+      },
+      {
+        "system": "shield",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "motor",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "rearWeapon",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "sideWeapon",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "ship",
+        "spreadPp": 0,
+        "dominant": false
+      }
+    ]
+  },
+  {
+    "missionId": "m2",
+    "recommended": {
+      "weapon": "ion",
+      "generator": "steady",
+      "shield": "wall",
+      "motor": "rush",
+      "rearWeapon": "grenade",
+      "sideWeapon": "focus",
+      "ship": "interceptor"
+    },
+    "spreadReport": [
+      {
+        "system": "weapon×generator",
+        "spreadPp": 60.25,
+        "dominant": true
+      },
+      {
+        "system": "shield",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "motor",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "rearWeapon",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "sideWeapon",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "ship",
+        "spreadPp": 0,
+        "dominant": false
+      }
+    ]
+  },
+  {
+    "missionId": "m3",
+    "recommended": {
+      "weapon": "ion",
+      "generator": "torrent",
+      "shield": "flux",
+      "motor": "rush",
+      "rearWeapon": "grenade",
+      "sideWeapon": "focus",
+      "ship": "interceptor"
+    },
+    "spreadReport": [
+      {
+        "system": "weapon×generator",
+        "spreadPp": 100,
+        "dominant": true
+      },
+      {
+        "system": "shield",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "motor",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "rearWeapon",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "sideWeapon",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "ship",
+        "spreadPp": 0,
+        "dominant": false
+      }
+    ]
+  },
+  {
+    "missionId": "m4",
+    "recommended": {
+      "weapon": "ion",
+      "generator": "torrent",
+      "shield": "wall",
+      "motor": "rush",
+      "rearWeapon": "grenade",
+      "sideWeapon": "focus",
+      "ship": "interceptor"
+    },
+    "spreadReport": [
+      {
+        "system": "weapon×generator",
+        "spreadPp": 88,
+        "dominant": true
+      },
+      {
+        "system": "shield",
+        "spreadPp": 2,
+        "dominant": false
+      },
+      {
+        "system": "motor",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "rearWeapon",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "sideWeapon",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "ship",
+        "spreadPp": 0,
+        "dominant": false
+      }
+    ]
+  },
+  {
+    "missionId": "m5",
+    "recommended": {
+      "weapon": "scatter",
+      "generator": "torrent",
+      "shield": "wall",
+      "motor": "rush",
+      "rearWeapon": "grenade",
+      "sideWeapon": "focus",
+      "ship": "interceptor"
+    },
+    "spreadReport": [
+      {
+        "system": "weapon×generator",
+        "spreadPp": 100,
+        "dominant": true
+      },
+      {
+        "system": "shield",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "motor",
+        "spreadPp": 47.25,
+        "dominant": false
+      },
+      {
+        "system": "rearWeapon",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "sideWeapon",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "ship",
+        "spreadPp": 0,
+        "dominant": false
+      }
+    ]
+  },
+  {
+    "missionId": "m6",
+    "recommended": {
+      "weapon": "ion",
+      "generator": "surge",
+      "shield": "wall",
+      "motor": "rush",
+      "rearWeapon": "grenade",
+      "sideWeapon": "focus",
+      "ship": "interceptor"
+    },
+    "spreadReport": [
+      {
+        "system": "weapon×generator",
+        "spreadPp": 100,
+        "dominant": true
+      },
+      {
+        "system": "shield",
+        "spreadPp": 0.5,
+        "dominant": false
+      },
+      {
+        "system": "motor",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "rearWeapon",
+        "spreadPp": 2.25,
+        "dominant": false
+      },
+      {
+        "system": "sideWeapon",
+        "spreadPp": 0,
+        "dominant": false
+      },
+      {
+        "system": "ship",
+        "spreadPp": 0,
+        "dominant": false
+      }
+    ]
+  }
+]

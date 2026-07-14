@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { CARD_ACTION_REROLL } from '../core/constants';
+import { CARD_ACTION_REROLL, CARD_ACTION_SKIP } from '../core/constants';
 import type { AbilityOffer, CoreState } from '../core/types';
 import { computeCardOverlayViewModel } from '../viewmodel/combat';
 import type { CardOverlayViewModel, OfferCardViewModel } from '../viewmodel/combat';
@@ -120,17 +120,38 @@ export class CardOverlay {
     this.objects.push(panel, iconGfx, iconText, name, description);
   }
 
+  /** SKIP is always available (declining all 3 offers must never be blocked); REROLL only
+   * shows while rerolls remain. Both are laid out side by side, centered as one block, so
+   * the player is never stuck on this overlay with no way to close it. */
   private addFooterButtons(vm: CardOverlayViewModel): void {
-    if (!vm.showReroll) return;
     const y = SCREEN_HEIGHT / 2 + px(CARD_HEIGHT_LOGICAL / 2) + px(40);
-    this.objects.push(
-      addTextButton(this.scene, {
-        x: SCREEN_WIDTH / 2,
-        y,
-        label: `REROLL (${String(vm.rerollsLeft)})`,
-        color: PALETTE.generatorAmber,
-        onClick: () => { this.onAction(CARD_ACTION_REROLL); },
-      }).setDepth(DEPTH + 2),
-    );
+
+    const skipBtn = addTextButton(this.scene, {
+      x: SCREEN_WIDTH / 2,
+      y,
+      label: 'SKIP',
+      color: PALETTE.hullWhite,
+      onClick: () => { this.onAction(CARD_ACTION_SKIP); },
+    }).setDepth(DEPTH + 2);
+    this.objects.push(skipBtn);
+
+    if (!vm.showReroll) return;
+
+    const rerollBtn = addTextButton(this.scene, {
+      x: SCREEN_WIDTH / 2,
+      y,
+      label: `REROLL (${String(vm.rerollsLeft)})`,
+      color: PALETTE.generatorAmber,
+      onClick: () => { this.onAction(CARD_ACTION_REROLL); },
+    }).setDepth(DEPTH + 2);
+    this.objects.push(rerollBtn);
+
+    // Both buttons were created centered on the same point — spread them apart
+    // symmetrically now that their actual rendered widths are known.
+    const gap = px(16);
+    const totalWidth = skipBtn.width + gap + rerollBtn.width;
+    const leftEdge = SCREEN_WIDTH / 2 - totalWidth / 2;
+    skipBtn.setX(leftEdge + skipBtn.width / 2);
+    rerollBtn.setX(leftEdge + skipBtn.width + gap + rerollBtn.width / 2);
   }
 }

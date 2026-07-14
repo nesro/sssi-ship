@@ -14,7 +14,7 @@ import {
   supplyById,
   weaponSpecById,
 } from '../data/items';
-import { missionById } from '../data/missions';
+import { MISSION_UNLOCK_EDGES, missionById } from '../data/missions';
 import { cardIdsAtLevel, subscriptionById } from '../data/subscriptions';
 
 export interface SaveData {
@@ -30,6 +30,11 @@ export interface SaveData {
   equipped: { ship: string; weapon: string | null; rearWeapon: string | null; sideWeapon: string | null; shield: string | null; generator: string; motor: string };
   /** missionId → star ids earned across all runs (best benchmarks; never decreases). */
   missionStars: Record<string, string[]>;
+  /**
+   * Mission ids ever won at least once. Drives unlock via `MISSION_UNLOCK_EDGES`
+   * (§9 — "stars are never required to progress"). Losses never add to this list.
+   */
+  completedMissionIds: string[];
   /** subscriptionId → owned level (1–3). Basic is always 1. */
   ownedSubscriptions: Record<string, number>;
   /** Absent or true = dev border visible; explicit false = hidden. */
@@ -40,7 +45,7 @@ export interface SaveData {
   firstBranchChoice?: 'tutorial' | 'missions';
 }
 
-const SAVE_VERSION = 12;
+const SAVE_VERSION = 13;
 const STORAGE_KEY = 'nesro-nova-v2-save';
 
 /** Maps v9-and-earlier item IDs to their v10+ equivalents. */
@@ -70,27 +75,28 @@ export function defaultSave(): SaveData {
       motor: 'motor-rush-1',
     },
     missionStars: {},
+    completedMissionIds: [],
     ownedSubscriptions: { 'sub-basic': 1 },
   };
 }
 
 type ParsedSave = Record<string, unknown>;
 
-/** v11 → v12: add sideWeapon: null to equipped (§5, side weapons). */
+/** v11 → current: add sideWeapon: null to equipped (§5, side weapons) and completedMissionIds. */
 function migrateV11(parsed: ParsedSave): SaveData {
-  const v11 = parsed as unknown as Omit<SaveData, 'version' | 'equipped'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
-  return { ...v11, version: SAVE_VERSION, equipped: { ...v11.equipped, sideWeapon: null } };
+  const v11 = parsed as unknown as Omit<SaveData, 'version' | 'equipped' | 'completedMissionIds'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
+  return { ...v11, version: SAVE_VERSION, equipped: { ...v11.equipped, sideWeapon: null }, completedMissionIds: [] };
 }
 
-/** v10 → v12: no data shape change beyond dropping ownedItems (handled by the caller); still needs sideWeapon added. */
+/** v10 → current: no data shape change beyond dropping ownedItems (handled by the caller); still needs sideWeapon and completedMissionIds added. */
 function migrateV10(parsed: ParsedSave): SaveData {
-  const v10 = parsed as unknown as Omit<SaveData, 'version' | 'equipped'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
-  return { ...v10, version: SAVE_VERSION, equipped: { ...v10.equipped, sideWeapon: null } };
+  const v10 = parsed as unknown as Omit<SaveData, 'version' | 'equipped' | 'completedMissionIds'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
+  return { ...v10, version: SAVE_VERSION, equipped: { ...v10.equipped, sideWeapon: null }, completedMissionIds: [] };
 }
 
-/** v9 → v12: shield/generator/motor IDs gain kind prefixes; still needs sideWeapon added. */
+/** v9 → current: shield/generator/motor IDs gain kind prefixes; still needs sideWeapon and completedMissionIds added. */
 function migrateV9(parsed: ParsedSave): SaveData {
-  const v9 = parsed as unknown as Omit<SaveData, 'equipped'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
+  const v9 = parsed as unknown as Omit<SaveData, 'equipped' | 'completedMissionIds'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
   const oldShip = v9.equipped.ship;
   const newShip = /-\d+$/.test(oldShip) ? oldShip : `${oldShip}-1`;
   const renamedEquipped: SaveData['equipped'] = {
@@ -101,12 +107,12 @@ function migrateV9(parsed: ParsedSave): SaveData {
     motor: renameId(v9.equipped.motor),
     sideWeapon: null,
   };
-  return { ...v9, version: SAVE_VERSION, equipped: renamedEquipped };
+  return { ...v9, version: SAVE_VERSION, equipped: renamedEquipped, completedMissionIds: [] };
 }
 
-/** v8 → v12: ship IDs gain level suffix, shield/generator/motor get kind prefixes; still needs sideWeapon added. */
+/** v8 → current: ship IDs gain level suffix, shield/generator/motor get kind prefixes; still needs sideWeapon and completedMissionIds added. */
 function migrateV8(parsed: ParsedSave): SaveData {
-  const v8 = parsed as unknown as Omit<SaveData, 'equipped'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
+  const v8 = parsed as unknown as Omit<SaveData, 'equipped' | 'completedMissionIds'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
   const oldShip = v8.equipped.ship;
   const newShip = /-\d+$/.test(oldShip) ? oldShip : `${oldShip}-1`;
   const renamedEquipped: SaveData['equipped'] = {
@@ -117,33 +123,34 @@ function migrateV8(parsed: ParsedSave): SaveData {
     motor: renameId(v8.equipped.motor),
     sideWeapon: null,
   };
-  return { ...v8, version: SAVE_VERSION, equipped: renamedEquipped };
+  return { ...v8, version: SAVE_VERSION, equipped: renamedEquipped, completedMissionIds: [] };
 }
 
-/** v7 → v12: weapon and shield became nullable in SaveData; still needs sideWeapon added. */
+/** v7 → current: weapon and shield became nullable in SaveData; still needs sideWeapon and completedMissionIds added. */
 function migrateV7(parsed: ParsedSave): SaveData {
-  const v7 = parsed as unknown as Omit<SaveData, 'version' | 'equipped'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
-  return { ...v7, version: SAVE_VERSION, equipped: { ...v7.equipped, sideWeapon: null } };
+  const v7 = parsed as unknown as Omit<SaveData, 'version' | 'equipped' | 'completedMissionIds'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
+  return { ...v7, version: SAVE_VERSION, equipped: { ...v7.equipped, sideWeapon: null }, completedMissionIds: [] };
 }
 
-/** v6 → v12: add rearWeapon: null and sideWeapon: null to equipped. */
+/** v6 → current: add rearWeapon: null and sideWeapon: null to equipped, plus completedMissionIds. */
 function migrateV6(parsed: ParsedSave): SaveData {
-  const v6 = parsed as unknown as Omit<SaveData, 'version' | 'equipped'> & { equipped: Omit<SaveData['equipped'], 'rearWeapon' | 'sideWeapon'> };
-  return { ...v6, version: SAVE_VERSION, equipped: { ...v6.equipped, rearWeapon: null, sideWeapon: null } };
+  const v6 = parsed as unknown as Omit<SaveData, 'version' | 'equipped' | 'completedMissionIds'> & { equipped: Omit<SaveData['equipped'], 'rearWeapon' | 'sideWeapon'> };
+  return { ...v6, version: SAVE_VERSION, equipped: { ...v6.equipped, rearWeapon: null, sideWeapon: null }, completedMissionIds: [] };
 }
 
-/** v5 → v12: add ownedSubscriptions with Basic at Lv1, rearWeapon: null, sideWeapon: null. */
+/** v5 → current: add ownedSubscriptions with Basic at Lv1, rearWeapon: null, sideWeapon: null, completedMissionIds. */
 function migrateV5(parsed: ParsedSave): SaveData {
-  const v5 = parsed as unknown as Omit<SaveData, 'version' | 'ownedSubscriptions' | 'equipped'> & { equipped: Omit<SaveData['equipped'], 'rearWeapon' | 'sideWeapon'> };
+  const v5 = parsed as unknown as Omit<SaveData, 'version' | 'ownedSubscriptions' | 'equipped' | 'completedMissionIds'> & { equipped: Omit<SaveData['equipped'], 'rearWeapon' | 'sideWeapon'> };
   return {
     ...v5,
     version: SAVE_VERSION,
     equipped: { ...v5.equipped, rearWeapon: null, sideWeapon: null },
     ownedSubscriptions: { 'sub-basic': 1 },
+    completedMissionIds: [],
   };
 }
 
-/** v2/v3/v4 → v12: earliest supported shape — only coins/equipped/stars/supplies survive. */
+/** v2/v3/v4 → current: earliest supported shape — only coins/equipped/stars/supplies survive (already gets completedMissionIds: [] via the defaultSave() spread below). */
 function migrateLegacy(parsed: ParsedSave): SaveData {
   const rawEquipped = (parsed['equipped'] as Omit<SaveData['equipped'], 'rearWeapon' | 'sideWeapon' | 'ship'> | undefined) ?? defaultSave().equipped;
   const baseEquipped: Omit<SaveData['equipped'], 'rearWeapon' | 'sideWeapon'> = parsed['version'] === 4
@@ -214,8 +221,16 @@ export function totalStars(save: SaveData): number {
   return Object.values(save.missionStars).reduce((sum, ids) => sum + ids.length, 0);
 }
 
+/**
+ * Completing a mission unlocks whatever it points to in `MISSION_UNLOCK_EDGES` — stars
+ * are never required to progress (§9). A mission with no incoming edge (t1) is always
+ * unlocked; w0 isn't in the graph at all and is unlocked from the very start.
+ */
 export function isMissionUnlocked(save: SaveData, missionId: string): boolean {
-  return totalStars(save) >= missionById(missionId).starGate;
+  missionById(missionId); // fail fast on an unknown id, same contract as before
+  const incoming = MISSION_UNLOCK_EDGES.filter(([, toId]) => toId === missionId);
+  if (incoming.length === 0) return true;
+  return incoming.some(([fromId]) => save.completedMissionIds.includes(fromId));
 }
 
 /** Builds the mission-start loadout snapshot from equipped items + owned supplies + subscription card pools. */
@@ -369,16 +384,33 @@ export interface AppliedResult {
   newStarIds: string[];
 }
 
-/** Folds a finished run into the save: coins always, stars only for non-tutorial missions. */
+/**
+ * Adds missionId to completedMissionIds on victory (or on defeat for a mission whose
+ * `completesOnDefeat` is set, e.g. t1-t4 — the teaching moment is seeing the mechanic
+ * once, not surviving it), idempotently. No-op on any other defeat or replay.
+ */
+function markCompleted(save: SaveData, missionId: string, status: MissionResult['status'], completesOnDefeat: boolean): string[] {
+  const completes = status === 'victory' || (status === 'defeat' && completesOnDefeat);
+  if (!completes || save.completedMissionIds.includes(missionId)) return save.completedMissionIds;
+  return [...save.completedMissionIds, missionId];
+}
+
+/**
+ * Folds a finished run into the save: coins always, stars only for non-tutorial
+ * missions, mission completion (which unlocks the next mission, §9) on victory — or on
+ * defeat for t1-t4 specifically (`completesOnDefeat`).
+ */
 export function applyMissionResult(save: SaveData, result: MissionResult): AppliedResult {
+  const mission = missionById(result.missionId);
+  const completedMissionIds = markCompleted(save, result.missionId, result.status, mission.completesOnDefeat === true);
   if (result.missionId === 'w0') {
-    const next: SaveData = { ...save, coins: save.coins + result.coins, w0Completed: true };
+    const next: SaveData = { ...save, coins: save.coins + result.coins, w0Completed: true, completedMissionIds };
     persistSave(next);
     return { save: next, newStarIds: [] };
   }
-  const isTutorial = missionById(result.missionId).forcedLoadout !== undefined;
+  const isTutorial = mission.forcedLoadout !== undefined;
   if (isTutorial) {
-    const next: SaveData = { ...save, coins: save.coins + result.coins };
+    const next: SaveData = { ...save, coins: save.coins + result.coins, completedMissionIds };
     persistSave(next);
     return { save: next, newStarIds: [] };
   }
@@ -387,6 +419,7 @@ export function applyMissionResult(save: SaveData, result: MissionResult): Appli
   const next: SaveData = {
     ...save,
     coins: save.coins + result.coins,
+    completedMissionIds,
     missionStars: {
       ...save.missionStars,
       [result.missionId]: [...previous, ...newStarIds],

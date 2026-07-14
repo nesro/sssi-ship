@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { ALL_NEW_ABILITIES } from './abilities';
-import { abilityById } from './cards';
+import { ALL_ABILITIES, abilityById } from './cards';
 import { defaultModifiers } from '../core/stats';
+import type { RunModifiers } from '../core/types';
 
 function applyAbility(id: string) {
   const ability = abilityById(id);
@@ -18,6 +19,31 @@ describe('abilityById: covers new company abilities', () => {
       expect(abilityById(ability.id).id).toBe(ability.id);
     }
   });
+});
+
+// ── Fractional-bonus sanity check ───────────────────────────────────────────────
+// combat.ts applies these five fields as `mult *= 1 + bonus` (computeStateDmgMult,
+// computeProgressDmgMult) — a card writing an absolute-looking number instead of a
+// fraction silently becomes a multi-hundred-percent damage multiplier. Caught once
+// already 2026-07-10: four cards wrote +25/+30/+35/+40 instead of +0.25/+0.3/+0.35/+0.4.
+// This guards against the same mistake recurring in any future card.
+const MULTIPLICATIVE_BONUS_FIELDS: (keyof RunModifiers)[] = [
+  'fullEnergyDmgBonus', 'singleEnemyDmgBonus', 'shieldActiveDmgBonus',
+  'earlyBirdDmgBonus', 'finalPushDmgBonus',
+];
+const MAX_SANE_BONUS = 1; // no shipped card exceeds +0.6 today; 1 leaves headroom without allowing a unit slip
+
+describe('Passive abilities: multiplicative damage bonuses stay in a sane fractional range', () => {
+  for (const ability of [...ALL_ABILITIES, ...ALL_NEW_ABILITIES]) {
+    const apply = ability.apply;
+    if (apply === undefined) continue;
+    it(`${ability.id} keeps every multiplicative bonus field <= ${String(MAX_SANE_BONUS)}`, () => {
+      const result = apply(defaultModifiers());
+      for (const field of MULTIPLICATIVE_BONUS_FIELDS) {
+        expect(result[field]).toBeLessThanOrEqual(MAX_SANE_BONUS);
+      }
+    });
+  }
 });
 
 // ── Nexus passives ─────────────────────────────────────────────────────────────
@@ -52,9 +78,9 @@ describe('Aegis passive abilities: apply() modifies correct modifier', () => {
     expect(applyAbility('aegis-shield-resonance').shieldPulseMult).toBeCloseTo(base * 1.4);
   });
 
-  it('guardianSync: shieldActiveDmgBonus + 25', () => {
+  it('guardianSync: shieldActiveDmgBonus + 0.25', () => {
     const base = defaultModifiers().shieldActiveDmgBonus;
-    expect(applyAbility('aegis-guardian-sync').shieldActiveDmgBonus).toBeCloseTo(base + 25);
+    expect(applyAbility('aegis-guardian-sync').shieldActiveDmgBonus).toBeCloseTo(base + 0.25);
   });
 });
 
@@ -71,9 +97,9 @@ describe('Quantum passive abilities: apply() modifies correct modifier', () => {
     expect(applyAbility('quantum-pulse-amplifier').energyPerPulse).toBeCloseTo(base + 5);
   });
 
-  it('fullChargeBonus: fullEnergyDmgBonus + 30', () => {
+  it('fullChargeBonus: fullEnergyDmgBonus + 0.3', () => {
     const base = defaultModifiers().fullEnergyDmgBonus;
-    expect(applyAbility('quantum-full-charge').fullEnergyDmgBonus).toBeCloseTo(base + 30);
+    expect(applyAbility('quantum-full-charge').fullEnergyDmgBonus).toBeCloseTo(base + 0.3);
   });
 });
 
@@ -85,14 +111,14 @@ describe('Comet passive abilities: apply() modifies correct modifier', () => {
     expect(applyAbility('comet-motor-efficiency').motorDrawMult).toBeCloseTo(base * 0.75);
   });
 
-  it('earlyAssault: earlyBirdDmgBonus + 35', () => {
+  it('earlyAssault: earlyBirdDmgBonus + 0.35', () => {
     const base = defaultModifiers().earlyBirdDmgBonus;
-    expect(applyAbility('comet-early-assault').earlyBirdDmgBonus).toBeCloseTo(base + 35);
+    expect(applyAbility('comet-early-assault').earlyBirdDmgBonus).toBeCloseTo(base + 0.35);
   });
 
-  it('lastLapPush: finalPushDmgBonus + 40', () => {
+  it('lastLapPush: finalPushDmgBonus + 0.4', () => {
     const base = defaultModifiers().finalPushDmgBonus;
-    expect(applyAbility('comet-last-lap').finalPushDmgBonus).toBeCloseTo(base + 40);
+    expect(applyAbility('comet-last-lap').finalPushDmgBonus).toBeCloseTo(base + 0.4);
   });
 });
 

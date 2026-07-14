@@ -10,8 +10,17 @@ import {
   supplyById,
   weaponSpecById,
 } from './items';
+import { DEFAULT_SUBSCRIPTION_CARD_IDS } from './subscriptions';
 
-/** The rig every new save starts with — built from the catalog, never duplicated. */
+/**
+ * The rig every new save starts with — built from the catalog, never duplicated.
+ * Only used by `tools/simulate.ts`/`balance-sweep.ts` (the live game builds a real
+ * player's loadout from their save via `SaveManager.buildLoadout`, never this
+ * constant) — so this must match `buildLoadout(defaultSave())` exactly, including
+ * `subscriptionCardIds`. An empty array here would silently trigger the live game's
+ * "no subscription owned" fallback to the full card catalog, which no real fresh
+ * player (who always owns sub-basic) ever sees.
+ */
 export const STARTER_LOADOUT: LoadoutSnapshot = {
   ship: shipById(DEFAULT_SHIP_ID),
   weapon: weaponSpecById('pulse-1'),
@@ -21,7 +30,7 @@ export const STARTER_LOADOUT: LoadoutSnapshot = {
   generator: generatorSpecById('generator-torrent-1'),
   motor: motorSpecById('motor-rush-1'),
   supplies: [],
-  subscriptionCardIds: [],
+  subscriptionCardIds: DEFAULT_SUBSCRIPTION_CARD_IDS,
 };
 
 /**
@@ -45,6 +54,9 @@ export function resolveForcedLoadout(forced: ForcedLoadout): LoadoutSnapshot {
     generator: generatorSpecById(forced.generatorId),
     motor: motorSpecById(forced.motorId),
     supplies,
+    // Deliberately empty, not DEFAULT_SUBSCRIPTION_CARD_IDS — this is what makes every
+    // tutorial grant the full card catalog regardless of the player's real subscription
+    // (see CombatScene.ts's abilityPoolForLoadout fallback), not a fidelity gap to fix.
     subscriptionCardIds: [],
   };
 }

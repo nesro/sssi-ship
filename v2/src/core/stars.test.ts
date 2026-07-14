@@ -121,8 +121,11 @@ describe('finish-time stars', () => {
 });
 
 describe('totalStarsAvailable', () => {
-  it('returns 46 stars across the 6 main missions', () => {
-    expect(totalStarsAvailable()).toBe(46);
+  it('returns 44 stars across the 6 main missions', () => {
+    // m3 and m6 each omit hull-90/shield (attritional DPS-check missions where
+    // near-zero-damage completion is structurally near-unreachable) — 4 missions ×
+    // 8 stars + 2 missions × 6 stars.
+    expect(totalStarsAvailable()).toBe(44);
   });
 });
 

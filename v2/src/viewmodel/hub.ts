@@ -8,7 +8,7 @@ import { TICKS_PER_SECOND } from '../core/constants';
 import type { MissionSpec, StarFamily, StarSpec } from '../core/types';
 import { abilityById } from '../data/cards';
 import { itemById, REAR_WEAPON_ITEMS, shipById, SIDE_WEAPON_ITEMS, SUPPLIES } from '../data/items';
-import { ALL_MISSIONS } from '../data/missions';
+import { ALL_MISSIONS, MISSION_UNLOCK_EDGES } from '../data/missions';
 import { SUBSCRIPTIONS } from '../data/subscriptions';
 import type { SubscriptionSpec } from '../data/subscriptions';
 import { isMissionUnlocked, switchCost } from '../save/SaveManager';
@@ -454,12 +454,6 @@ export function computeLoadoutRows(save: SaveData): LoadoutViewModel {
 
 // ── Galaxy map ─────────────────────────────────────────────────────────────
 
-const GALAXY_CONNECTIONS: [string, string][] = [
-  ['t1', 't2'], ['t2', 't3'], ['t3', 't4'],
-  ['t1', 'm1'],
-  ['m1', 'm2'], ['m2', 'm3'], ['m3', 'm4'], ['m4', 'm5'], ['m5', 'm6'],
-];
-
 const GALAXY_NODES: Record<string, { x: number; y: number }> = {
   t1: { x: 62, y: 130 }, t2: { x: 133, y: 200 }, t3: { x: 87, y: 285 }, t4: { x: 172, y: 330 },
   m1: { x: 253, y: 100 }, m2: { x: 315, y: 185 }, m3: { x: 369, y: 115 },
@@ -479,7 +473,7 @@ export function computeGalaxyMap(save: SaveData, selectedMissionId: string | nul
     if (pos === undefined) continue;
     missions.push(computeGalaxyMission(save, mission, pos, selectedMissionId));
   }
-  const connections = GALAXY_CONNECTIONS
+  const connections = MISSION_UNLOCK_EDGES
     .filter(([a, b]) => GALAXY_NODES[a] !== undefined && GALAXY_NODES[b] !== undefined)
     .map(([fromId, toId]) => ({ fromId, toId, bothUnlocked: isMissionUnlocked(save, fromId) && isMissionUnlocked(save, toId) }));
   return { missions, connections };

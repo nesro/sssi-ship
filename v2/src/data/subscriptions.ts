@@ -41,6 +41,8 @@ export const SUBSCRIPTIONS: Record<string, SubscriptionSpec> = {
           'm-over-20',        // OVERDRIVE
           'm-eff-50',         // FRICTIONLESS HUB
           'meta-reroll-cache', // REROLL CACHE
+          'g-hull-02',        // RECYCLED PLATING (added 2026-07-10, decision 3)
+          'm-eco-01',         // SCRAP CONVERTER (added 2026-07-10, decision 3)
         ],
       },
       {
@@ -302,3 +304,13 @@ export function cardIdsAtLevel(spec: SubscriptionSpec, level: number): string[] 
   }
   return ids;
 }
+
+/**
+ * Every save starts with sub-basic Lv1 (free, default, never removed —
+ * `SaveManager.defaultSave()`). Any loadout preset representing "no subscription
+ * upgrades yet" must use this specific card list, not an empty array — the live game's
+ * ability pool (`CombatScene.ts`'s `abilityPoolForLoadout`) treats an empty
+ * `subscriptionCardIds` as "no subscription owned at all" and falls back to the full
+ * 120-card catalog, which no real player with sub-basic ever sees.
+ */
+export const DEFAULT_SUBSCRIPTION_CARD_IDS: string[] = cardIdsAtLevel(subscriptionById('sub-basic'), 1);

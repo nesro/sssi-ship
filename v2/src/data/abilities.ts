@@ -132,12 +132,12 @@ const shieldResonance: AbilityDefinition = {
 const guardianSync: AbilityDefinition = {
   id: 'aegis-guardian-sync',
   name: 'GUARDIAN SYNC',
-  description: 'Passive: +25 damage bonus while shield is above 0',
+  description: 'Passive: +25% damage while shield is above 0',
   company: 'aegis',
   kind: 'passive',
   apply: (mods: RunModifiers): RunModifiers => ({
     ...mods,
-    shieldActiveDmgBonus: mods.shieldActiveDmgBonus + 25,
+    shieldActiveDmgBonus: mods.shieldActiveDmgBonus + 0.25,
   }),
 };
 
@@ -198,16 +198,16 @@ const pulseAmplifier: AbilityDefinition = {
   }),
 };
 
-/** FULL CHARGE BONUS (passive): +30 bonus damage at max energy. */
+/** FULL CHARGE BONUS (passive): +30 % damage at max energy. */
 const fullChargeBonus: AbilityDefinition = {
   id: 'quantum-full-charge',
   name: 'FULL CHARGE BONUS',
-  description: 'Passive: +30 damage when energy is full',
+  description: 'Passive: +30% damage when energy is full',
   company: 'quantum',
   kind: 'passive',
   apply: (mods: RunModifiers): RunModifiers => ({
     ...mods,
-    fullEnergyDmgBonus: mods.fullEnergyDmgBonus + 30,
+    fullEnergyDmgBonus: mods.fullEnergyDmgBonus + 0.3,
   }),
 };
 
@@ -255,29 +255,29 @@ const motorEfficiency: AbilityDefinition = {
   }),
 };
 
-/** EARLY ASSAULT (passive): +35 bonus damage in the first 25 % of the mission. */
+/** EARLY ASSAULT (passive): +35 % damage in the first 25 % of the mission. */
 const earlyAssault: AbilityDefinition = {
   id: 'comet-early-assault',
   name: 'EARLY ASSAULT',
-  description: 'Passive: +35 damage in the first 25 % of the mission',
+  description: 'Passive: +35% damage in the first 25 % of the mission',
   company: 'comet',
   kind: 'passive',
   apply: (mods: RunModifiers): RunModifiers => ({
     ...mods,
-    earlyBirdDmgBonus: mods.earlyBirdDmgBonus + 35,
+    earlyBirdDmgBonus: mods.earlyBirdDmgBonus + 0.35,
   }),
 };
 
-/** LAST LAP PUSH (passive): +40 bonus damage in the final 25 % of the mission. */
+/** LAST LAP PUSH (passive): +40 % damage in the final 25 % of the mission. */
 const lastLapPush: AbilityDefinition = {
   id: 'comet-last-lap',
   name: 'LAST LAP PUSH',
-  description: 'Passive: +40 damage in the final 25 % of the mission',
+  description: 'Passive: +40% damage in the final 25 % of the mission',
   company: 'comet',
   kind: 'passive',
   apply: (mods: RunModifiers): RunModifiers => ({
     ...mods,
-    finalPushDmgBonus: mods.finalPushDmgBonus + 40,
+    finalPushDmgBonus: mods.finalPushDmgBonus + 0.4,
   }),
 };
 

@@ -8,8 +8,8 @@ import { UI_FONT } from './widgets';
 const BUTTON_W = 120;
 const BUTTON_H = 36;
 const BUTTON_GAP = 6;
-// Must clear CombatScene.buildAbilitySlots()'s 3 slots (y = 96, 118, 140; last one ends at ~148).
-const BUTTONS_TOP = 176;
+// Must clear CombatScene.buildAbilitySlots()'s 3 slots (y = 100, 134, 168, height 28; last one ends at ~182).
+const BUTTONS_TOP = 204;
 
 /** Reserve-supply tap buttons stacked in the left panel (V2_HANDOFF.md §3.7). */
 export class SupplyButtons {

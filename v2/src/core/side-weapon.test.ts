@@ -187,7 +187,7 @@ describe('SaveManager migration v11 → v12', () => {
     localStorage.setItem('nesro-nova-v2-save', JSON.stringify(v11));
 
     const migrated = loadSave();
-    expect(migrated.version).toBe(12);
+    expect(migrated.version).toBe(13);
     expect(migrated.equipped.sideWeapon).toBeNull();
   });
 });

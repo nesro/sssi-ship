@@ -37,29 +37,42 @@ const WEAPON_BASE: Record<WeaponKind, {
   pulse:   { displayName: 'Pulse Laser',  blurb: 'Reliable single-target fire.',            damage: 10, ticks: 5, energy: 6,  targets: 1,        falloff: 1.0 },
   ion:     { displayName: 'Ion Lance',    blurb: 'Heavy single hits. Feed it energy.',       damage: 28, ticks: 7, energy: 14, targets: 1,        falloff: 1.0 },
   scatter: { displayName: 'Scatter Beam', blurb: 'Pierces multiple enemies. Crowd killer.',  damage: 7,  ticks: 5, energy: 9,  targets: 3,        falloff: 0.7 },
-  nova:    { displayName: 'Nova Wave',    blurb: 'Hits every enemy. Swarm destroyer.',       damage: 3,  ticks: 9, energy: 16, targets: Infinity, falloff: 1.0 },
+  nova:    { displayName: 'Nova Wave',    blurb: 'Hits every enemy. Swarm destroyer.',       damage: 5,  ticks: 7, energy: 6,  targets: Infinity, falloff: 1.0 },
+  // Rebalanced 2026-07-11 (docs/plans/nova-weapon-and-campaign-tension-review.md) — old
+  // base (damage 3 / ticks 9 / energy 16) cleared 0% on m1/m2/m3/m4 at the intended
+  // loadout's own level: its energy cost sat nova permanently in brownout (energy.ts's
+  // trough-sampling), and its base damage was too low to matter even with energy fixed.
+  // New base fixes the energy trough problem across the board and raises damage/fire
+  // rate enough to make nova viable on fodder/swarm missions (m1/m2/m5/m6) and on m4's
+  // mixed composition, while leaving it deliberately weak on m3 — the campaign's
+  // hardest pure-blocker gauntlet — mirroring ion's own accepted collapse on m5's
+  // swarm. See the plan doc's sim sweep for the full grid this was picked from.
 };
 
-// Stars and prices strictly increase across every row — both level-to-level within
-// a kind and kind-to-kind in WEAPON_KINDS order — anchored to a 175,000-coin /
-// 46-star (all mission stars) top end for nova Lv5. See docs/plans/shop-economy-rebalance.md.
-// (Budget shrunk from 200,000 when side weapons were added — see that file's update.)
+// Redesigned 2026-07-10 (docs/plans/game-identity-and-design-review-followup.md):
+// kinds are situational sidegrades, not a tier ladder — every kind costs the same
+// coins/stars to reach a given level. Price reuses pulse's own already-tuned ladder
+// (11,200 top end, ~15.6x cheaper than the old 175,000 nova-only ceiling) rather than
+// inventing new numbers; the old design priced nova ~15x higher than pulse for the
+// exact same level, which is a late-game reward structure, not a sidegrade one.
+// Stars stay a separate, deliberately modest gate (not reused from pulse's near-zero
+// curve) so performance-based progression still means something even as coin cost
+// compresses — 26 stars for the ceiling item, not 44 (all mission stars) as before.
 
-/** Stars required per weapon kind and level (index = level − 1). */
+/** Stars required per weapon level (index = level − 1) — identical across every kind. */
+const WEAPON_STARS_BY_LEVEL: [number, number, number, number, number] = [0, 3, 8, 16, 26];
 const WEAPON_STARS: Record<WeaponKind, [number, number, number, number, number]> = {
-  pulse:   [0, 1, 2, 3, 4],
-  scatter: [5, 7, 9, 12, 14],
-  ion:     [16, 19, 22, 25, 28],
-  nova:    [32, 35, 39, 42, 46],
+  pulse: WEAPON_STARS_BY_LEVEL, scatter: WEAPON_STARS_BY_LEVEL,
+  ion: WEAPON_STARS_BY_LEVEL, nova: WEAPON_STARS_BY_LEVEL,
 };
 
-// Coin cost per level (index = level − 1). Weapon has a NONE option, so pulse level 1 — the
-// mandatory starter — is priced low but never 0, or it would be indistinguishable from NONE.
+// Coin cost per level (index = level − 1) — identical across every kind (see comment
+// above). Weapon has a NONE option, so level 1 — the mandatory starter — is priced
+// low but never 0, or it would be indistinguishable from NONE.
+const WEAPON_PRICES_BY_LEVEL: [number, number, number, number, number] = [100, 1050, 2300, 5100, 11200];
 const WEAPON_PRICES: Record<WeaponKind, [number, number, number, number, number]> = {
-  pulse:   [100,  1050,  2300,  5100,  11200],
-  scatter: [1200, 2650,  5800,  12700, 28000],
-  ion:     [3000, 6550,  14500, 31800, 70000],
-  nova:    [7450, 16400, 36200, 79500, 175000],
+  pulse: WEAPON_PRICES_BY_LEVEL, scatter: WEAPON_PRICES_BY_LEVEL,
+  ion: WEAPON_PRICES_BY_LEVEL, nova: WEAPON_PRICES_BY_LEVEL,
 };
 
 /** Computes a weapon spec at a given upgrade level (1 = base, 5 = max). */
@@ -140,28 +153,25 @@ const REAR_WEAPON_BASE: Record<RearWeaponKind, {
   cluster: { displayName: 'Cluster Bomb',     blurb: 'Submunition scatter. Max spread, thin per-target damage.', damage:  3, ticks:  7, energy: 11, targets: 6, falloff: 0.65 },
 };
 
-// Stars and prices strictly increase across every row — level-to-level within a
-// kind and kind-to-kind in REAR_WEAPON_KINDS order — anchored to a 130,000-coin /
-// 40-star top end for plasma Lv5. See docs/plans/shop-economy-rebalance.md.
-// (Budget shrunk from 150,000 when side weapons were added — see that file's update.)
+// Redesigned 2026-07-10 — kinds are situational sidegrades, not a tier ladder; see
+// WEAPON_STARS's comment above for the full reasoning. Price reuses grenade's own
+// already-tuned ladder (3,350 top end, ~38.8x cheaper than the old 130,000 plasma-only
+// ceiling). Stars are a separate, modest gate — 15 for the ceiling item.
 
-/** Stars required per rear weapon kind and level (index = level − 1). */
+/** Stars required per rear weapon level (index = level − 1) — identical across every kind. */
+const REAR_WEAPON_STARS_BY_LEVEL: [number, number, number, number, number] = [0, 2, 4, 8, 15];
 const REAR_WEAPON_STARS: Record<RearWeaponKind, [number, number, number, number, number]> = {
-  grenade: [0, 1, 2, 3, 4],
-  cluster: [5, 6, 7, 8, 9],
-  flak:    [10, 11, 13, 15, 17],
-  arc:     [19, 21, 23, 25, 28],
-  plasma:  [30, 32, 35, 37, 40],
+  grenade: REAR_WEAPON_STARS_BY_LEVEL, cluster: REAR_WEAPON_STARS_BY_LEVEL,
+  flak: REAR_WEAPON_STARS_BY_LEVEL, arc: REAR_WEAPON_STARS_BY_LEVEL, plasma: REAR_WEAPON_STARS_BY_LEVEL,
 };
 
-// Coin cost per level (index = level − 1). Rear weapon has a NONE option, so grenade level 1
-// is priced low but never 0, or it would be indistinguishable from NONE.
+// Coin cost per level (index = level − 1) — identical across every kind. Rear weapon
+// has a NONE option, so grenade level 1 is priced low but never 0, or it would be
+// indistinguishable from NONE.
+const REAR_WEAPON_PRICES_BY_LEVEL: [number, number, number, number, number] = [30, 310, 690, 1500, 3350];
 const REAR_WEAPON_PRICES: Record<RearWeaponKind, [number, number, number, number, number]> = {
-  grenade: [30,  310,  690,   1500,  3350],
-  cluster: [350, 780,  1700,  3750,  8300],
-  flak:    [890, 1950, 4300,  9450,  20800],
-  arc:     [2200, 4900, 10700, 23600, 52000],
-  plasma:  [5550, 12200, 26900, 59100, 130000],
+  grenade: REAR_WEAPON_PRICES_BY_LEVEL, cluster: REAR_WEAPON_PRICES_BY_LEVEL,
+  flak: REAR_WEAPON_PRICES_BY_LEVEL, arc: REAR_WEAPON_PRICES_BY_LEVEL, plasma: REAR_WEAPON_PRICES_BY_LEVEL,
 };
 
 export function rearWeaponSpecAtLevel(kind: RearWeaponKind, level: number): WeaponSpec {
@@ -248,25 +258,25 @@ const SIDE_WEAPON_BASE: Record<SideWeaponKind, {
   orbital:   { displayName: 'Orbital Strike',  blurb: 'Calls down damage on every enemy on screen. Rare and huge.', damage: 12, targets: Infinity, falloff: 1.0,  charges: [1, 2, 2, 3, 3] },
 };
 
-// Stars and prices strictly increase across every row — level-to-level within a
-// kind and kind-to-kind in SIDE_WEAPON_KINDS order — anchored to a 130,000-coin /
-// 40-star top end for orbital Lv5. See docs/plans/shop-economy-rebalance.md.
+// Redesigned 2026-07-10 — kinds are situational sidegrades, not a tier ladder; see
+// WEAPON_STARS's comment above for the full reasoning. Price reuses focus's own
+// already-tuned ladder (8,300 top end, ~15.7x cheaper than the old 130,000
+// orbital-only ceiling). Stars are a separate, modest gate — 15 for the ceiling item.
 
-/** Stars required per side weapon kind and level (index = level − 1). */
+/** Stars required per side weapon level (index = level − 1) — identical across every kind. */
+const SIDE_WEAPON_STARS_BY_LEVEL: [number, number, number, number, number] = [0, 2, 4, 8, 15];
 const SIDE_WEAPON_STARS: Record<SideWeaponKind, [number, number, number, number, number]> = {
-  focus:     [0, 1, 2, 3, 4],
-  flechette: [5, 6, 8, 10, 12],
-  railgun:   [14, 17, 19, 22, 25],
-  orbital:   [27, 30, 33, 37, 40],
+  focus: SIDE_WEAPON_STARS_BY_LEVEL, flechette: SIDE_WEAPON_STARS_BY_LEVEL,
+  railgun: SIDE_WEAPON_STARS_BY_LEVEL, orbital: SIDE_WEAPON_STARS_BY_LEVEL,
 };
 
-// Coin cost per level (index = level − 1). Side weapon has a NONE option, so focus level 1
-// is priced low but never 0, or it would be indistinguishable from NONE.
+// Coin cost per level (index = level − 1) — identical across every kind. Side weapon
+// has a NONE option, so focus level 1 is priced low but never 0, or it would be
+// indistinguishable from NONE.
+const SIDE_WEAPON_PRICES_BY_LEVEL: [number, number, number, number, number] = [80, 780, 1700, 3750, 8300];
 const SIDE_WEAPON_PRICES: Record<SideWeaponKind, [number, number, number, number, number]> = {
-  focus:     [80,  780,  1700,  3750,  8300],
-  flechette: [890, 1950, 4300,  9450,  20800],
-  railgun:   [2200, 4900, 10700, 23600, 52000],
-  orbital:   [5550, 12200, 26900, 59100, 130000],
+  focus: SIDE_WEAPON_PRICES_BY_LEVEL, flechette: SIDE_WEAPON_PRICES_BY_LEVEL,
+  railgun: SIDE_WEAPON_PRICES_BY_LEVEL, orbital: SIDE_WEAPON_PRICES_BY_LEVEL,
 };
 
 export function sideWeaponSpecAtLevel(kind: SideWeaponKind, level: number): WeaponSpec {
@@ -330,17 +340,19 @@ const SHIELD_BASE: Record<ShieldKind, {
   fractions: [number, number, number, number, number];
   prices: [number, number, number, number, number];
   stars: [number, number, number, number, number];
-// Stars and prices strictly increase across every row — level-to-level within a
-// kind and kind-to-kind in SHIELD_KINDS order — anchored to a 130,000-coin /
-// 42-star top end for bulwark Lv5. See docs/plans/shop-economy-rebalance.md.
-// (Budget shrunk from 150,000 when side weapons were added — see that file's update.)
+// Redesigned 2026-07-10 — kinds are situational sidegrades, not a tier ladder; see
+// WEAPON_STARS's comment (in the weapon section above) for the full reasoning. Price
+// reuses wall's own already-tuned ladder (8,300 top end, ~15.7x cheaper than the old
+// 130,000 bulwark-only ceiling) for every kind; caps/fractions (the actual combat
+// stats making each kind situational) are untouched. Stars are a separate, modest
+// gate shared with generator/motor/rear-weapon/side-weapon — 15 for the ceiling item.
 }> = {
   // Shield has a NONE option, so wall level 1 (mandatory starter) is priced low but never 0,
   // or it would be indistinguishable from NONE.
-  wall:    { displayName: 'Wall',    blurb: 'Thick plate — survives hits, slow recharge.',         caps: [ 30,  60, 100, 150, 220], fractions: [0.08, 0.09, 0.10, 0.12, 0.14], prices: [  80,  780,  1700,  3750,  8300], stars: [ 0,  1,  2,  3,  4] },
-  reflex:  { displayName: 'Reflex',  blurb: 'Thin plate, instant snap-back. Loves fast pulses.',   caps: [ 15,  22,  30,  40,  55], fractions: [0.35, 0.42, 0.52, 0.62, 0.75], prices: [ 890, 1950,  4300,  9450, 20800], stars: [ 5,  7,  8, 11, 13] },
-  flux:    { displayName: 'Flux',    blurb: 'Balanced cap and pulse rate. Works with anything.',   caps: [ 40,  70, 105, 150, 210], fractions: [0.18, 0.22, 0.26, 0.32, 0.38], prices: [2200, 4900, 10700, 23600, 52000], stars: [15, 18, 20, 23, 26] },
-  bulwark: { displayName: 'Bulwark', blurb: 'Extreme capacity, minimal regen. True tank armour.',  caps: [ 60, 100, 155, 225, 320], fractions: [0.05, 0.06, 0.07, 0.08, 0.10], prices: [5550,12200, 26900, 59100,130000], stars: [29, 32, 35, 39, 42] },
+  wall:    { displayName: 'Wall',    blurb: 'Thick plate — survives hits, slow recharge.',         caps: [ 30,  60, 100, 150, 220], fractions: [0.08, 0.09, 0.10, 0.12, 0.14], prices: [  80,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
+  reflex:  { displayName: 'Reflex',  blurb: 'Thin plate, instant snap-back. Loves fast pulses.',   caps: [ 15,  22,  30,  40,  55], fractions: [0.35, 0.42, 0.52, 0.62, 0.75], prices: [  80,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
+  flux:    { displayName: 'Flux',    blurb: 'Balanced cap and pulse rate. Works with anything.',   caps: [ 40,  70, 105, 150, 210], fractions: [0.18, 0.22, 0.26, 0.32, 0.38], prices: [  80,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
+  bulwark: { displayName: 'Bulwark', blurb: 'Extreme capacity, minimal regen. True tank armour.',  caps: [ 60, 100, 155, 225, 320], fractions: [0.05, 0.06, 0.07, 0.08, 0.10], prices: [  80,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
 };
 
 export function shieldKindDisplayName(kind: ShieldKind): string { return SHIELD_BASE[kind].displayName; }
@@ -381,15 +393,23 @@ const GENERATOR_BASE: Record<GeneratorKind, {
   drains: [number, number, number, number, number];
   prices: [number, number, number, number, number];
   stars: [number, number, number, number, number];
-// Stars and prices strictly increase across every row — level-to-level within a
-// kind and kind-to-kind in GENERATOR_KINDS order — anchored to a 130,000-coin /
-// 42-star top end for surge Lv5. See docs/plans/shop-economy-rebalance.md.
-// (Budget shrunk from 150,000 when side weapons were added — see that file's update.)
+// Redesigned 2026-07-10 — kinds are situational sidegrades, not a tier ladder; see
+// WEAPON_STARS's comment (in the weapon section above) for the full reasoning. Price
+// reuses torrent's own already-tuned ladder (8,300 top end, ~15.7x cheaper than the
+// old 130,000 surge-only ceiling) for every kind; outputs/caps/drains (the actual
+// combat stats making each kind situational) are untouched. Stars share the same
+// modest gate as shield/motor/rear-weapon/side-weapon — 15 for the ceiling item.
 }> = {
-  torrent: { displayName: 'Torrent', blurb: 'High output, small buffer. Feeds fast-cycling weapons.',        outputs: [ 2,  4,  7, 11, 16], caps: [50, 45, 40, 38, 35], drains: [0.50, 0.55, 0.60, 0.65, 0.70], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0,  1,  2,  3,  4] },
-  reserve: { displayName: 'Reserve', blurb: 'Vast tank, slow trickle. Charge then unleash.',                 outputs: [1.5, 2.5, 3.5,  5,  7], caps: [100, 160, 240, 340, 480], drains: [0.28, 0.24, 0.20, 0.17, 0.14], prices: [ 890, 1950,  4300,  9450, 20800], stars: [ 5,  7,  8, 11, 13] },
-  steady:  { displayName: 'Steady',  blurb: 'Reliable mid-range. Pairs well with any loadout.',              outputs: [2.5,  4,  6,  9, 13], caps: [70, 82, 95, 110, 128], drains: [0.38, 0.34, 0.30, 0.26, 0.22], prices: [2200, 4900, 10700, 23600, 52000], stars: [15, 18, 20, 23, 26] },
-  surge:   { displayName: 'Surge',   blurb: 'Maximum output, tiny battery. Ion and nova goldmine.',          outputs: [ 3,  5,  9, 14, 20], caps: [30, 28, 26, 25, 25], drains: [0.72, 0.78, 0.83, 0.88, 0.92], prices: [5550,12200, 26900, 59100,130000], stars: [29, 32, 35, 39, 42] },
+  torrent: { displayName: 'Torrent', blurb: 'High output, small buffer. Feeds fast-cycling weapons.',        outputs: [ 2,  4,  7, 11, 16], caps: [50, 45, 40, 38, 35], drains: [0.50, 0.55, 0.60, 0.65, 0.70], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
+  // Blurb rewritten 2026-07-11 (docs/plans/overdrive-and-reserve-trap-fixes.md) — old
+  // text ("Charge then unleash") recommended pairing Reserve with expensive-per-shot
+  // weapons (ion/nova), but the trough-sampled brownout (energy.ts) punishes exactly
+  // that pairing hardest — reserve+nova measured 0.0% clear this session. New text is
+  // honest about the actual niche: low-drain weapons and burst-ability/supply synergy
+  // with the huge capacity, not "charge up for a big weapon hit."
+  reserve: { displayName: 'Reserve', blurb: 'Vast tank, slow trickle. Feeds efficient weapons.',             outputs: [1.5, 2.5, 3.5,  5,  7], caps: [100, 160, 240, 340, 480], drains: [0.28, 0.24, 0.20, 0.17, 0.14], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
+  steady:  { displayName: 'Steady',  blurb: 'Reliable mid-range. Pairs well with any loadout.',              outputs: [2.5,  4,  6,  9, 13], caps: [70, 82, 95, 110, 128], drains: [0.38, 0.34, 0.30, 0.26, 0.22], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
+  surge:   { displayName: 'Surge',   blurb: 'Maximum output, tiny battery. Ion and nova goldmine.',          outputs: [ 3,  5,  9, 14, 20], caps: [30, 28, 26, 25, 25], drains: [0.72, 0.78, 0.83, 0.88, 0.92], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
 };
 
 export function generatorKindDisplayName(kind: GeneratorKind): string { return GENERATOR_BASE[kind].displayName; }
@@ -431,15 +451,30 @@ const MOTOR_BASE: Record<MotorKind, {
   stars: [number, number, number, number, number];
   bonusCards?: [number, number, number, number, number];
   bonusRerolls?: [number, number, number, number, number];
-// Stars and prices strictly increase across every row — level-to-level within a
-// kind and kind-to-kind in MOTOR_KINDS order — anchored to a 130,000-coin /
-// 44-star top end for overdrive Lv5. See docs/plans/shop-economy-rebalance.md.
-// (Budget shrunk from 150,000 when side weapons were added — see that file's update.)
+// Redesigned 2026-07-10 — kinds are situational sidegrades, not a tier ladder; see
+// WEAPON_STARS's comment (in the weapon section above) for the full reasoning. Price
+// reuses rush's own already-tuned ladder (8,300 top end, ~15.7x cheaper than the old
+// 130,000 overdrive-only ceiling) for every kind; mults/draws/bonusCards/bonusRerolls
+// (the actual combat stats making each kind situational) are untouched. Stars share
+// the same modest gate as shield/generator/rear-weapon/side-weapon — 15 for the
+// ceiling item (down from tactical/overdrive's old 27/30 starting points).
 }> = {
-  rush:      { displayName: 'Rush',      blurb: 'Fast timeline, high draw. Time-star goldmine.',                     mults: [1.0, 2.0, 3.0, 4.2, 5.8], draws: [0.30, 1.20, 2.20, 3.80,  6.0], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0,  1,  2,  3,  4] },
-  sentinel:  { displayName: 'Sentinel',  blurb: 'Slow timeline — enemies crawl. Very low energy draw.',             mults: [1.0, 0.7, 0.55, 0.45, 0.35], draws: [0.30, 0.08, 0.05, 0.03, 0.01], prices: [ 890, 1950,  4300,  9450, 20800], stars: [ 5,  7,  9, 11, 13] },
-  tactical:  { displayName: 'Tactical',  blurb: 'Normal speed, extra card draws each support call.',                 mults: [1.0, 1.0, 1.1, 1.1, 1.2], draws: [0.30, 0.10, 0.12, 0.15, 0.18], prices: [2200, 4900, 10700, 23600, 52000], stars: [16, 18, 21, 24, 27], bonusCards: [0, 1, 2, 3, 4], bonusRerolls: [0, 0, 1, 2, 3] },
-  overdrive: { displayName: 'Overdrive', blurb: 'Extreme speed and draw. Endgame only.',                            mults: [3.0, 5.0, 7.5, 10.5, 14.0], draws: [3.50, 7.00, 12.0, 18.0, 26.0], prices: [5550,12200, 26900, 59100,130000], stars: [30, 33, 37, 40, 44] },
+  rush:      { displayName: 'Rush',      blurb: 'Fast timeline, high draw. Time-star goldmine.',                     mults: [1.0, 2.0, 3.0, 4.2, 5.8], draws: [0.30, 1.20, 2.20, 3.80,  6.0], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
+  sentinel:  { displayName: 'Sentinel',  blurb: 'Slow timeline — enemies crawl. Very low energy draw.',             mults: [1.0, 0.7, 0.55, 0.45, 0.35], draws: [0.30, 0.08, 0.05, 0.03, 0.01], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
+  tactical:  { displayName: 'Tactical',  blurb: 'Normal speed, extra card draws each support call.',                 mults: [1.0, 1.0, 1.1, 1.1, 1.2], draws: [0.30, 0.10, 0.12, 0.15, 0.18], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15], bonusCards: [0, 1, 2, 3, 4], bonusRerolls: [0, 0, 1, 2, 3] },
+  overdrive: { displayName: 'Overdrive', blurb: 'Fastest timeline, heaviest draw. Maximum coins/minute for players who can feed it.', mults: [1.0, 2.6, 4.0, 5.6, 7.5], draws: [0.30, 2.00, 3.50, 6.0, 9.0], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
+  // Rebalanced 2026-07-11 (docs/plans/overdrive-and-reserve-trap-fixes.md) — old base
+  // (mults [3,5,7.5,10.5,14] / draws [3.5,7,12,18,26]) was a free (price 0, stars 0),
+  // unmarked trap: its draw exceeded every generator's max output (surge tops out at
+  // 20/tick) at every level, so a new player switching for free went from ~90% clear to
+  // 0% — permanent brownout lock (2x stretch) plus a shield that never pulses (energy.ts's
+  // pulseShield only fires at full capacity). New base gives overdrive Lv1 the same
+  // safe stats as rush/sentinel/tactical's own Lv1 (mult 1.0, draw 0.30 — the
+  // established "free tap is always safe" pattern), then scales to a real speed/coin
+  // premium over rush at every level ≥2 while keeping draws below torrent's output
+  // (2/4/7/11/16) at every level, so overdrive is brutal-but-survivable, never
+  // mathematically dead. `pnpm tune`'s tuning-report.md flagged the old values via its
+  // dominant-kind check (100pp spread, m1-m5) — this fixes that finding.
 };
 
 export function motorKindDisplayName(kind: MotorKind): string { return MOTOR_BASE[kind].displayName; }
@@ -568,40 +603,43 @@ const SHIP_BLURBS: Record<ShipKind, string> = {
   warship: 'Stripped gunship built around one big gun.',
 };
 
-// Stars and prices strictly increase across every row — level-to-level within a
-// kind and kind-to-kind in SHIP_KINDS order — anchored to a 175,000-coin / 46-star
-// (all mission stars) top end for warship Lv5. See docs/plans/shop-economy-rebalance.md.
-// (Budget shrunk from 200,000 when side weapons were added — see that file's update.)
+// Redesigned 2026-07-10 — kinds are situational sidegrades, not a tier ladder; see
+// WEAPON_STARS's comment above for the full reasoning. Price reuses interceptor's own
+// already-tuned ladder (4,500 top end, ~38.9x cheaper than the old 175,000
+// warship-only ceiling) for every kind; hull and each kind's passive (the actual
+// combat stats making each kind situational) are untouched. Stars reuse weapon's
+// "premium" ladder (0/3/8/16/26), since ship and weapon were the two systems anchored
+// to the old 175,000 ceiling.
 export const SHIPS: Record<string, ShipSpec> = {
   'ship-interceptor-1': { id: 'ship-interceptor-1', kind: 'interceptor', level: 1, name: 'Interceptor', hull: 80,  price: 0,    starsRequired: 0, passiveKind: 'enemy-miss-bonus',        passiveValue: 0.10, passiveDescription: 'Enemies miss +10% more often', blurb: SHIP_BLURBS.interceptor },
-  'ship-interceptor-2': { id: 'ship-interceptor-2', kind: 'interceptor', level: 2, name: 'Interceptor', hull: 96,  price: 420,  starsRequired: 1, passiveKind: 'enemy-miss-bonus',        passiveValue: 0.12, passiveDescription: 'Enemies miss +12% more often', blurb: SHIP_BLURBS.interceptor },
-  'ship-interceptor-3': { id: 'ship-interceptor-3', kind: 'interceptor', level: 3, name: 'Interceptor', hull: 115, price: 930,  starsRequired: 2, passiveKind: 'enemy-miss-bonus',        passiveValue: 0.15, passiveDescription: 'Enemies miss +15% more often', blurb: SHIP_BLURBS.interceptor },
-  'ship-interceptor-4': { id: 'ship-interceptor-4', kind: 'interceptor', level: 4, name: 'Interceptor', hull: 140, price: 2050, starsRequired: 3, passiveKind: 'enemy-miss-bonus',        passiveValue: 0.18, passiveDescription: 'Enemies miss +18% more often', blurb: SHIP_BLURBS.interceptor },
-  'ship-interceptor-5': { id: 'ship-interceptor-5', kind: 'interceptor', level: 5, name: 'Interceptor', hull: 170, price: 4500, starsRequired: 4, passiveKind: 'enemy-miss-bonus',        passiveValue: 0.22, passiveDescription: 'Enemies miss +22% more often', blurb: SHIP_BLURBS.interceptor },
+  'ship-interceptor-2': { id: 'ship-interceptor-2', kind: 'interceptor', level: 2, name: 'Interceptor', hull: 96,  price: 420,  starsRequired: 3, passiveKind: 'enemy-miss-bonus',        passiveValue: 0.12, passiveDescription: 'Enemies miss +12% more often', blurb: SHIP_BLURBS.interceptor },
+  'ship-interceptor-3': { id: 'ship-interceptor-3', kind: 'interceptor', level: 3, name: 'Interceptor', hull: 115, price: 930,  starsRequired: 8, passiveKind: 'enemy-miss-bonus',        passiveValue: 0.15, passiveDescription: 'Enemies miss +15% more often', blurb: SHIP_BLURBS.interceptor },
+  'ship-interceptor-4': { id: 'ship-interceptor-4', kind: 'interceptor', level: 4, name: 'Interceptor', hull: 140, price: 2050, starsRequired: 16, passiveKind: 'enemy-miss-bonus',        passiveValue: 0.18, passiveDescription: 'Enemies miss +18% more often', blurb: SHIP_BLURBS.interceptor },
+  'ship-interceptor-5': { id: 'ship-interceptor-5', kind: 'interceptor', level: 5, name: 'Interceptor', hull: 170, price: 4500, starsRequired: 26, passiveKind: 'enemy-miss-bonus',        passiveValue: 0.22, passiveDescription: 'Enemies miss +22% more often', blurb: SHIP_BLURBS.interceptor },
 
-  'ship-salvager-1': { id: 'ship-salvager-1', kind: 'salvager', level: 1, name: 'Salvager', hull: 100, price: 480,   starsRequired: 5,  passiveKind: 'coin-bonus', passiveValue: 1.5, passiveDescription: '+50% coins from kills', blurb: SHIP_BLURBS.salvager },
-  'ship-salvager-2': { id: 'ship-salvager-2', kind: 'salvager', level: 2, name: 'Salvager', hull: 120, price: 1050,  starsRequired: 6,  passiveKind: 'coin-bonus', passiveValue: 1.7, passiveDescription: '+70% coins from kills', blurb: SHIP_BLURBS.salvager },
-  'ship-salvager-3': { id: 'ship-salvager-3', kind: 'salvager', level: 3, name: 'Salvager', hull: 145, price: 2300,  starsRequired: 7,  passiveKind: 'coin-bonus', passiveValue: 2.0, passiveDescription: '+100% coins from kills', blurb: SHIP_BLURBS.salvager },
-  'ship-salvager-4': { id: 'ship-salvager-4', kind: 'salvager', level: 4, name: 'Salvager', hull: 175, price: 5100,  starsRequired: 8,  passiveKind: 'coin-bonus', passiveValue: 2.4, passiveDescription: '+140% coins from kills', blurb: SHIP_BLURBS.salvager },
-  'ship-salvager-5': { id: 'ship-salvager-5', kind: 'salvager', level: 5, name: 'Salvager', hull: 215, price: 11200, starsRequired: 10, passiveKind: 'coin-bonus', passiveValue: 3.0, passiveDescription: '+200% coins from kills', blurb: SHIP_BLURBS.salvager },
+  'ship-salvager-1': { id: 'ship-salvager-1', kind: 'salvager', level: 1, name: 'Salvager', hull: 100, price: 0,    starsRequired: 0,  passiveKind: 'coin-bonus', passiveValue: 1.5, passiveDescription: '+50% coins from kills', blurb: SHIP_BLURBS.salvager },
+  'ship-salvager-2': { id: 'ship-salvager-2', kind: 'salvager', level: 2, name: 'Salvager', hull: 120, price: 420,  starsRequired: 3,  passiveKind: 'coin-bonus', passiveValue: 1.7, passiveDescription: '+70% coins from kills', blurb: SHIP_BLURBS.salvager },
+  'ship-salvager-3': { id: 'ship-salvager-3', kind: 'salvager', level: 3, name: 'Salvager', hull: 145, price: 930,  starsRequired: 8,  passiveKind: 'coin-bonus', passiveValue: 2.0, passiveDescription: '+100% coins from kills', blurb: SHIP_BLURBS.salvager },
+  'ship-salvager-4': { id: 'ship-salvager-4', kind: 'salvager', level: 4, name: 'Salvager', hull: 175, price: 2050, starsRequired: 16, passiveKind: 'coin-bonus', passiveValue: 2.4, passiveDescription: '+140% coins from kills', blurb: SHIP_BLURBS.salvager },
+  'ship-salvager-5': { id: 'ship-salvager-5', kind: 'salvager', level: 5, name: 'Salvager', hull: 215, price: 4500, starsRequired: 26, passiveKind: 'coin-bonus', passiveValue: 3.0, passiveDescription: '+200% coins from kills', blurb: SHIP_BLURBS.salvager },
 
-  'ship-reactor-1': { id: 'ship-reactor-1', kind: 'reactor', level: 1, name: 'Reactor', hull: 90,  price: 1200,  starsRequired: 11, passiveKind: 'generator-capacity-bonus', passiveValue: 1.5, passiveDescription: 'Generator capacity +50%', blurb: SHIP_BLURBS.reactor },
-  'ship-reactor-2': { id: 'ship-reactor-2', kind: 'reactor', level: 2, name: 'Reactor', hull: 108, price: 2650,  starsRequired: 13, passiveKind: 'generator-capacity-bonus', passiveValue: 1.7, passiveDescription: 'Generator capacity +70%', blurb: SHIP_BLURBS.reactor },
-  'ship-reactor-3': { id: 'ship-reactor-3', kind: 'reactor', level: 3, name: 'Reactor', hull: 130, price: 5800,  starsRequired: 15, passiveKind: 'generator-capacity-bonus', passiveValue: 2.0, passiveDescription: 'Generator capacity +100%', blurb: SHIP_BLURBS.reactor },
-  'ship-reactor-4': { id: 'ship-reactor-4', kind: 'reactor', level: 4, name: 'Reactor', hull: 157, price: 12700, starsRequired: 17, passiveKind: 'generator-capacity-bonus', passiveValue: 2.4, passiveDescription: 'Generator capacity +140%', blurb: SHIP_BLURBS.reactor },
-  'ship-reactor-5': { id: 'ship-reactor-5', kind: 'reactor', level: 5, name: 'Reactor', hull: 190, price: 28000, starsRequired: 19, passiveKind: 'generator-capacity-bonus', passiveValue: 3.0, passiveDescription: 'Generator capacity +200%', blurb: SHIP_BLURBS.reactor },
+  'ship-reactor-1': { id: 'ship-reactor-1', kind: 'reactor', level: 1, name: 'Reactor', hull: 90,  price: 0,    starsRequired: 0, passiveKind: 'generator-capacity-bonus', passiveValue: 1.5, passiveDescription: 'Generator capacity +50%', blurb: SHIP_BLURBS.reactor },
+  'ship-reactor-2': { id: 'ship-reactor-2', kind: 'reactor', level: 2, name: 'Reactor', hull: 108, price: 420,  starsRequired: 3, passiveKind: 'generator-capacity-bonus', passiveValue: 1.7, passiveDescription: 'Generator capacity +70%', blurb: SHIP_BLURBS.reactor },
+  'ship-reactor-3': { id: 'ship-reactor-3', kind: 'reactor', level: 3, name: 'Reactor', hull: 130, price: 930,  starsRequired: 8, passiveKind: 'generator-capacity-bonus', passiveValue: 2.0, passiveDescription: 'Generator capacity +100%', blurb: SHIP_BLURBS.reactor },
+  'ship-reactor-4': { id: 'ship-reactor-4', kind: 'reactor', level: 4, name: 'Reactor', hull: 157, price: 2050, starsRequired: 16, passiveKind: 'generator-capacity-bonus', passiveValue: 2.4, passiveDescription: 'Generator capacity +140%', blurb: SHIP_BLURBS.reactor },
+  'ship-reactor-5': { id: 'ship-reactor-5', kind: 'reactor', level: 5, name: 'Reactor', hull: 190, price: 4500, starsRequired: 26, passiveKind: 'generator-capacity-bonus', passiveValue: 3.0, passiveDescription: 'Generator capacity +200%', blurb: SHIP_BLURBS.reactor },
 
-  'ship-tanker-1': { id: 'ship-tanker-1', kind: 'tanker', level: 1, name: 'Tanker', hull: 150, price: 3000,  starsRequired: 22, passiveKind: 'collision-reduction', passiveValue: 0.50, passiveDescription: 'Collision damage −50%', blurb: SHIP_BLURBS.tanker },
-  'ship-tanker-2': { id: 'ship-tanker-2', kind: 'tanker', level: 2, name: 'Tanker', hull: 180, price: 6550,  starsRequired: 24, passiveKind: 'collision-reduction', passiveValue: 0.60, passiveDescription: 'Collision damage −60%', blurb: SHIP_BLURBS.tanker },
-  'ship-tanker-3': { id: 'ship-tanker-3', kind: 'tanker', level: 3, name: 'Tanker', hull: 218, price: 14500, starsRequired: 26, passiveKind: 'collision-reduction', passiveValue: 0.70, passiveDescription: 'Collision damage −70%', blurb: SHIP_BLURBS.tanker },
-  'ship-tanker-4': { id: 'ship-tanker-4', kind: 'tanker', level: 4, name: 'Tanker', hull: 264, price: 31800, starsRequired: 29, passiveKind: 'collision-reduction', passiveValue: 0.80, passiveDescription: 'Collision damage −80%', blurb: SHIP_BLURBS.tanker },
-  'ship-tanker-5': { id: 'ship-tanker-5', kind: 'tanker', level: 5, name: 'Tanker', hull: 320, price: 70000, starsRequired: 32, passiveKind: 'collision-reduction', passiveValue: 0.90, passiveDescription: 'Collision damage −90%', blurb: SHIP_BLURBS.tanker },
+  'ship-tanker-1': { id: 'ship-tanker-1', kind: 'tanker', level: 1, name: 'Tanker', hull: 150, price: 0,    starsRequired: 0, passiveKind: 'collision-reduction', passiveValue: 0.50, passiveDescription: 'Collision damage −50%', blurb: SHIP_BLURBS.tanker },
+  'ship-tanker-2': { id: 'ship-tanker-2', kind: 'tanker', level: 2, name: 'Tanker', hull: 180, price: 420,  starsRequired: 3, passiveKind: 'collision-reduction', passiveValue: 0.60, passiveDescription: 'Collision damage −60%', blurb: SHIP_BLURBS.tanker },
+  'ship-tanker-3': { id: 'ship-tanker-3', kind: 'tanker', level: 3, name: 'Tanker', hull: 218, price: 930,  starsRequired: 8, passiveKind: 'collision-reduction', passiveValue: 0.70, passiveDescription: 'Collision damage −70%', blurb: SHIP_BLURBS.tanker },
+  'ship-tanker-4': { id: 'ship-tanker-4', kind: 'tanker', level: 4, name: 'Tanker', hull: 264, price: 2050, starsRequired: 16, passiveKind: 'collision-reduction', passiveValue: 0.80, passiveDescription: 'Collision damage −80%', blurb: SHIP_BLURBS.tanker },
+  'ship-tanker-5': { id: 'ship-tanker-5', kind: 'tanker', level: 5, name: 'Tanker', hull: 320, price: 4500, starsRequired: 26, passiveKind: 'collision-reduction', passiveValue: 0.90, passiveDescription: 'Collision damage −90%', blurb: SHIP_BLURBS.tanker },
 
-  'ship-warship-1': { id: 'ship-warship-1', kind: 'warship', level: 1, name: 'Warship', hull: 110, price: 7450,   starsRequired: 34, passiveKind: 'crit-mult-override', passiveValue: 3.0, passiveDescription: 'Crits deal ×3 instead of ×2', blurb: SHIP_BLURBS.warship },
-  'ship-warship-2': { id: 'ship-warship-2', kind: 'warship', level: 2, name: 'Warship', hull: 132, price: 16400,  starsRequired: 37, passiveKind: 'crit-mult-override', passiveValue: 3.5, passiveDescription: 'Crits deal ×3.5 instead of ×2', blurb: SHIP_BLURBS.warship },
-  'ship-warship-3': { id: 'ship-warship-3', kind: 'warship', level: 3, name: 'Warship', hull: 159, price: 36200,  starsRequired: 40, passiveKind: 'crit-mult-override', passiveValue: 4.0, passiveDescription: 'Crits deal ×4 instead of ×2', blurb: SHIP_BLURBS.warship },
-  'ship-warship-4': { id: 'ship-warship-4', kind: 'warship', level: 4, name: 'Warship', hull: 191, price: 79500,  starsRequired: 43, passiveKind: 'crit-mult-override', passiveValue: 5.0, passiveDescription: 'Crits deal ×5 instead of ×2', blurb: SHIP_BLURBS.warship },
-  'ship-warship-5': { id: 'ship-warship-5', kind: 'warship', level: 5, name: 'Warship', hull: 230, price: 175000, starsRequired: 46, passiveKind: 'crit-mult-override', passiveValue: 6.0, passiveDescription: 'Crits deal ×6 instead of ×2', blurb: SHIP_BLURBS.warship },
+  'ship-warship-1': { id: 'ship-warship-1', kind: 'warship', level: 1, name: 'Warship', hull: 110, price: 0,    starsRequired: 0, passiveKind: 'crit-mult-override', passiveValue: 3.0, passiveDescription: 'Crits deal ×3 instead of ×2', blurb: SHIP_BLURBS.warship },
+  'ship-warship-2': { id: 'ship-warship-2', kind: 'warship', level: 2, name: 'Warship', hull: 132, price: 420,  starsRequired: 3, passiveKind: 'crit-mult-override', passiveValue: 3.5, passiveDescription: 'Crits deal ×3.5 instead of ×2', blurb: SHIP_BLURBS.warship },
+  'ship-warship-3': { id: 'ship-warship-3', kind: 'warship', level: 3, name: 'Warship', hull: 159, price: 930,  starsRequired: 8, passiveKind: 'crit-mult-override', passiveValue: 4.0, passiveDescription: 'Crits deal ×4 instead of ×2', blurb: SHIP_BLURBS.warship },
+  'ship-warship-4': { id: 'ship-warship-4', kind: 'warship', level: 4, name: 'Warship', hull: 191, price: 2050, starsRequired: 16, passiveKind: 'crit-mult-override', passiveValue: 5.0, passiveDescription: 'Crits deal ×5 instead of ×2', blurb: SHIP_BLURBS.warship },
+  'ship-warship-5': { id: 'ship-warship-5', kind: 'warship', level: 5, name: 'Warship', hull: 230, price: 4500, starsRequired: 26, passiveKind: 'crit-mult-override', passiveValue: 6.0, passiveDescription: 'Crits deal ×6 instead of ×2', blurb: SHIP_BLURBS.warship },
 };
 
 export function shipById(id: string): ShipSpec {

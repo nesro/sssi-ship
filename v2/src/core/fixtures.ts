@@ -122,7 +122,6 @@ export const FIXTURE_MISSION: MissionSpec = {
     { id: 'fix-shield', family: 'shield-unbroken', threshold: 0 },
   ],
   completionCoins: 50,
-  starGate: 0,
 };
 
 export function makeFixtureEnemy(overrides: Partial<EnemyState>): EnemyState {

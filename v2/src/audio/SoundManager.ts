@@ -74,6 +74,20 @@ class SoundManager {
     this.sfx(key, SFX_VOLUME * 0.7);
   }
 
+  /** Rear weapon fired — same laser rotation as the front weapon, pitched down so the two
+   * weapon slots are audibly distinct instead of the rear weapon firing silently. */
+  rearFire(): void {
+    const key = LASER_KEYS[this.laserIndex % LASER_KEYS.length] ?? AUDIO.laser1;
+    this.laserIndex += 1;
+    this.sfx(key, SFX_VOLUME * 0.6, -350);
+  }
+
+  /** Side weapon manually fired — distinct from both autofire weapons and reserve-supply
+   * boosts (which reuse `rocket`) so a manual charged shot reads as its own action. */
+  sideWeaponFire(): void {
+    this.sfx(AUDIO.laser3, SFX_VOLUME * 0.9, 200);
+  }
+
   /** An enemy was destroyed by weapon fire. */
   kill(): void {
     this.sfx(AUDIO.ding, SFX_VOLUME * 0.6);

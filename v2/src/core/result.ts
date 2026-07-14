@@ -18,7 +18,10 @@ export function buildMissionResult(state: CoreState): MissionResult {
   if (state.status === 'running') {
     throw new Error(`Mission ${state.mission.id} is still running — no result yet`);
   }
-  const completionBonus = state.status === 'victory' ? state.mission.completionCoins : 0;
+  // status is 'victory' | 'defeat' here (the running case already threw above), so a
+  // non-victory status is necessarily 'defeat' — completesOnDefeat covers that case.
+  const completes = state.status === 'victory' || state.mission.completesOnDefeat === true;
+  const completionBonus = completes ? state.mission.completionCoins : 0;
   return {
     missionId: state.mission.id,
     status: state.status,

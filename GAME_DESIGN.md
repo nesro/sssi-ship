@@ -47,9 +47,11 @@ design failure.
 
 **No single best build.** Subscriptions and weapons are two equally valid paths to success. A
 player with weak weapons but strong subscriptions should clear missions. A player with great
-weapons and the basic subscription should also clear missions. Ships are situational — the
-player is expected to switch ships between missions to match the challenge. No module is
-universally best.
+weapons and the basic subscription should also clear missions. Every module's kinds (weapon,
+rear weapon, side weapon, shield, generator, motor, ship) are **situational sidegrades, not a
+tier ladder** — each kind costs the same coins and stars to reach a given level (see §5), so no
+kind is ever a strictly worse purchase than another. The player is expected to switch kinds
+between missions to match the challenge. No module is universally best.
 
 **Experiment freely.** Everything in the shop can be sold for exactly 100% of what was paid —
 coins and stars both. No depreciation, no penalty. The player is never punished for trying
@@ -169,6 +171,17 @@ Every module — including subscriptions — can be sold for exactly what the pl
 and stars both refunded in full. No depreciation, no exceptions. The player is always free to
 try something new.
 
+### Kinds are situational sidegrades, not tiers
+
+Within every system (weapon, rear weapon, side weapon, shield, generator, motor, ship), every
+kind shares one identical coin/star ladder — level 3 of any kind costs exactly the same as
+level 3 of any other kind in that system. Only the combat stats differ (damage profile, energy
+draw, shield capacity vs. regen, etc.), never the price. This was a deliberate 2026-07-10 fix:
+kinds used to be priced as a strict escalating tier (the "best" kind costing up to ~15× the
+baseline for the same level), which contradicted the "no single best build" philosophy above.
+Compressing to a shared ladder also cut the overall price ceiling roughly 10-20× to fit the
+~1-hour campaign's real coin income (see §10).
+
 ### Shop kind-row badge
 
 Each kind row (weapon type, shield path, generator path, etc.) shows a cost-hint badge on the
@@ -200,7 +213,8 @@ passive. Every type and level has a **distinctly different silhouette** — not 
 | Reactor | Medium hull, large energy cap | Generator capacity bonus — good for energy-hungry builds |
 | Warship | Medium hull | Crits deal extra damage — good vs bosses and high-HP enemies |
 
-Further types TBD. Exact level counts and stat tables: TBD during balance.
+Five levels each, all five kinds sharing one price/star ladder (see "Kinds are situational
+sidegrades" above). Exact stat tables: `v2/src/data/items.ts`'s `SHIPS`.
 
 ### Front weapon
 
@@ -216,7 +230,9 @@ Four kinds, five levels each:
 | Scatter Beam | Pierces through N targets in a column | Medium |
 | Nova Wave | Hits every enemy on the lane — lowest per-enemy damage | High |
 
-Prices and exact stats: see `v2/src/data/items.ts`. Shop unlock: by mission completion (TBD mapping).
+All four kinds share one price/star ladder — leveling up nova costs exactly what leveling up
+pulse costs. Prices and exact stats: see `v2/src/data/items.ts`. Shop unlock: by mission
+completion (TBD mapping).
 
 ### Rear weapon
 
@@ -236,7 +252,7 @@ Five kinds, five levels each:
 | Arc Discharger | Electric chain between two enemies |
 | Plasma Cannon | Slow charge, massive blast — punishes high-HP targets |
 
-Prices and exact stats: see `v2/src/data/items.ts`.
+All five kinds share one price/star ladder. Prices and exact stats: see `v2/src/data/items.ts`.
 
 ### Side weapons
 
@@ -254,34 +270,48 @@ Four kinds, five levels each:
 | Railgun | Devastating single hit, fewer charges — save it for a blocker or boss |
 | Orbital Strike | True AOE, hits every enemy on screen — rarest charges, top tier |
 
-Prices and exact stats: see `v2/src/data/items.ts`.
+All four kinds share one price/star ladder, most charges to fewest. Prices and exact stats:
+see `v2/src/data/items.ts`.
 
 ### Shield
 
-Two branching paths from the starter Deflector I (free):
+Four kinds, five levels each, sharing one price/star ladder — "Wall" is the free starter:
 
-| Path | Character | Items |
-|------|-----------|-------|
-| **Wall** | Thick capacity, slow recharge | Deflector I → Barricade → Fortress |
-| **Reflex** | Thin capacity, snaps back almost instantly | Deflector I → Reflex Shield → Phase Cloak |
+| Kind | Character |
+|------|-----------|
+| Wall | Thick plate — survives hits, slow recharge. The baseline. |
+| Reflex | Thin plate, instant snap-back — loves fast pulses |
+| Flux | Balanced capacity and pulse rate — works with anything |
+| Bulwark | Extreme capacity, minimal regen — true tank armour |
+
+Prices and exact stats: see `v2/src/data/items.ts`'s `SHIELD_BASE`.
 
 ### Generator
 
-Two branching paths from Core Cell I (free):
+Four kinds, five levels each, sharing one price/star ladder — "Torrent" is the free starter:
 
-| Path | Character | Items |
-|------|-----------|-------|
-| **Torrent** | High flow, small battery — good for constant fire | Core Cell I → Overdrive Core → Quantum Reactor |
-| **Reserve** | Steady trickle, enormous buffer — good for energy bursts | Core Cell I → Reservoir → Singularity Bank |
+| Kind | Character |
+|------|-----------|
+| Torrent | High output, small buffer — feeds fast-cycling weapons |
+| Reserve | Vast tank, slow trickle — feeds efficient weapons |
+| Steady | Reliable mid-range — pairs well with any loadout |
+| Surge | Maximum output, tiny battery — ion and nova goldmine |
+
+Prices and exact stats: see `v2/src/data/items.ts`'s `GENERATOR_BASE`.
 
 ### Motor
 
-Always active — not toggleable. Controls the mission timeline speed.
+Always active — not toggleable. Controls the mission timeline speed. Four kinds, five levels
+each, sharing one price/star ladder — "Rush" is the free starter:
 
-| Path | Character | Items |
-|------|-----------|-------|
-| **Rush** | Compresses the timeline — enemies arrive faster. Earns **bonus coins per kill** (more enemies per minute = more income) and time-stars for fast clears. The "go fast, get rich" build. | Drift Motor → Surge Motor → Comet Drive |
-| **Tactical** | Normal timeline speed. Grants **extra cards per support call** and more rerolls per mission. The "build a synergy, win through depth" build. | Drift Motor → Tactical Engine → Strategic Drive |
+| Kind | Character |
+|------|-----------|
+| Rush | Fast timeline, high draw — enemies arrive faster, more coins and time-stars per minute. The "go fast, get rich" build. |
+| Sentinel | Slow timeline, very low energy draw — enemies crawl, room to think |
+| Tactical | Normal speed, **extra card draws + rerolls per support call** — the "build a synergy, win through depth" build |
+| Overdrive | Fastest timeline, heaviest draw — maximum coins/time-stars per minute for players who can feed it |
+
+Prices and exact stats: see `v2/src/data/items.ts`'s `MOTOR_BASE`.
 
 ### Reserve supplies
 
@@ -302,6 +332,13 @@ flat pool — only cards from owned subscriptions are offered during support cal
 
 Every player permanently has the **Basic subscription** for free — it cannot be sold. The
 player can never have zero active subscriptions. Additional subscriptions are purchased on top.
+
+**Basic Lv1's pool is deliberately wide (7 cards, not the original 5).** Every support call for
+the first stretch of the campaign draws only from Basic Lv1 until the player affords another
+subscription, so its pool has to carry real draft variance on its own — a thin default pool
+made the early game's most frequent decision (the card draft) a non-decision. Widened
+2026-07-10; see `v2/src/data/subscriptions.ts` and `v2/src/data/cards.ts`'s `g-hull-02` /
+`m-eco-01`.
 
 Each subscription has a type and level (1–3). Higher level = more and stronger cards in the
 pool. Level prices are cumulative (you pay Lv1 price to subscribe, then upgrade prices for Lv2
@@ -409,7 +446,8 @@ All enemies have `hp`, `speed`, `shotDamage`, `ticksBetweenShots`, `blocksConvey
 | **guardian** | Tutorial only | Some have `regenPerTick`; teaches shield and collision mechanics |
 
 **Damage variance:** each shot rolls — miss (0 damage), crit (`critMult × damage`), or normal.
-Visual feedback: crit = yellow-white, miss = grey bolt, enemy miss = deflection spark on ship.
+Visual feedback (✓ implemented): crit = white-tinted bolt, miss = grey/faded bolt, enemy
+miss = deflection spark on ship.
 
 ---
 
@@ -512,6 +550,16 @@ unequipping it once nets its listed price in coins. Decided: keep this as a smal
 bounded "welcome gift" — no per-item purchase-price ("cost basis") tracking. See
 `v2/src/save/SaveManager.ts`'s `switchCost`/`unequipShield`/`unequipWeapon`.
 
+**Price ladder must fit the campaign's real income (fixed 2026-07-10).** Fable's design review
+found the shop's price ladder (up to 175,000 coins per system, some systems' top item costing
+~15× more than a same-tier sidegrade) was anchored to a ~1,000,000-coin endgame budget, while
+the campaign simulator (`pnpm campaign`) showed a real full playthrough earning roughly
+4,000-8,000 coins total across all six missions. Owning one fully-maxed kind in every one of
+the 7 shop systems plus every subscription at max level now costs **≈100,000 coins** — still an
+aspirational completionist target above what one playthrough earns (by design — there's always
+something to save toward), but within reach of a few campaign replays rather than off by two
+orders of magnitude.
+
 ---
 
 ## 11. Visuals & Audio
@@ -545,6 +593,20 @@ Interpolates positions between ticks for smooth animation.
 **Simulator (`v2/tools/simulate.ts`):** imports the real core. Flags: `--mission`, `--runs`,
 `--strategy`, `--loadout`, `--seed`. Prints clear-rate, average duration, per-star achievement
 rates. This is the mission editor — balance numbers here are exactly what players experience.
+
+**Campaign simulator (`v2/tools/campaign-simulate.ts`, `pnpm campaign`):** plays the *whole*
+campaign, not one mission — two player-tier archetypes, **expert** and **average** (added
+2026-07-10/11; see §13's "Two-tier player model, not smart-vs-dumb").
+
+**Loadout tuning tool (`v2/tools/tune-loadouts.ts`, `pnpm tune`):** the real answer to "which
+kind is actually best per mission?" — a per-system tournament (weapon×generator ranked
+jointly, since their energy/brownout interaction is real; shield/motor/rear/side weapon/ship
+ranked independently) run at each mission's own intended level, not a generic "representative"
+one. Generates `tools/recommendedKinds.generated.ts` (auto-generated — never hand-edit) plus a
+`tune-report.md` that doubles as a "no trap kind / no dominant kind" invariant check (§3). Say
+"tune it" to re-run after any `items.ts`/`missions.ts` balance change — it's pure computation
+on your machine, not an agent loop, so re-running costs real wall-clock time but very little
+conversational budget.
 
 **Replay record:** `{ version, missionId, seed, loadout, cardPicks, boostTaps, resultHash }`.
 Re-running the core with the same record reproduces the run exactly. Playback UI not built yet.
@@ -602,6 +664,36 @@ A clear rate that is too **high** (> 90% except tutorials) means the mission is 
 and should be made harder. Too **low** means the player will hit a wall — adjust enemy HP,
 coin economy, or enemy count before touching loadout stats.
 
+### Two-tier player model, not smart-vs-dumb
+
+The campaign simulator (`pnpm campaign`) models two purchase archetypes, **expert** and
+**average** — confirmed by Tomáš via `/grill-me` (2026-07-11) as explicitly **not** a
+smart-vs-dumb split. Both are genuinely competent players; a deliberately bad archetype was
+rejected as wasted effort, since "even if you try to make them smart, real people will
+outsmart this." They differ only in *optimization depth*:
+
+- **Expert** exploits §5's "100% sell-back, always" rule to its logical conclusion: before
+  every mission, it rebuilds toward the mathematically best affordable build for that
+  specific mission — the tuned kind per system (`pnpm tune`'s
+  `RECOMMENDED_KIND_PER_MISSION`) at that mission's own intended level, full kind-switching,
+  no attachment to what it already owns. It also fires side weapons on high-value targets
+  only and uses supplies with judgment (shield-restore only when actually low, damage-boost
+  only when a real wave is on screen).
+- **Average** is equally sensible but commits to the free starter kind (Pulse Laser / Wall /
+  Torrent / Rush) for weapon/shield/generator/motor for the *entire* campaign and never
+  switches — a completely normal way to play, not a mistake. It still fires side weapons (a
+  simpler "enemies on screen" trigger) and still uses supplies (the instant a charge is
+  available), just without expert's precision.
+
+**Measured result (2026-07-11, `pnpm campaign --runs 500`):** both complete 100% of campaigns
+— average committing to the starter kind never risks getting stuck (a real risk that was
+checked: committing to some *other* kinds, like Ion Lance, would leave a campaign stuck at
+m5's swarm gauntlet under the patience cap — starter-kind commitment was chosen specifically
+because it's safe). Expert measurably outperforms average at the one real test in the game,
+the m6 finale (mean retries 1.89 vs. 2.87) — full kind-switching plus using every equipped
+slot properly earns a real, measurable edge there. Through m1-m5, both stay close to
+frictionless (median hull ≈100% at clear for both), matching the finding below.
+
 ### Balance workflow
 
 1. **After any change to enemy stats, weapon stats, or economy:** run
@@ -614,6 +706,46 @@ coin economy, or enemy count before touching loadout stats.
    rewards before touching mission difficulty.
 4. **Do not balance by feel alone.** The simulator is the truth — if it says 30% clear rate,
    the mission is too hard regardless of whether a skilled player can beat it.
+5. **Isolated per-mission clear rates are not enough — also check the campaign-sim retry
+   distribution and margin at clear.** Fable's design review found that meeting every
+   mission's own clear-rate target still produced a flat-then-cliff experience:
+   `pnpm campaign` showed both purchase archetypes clearing m1-m5 in essentially one
+   attempt each (mean retries ≈1.00), with all real challenge concentrated at m6. m2-m5
+   were retuned 2026-07-10 (harder striker/swarm waves — see `v2/src/data/missions.ts`'s
+   wave-count comments) and the isolated clear-rate targets in the table above still hold,
+   but the retune did not move the campaign-sim retry means at all (still ≈1.00 through
+   m1-m5).
+
+   **Investigated further and resolved as accepted design, 2026-07-11** (not a bug to keep
+   chasing): retry count is a threshold metric — it reads ~1.00 until per-attempt clear
+   probability drops below roughly 90%, then jumps, so it structurally cannot show a
+   gradual ramp. `pnpm campaign` now also reports **margin at clear** (median hull% and
+   near-miss rate, hull < 20%, per mission — see `tools/campaign-simulate.ts`). This
+   independently confirms the same shape rather than revealing hidden gradual tension:
+   median hull sits at **100%** through m1-m5 for both archetypes, with near-miss rates
+   only appearing at m6 (9-12%) — a well-equipped player's shield genuinely never comes
+   under real pressure before the finale, by hull margin as much as by retry count. A much
+   larger, cliff-aware difficulty swing (see the two known count-based cliffs noted in
+   `missions.ts`) or a structural change to gear accumulation (soft reset, difficulty
+   scaled to actual gear) could still close this gap, but per §1/§3's own philosophy
+   ("never stuck," "no single best build") a frictionless m1-m5 for a well-optimized
+   player, with the campaign's one real test saved for its final boss, is being accepted
+   as the current design rather than fought further — revisit only if hands-on playtesting
+   says the mid-campaign genuinely feels tensionless in practice, not just on paper.
+
+   **Re-confirmed 2026-07-11 with the real expert/average archetypes** (not the
+   informed-saver/impulse-spender pair the original finding used — see "Two-tier player
+   model" above): building genuinely competent purchase logic (tuned kind-switching,
+   real side-weapon/supply usage) didn't change this shape either. `expert` improves
+   meaningfully at m6 (mean retries 2.61→1.89) but m1-m5 stay just as frictionless as
+   before for both tiers. This is now good evidence the flat shape is a property of the
+   *missions and economy*, not of under-modeled purchase policies — reconciling §1's
+   "never grinding, always progressing" identity line with the desire for a felt
+   difficulty ramp: **a campaign that never forces a grind through its first five
+   missions and saves its one real test for the finale is the identity as written, not
+   a gap in it.** If playtesting says the mid-campaign should have more texture, the
+   right lever is mission/economy design (a deliberate, scoped change), not tuning the
+   simulator's players to be worse.
 
 ### Time-star thresholds
 
@@ -651,12 +783,12 @@ median player earns T2/T3. Recalibrate whenever mission timeline changes.
 | **Rear weapon** | ✓ Implemented — 5 kinds × 5 levels, auto-fire toggle, shop tab, save model |
 | **Side weapons** | ✓ Implemented — 4 kinds × 5 levels, manual-fire button + per-mission charges, shop tab, save model, replay-recorded |
 | **Subscriptions** | ✓ Implemented — 5 subscription types × 3 levels, shop tab, save model, card pool wired |
-| **Motor toggles removed** | Motor is now always-on; toggle code to be removed |
+| **Motor toggles removed** | ✓ Done — motor is always-on, no toggle code exists |
 | **Three manual toggles** | Front weapon, rear weapon, shield recharge as button-panel toggles |
 | **Left-handed mode** | Panel swap setting not yet implemented |
 | **Mission-completion shop gates** | Star-based gates to be replaced |
 | **Stars as secondary currency** | Star balance + spend/refund logic not yet in save model |
-| **Sequential mission unlock** | Currently star-gated; change to completion-gated |
+| **Sequential mission unlock** | ✓ Implemented 2026-07-10 — completion-gated per §9's `MISSION_UNLOCK_EDGES` graph (`v2/src/data/missions.ts`), stars never required |
 | **Booster enemy** | New enemy type not yet in data or core |
 | **Debuffer enemy** | Deferred to future update |
 | **WelcomeScene** | Captain Nesro portrait + developer message + story intro — scene structure exists in v1 (`phaser/src/scenes/WelcomeScene.ts`); content not written yet |
@@ -667,9 +799,20 @@ median player earns T2/T3. Recalibrate whenever mission timeline changes.
 
 | Item | Notes |
 |------|-------|
-| Ship renderer duplication | `renderShield`, `renderThruster`, `renderGuns` near-identical in `CombatScene.ts` and `ShopPreviewPanel.ts` — extract before they drift |
-| Balance sweep for time thresholds | Run `pnpm balance --runs 2000` after landscape revert |
+| Ship renderer duplication | ✓ Resolved — shared logic lives in `src/view/shipRenderers.ts`, used by both `CombatScene.ts` and `ShopPreviewPanel.ts` |
+| Balance sweep for time thresholds | ✓ Done — all of m1-m6 recalibrated 2026-07-10 from 2000-run percentile data against each mission's intended loadout |
 | On-device Android smoke test | Hard exit criterion before Play submission |
-| Crit/miss bolt color feedback | Designed; not wired to view |
 | Privacy policy, app icon, Play listing assets | Required for Play Console submission |
 | Replay playback UI | Record exists; playback scene not built |
+
+### Fable's 2026-07-10 design review findings
+
+| Finding | Resolution |
+|---------|-----------|
+| nova-5 / warship-5 required 46★ against a real 44★ ceiling — unpurchasable | ✓ Fixed — both now require 26★ (see §5's shared price/star ladder) |
+| Shop price ladder (~175,000 coin ceiling per system) vastly exceeds real campaign income (~4,000-8,000 coins/playthrough) | ✓ Fixed — ladder compressed ~10-20× to a ~100,000-coin completionist endgame (§10) |
+| Branching kinds were priced as a strict tier ladder (up to ~15× kind-to-kind), contradicting §3's "no single best build" | ✓ Fixed — every system's kinds now share one identical price/star ladder (§5) |
+| Default early card pool (`sub-basic` Lv1) was 5 cards with no real draft variance | ✓ Fixed — widened to 7 cards 2026-07-10 (§5 Subscriptions) |
+| Flat-then-cliff difficulty: isolated per-mission clear-rate targets met, but campaign-sim retries stayed ≈1.00 through m1-m5 with all challenge at m6 | Investigated further 2026-07-11 (`docs/plans/nova-weapon-and-campaign-tension-review.md`, Fable's review) — accepted as designed rather than kept as an open bug; see §13's balance workflow point 5 for the full resolution and the new margin-at-clear metric that confirms it |
+| Nova (one of the front weapon's 4 kinds) cleared 0% on m1/m2/m3/m4 at its own intended level despite sharing the repriced ladder — a "trap" purchase, not a working sidegrade | ✓ Fixed 2026-07-11 (`docs/plans/nova-weapon-and-campaign-tension-review.md`) — rebalanced base damage/fire-rate/energy cost (see `items.ts`'s `WEAPON_BASE.nova` comment); now viable on m1/m2/m4/m5/m6, deliberately still weak on m3 (the hardest pure-blocker mission), mirroring ion's own accepted weakness on m5 |
+| `pnpm tune`'s "no trap kind" invariant check flagged Overdrive motor at a 100pp clear-rate spread on m1-m5 — a free (0 coins, 0★), unmarked trap: its energy draw exceeded every generator's max output at every level, permanently locking the ship into max brownout with a shield that never pulses | ✓ Fixed 2026-07-11 (`docs/plans/overdrive-and-reserve-trap-fixes.md`, Fable's investigation) — Overdrive Lv1 now matches rush/sentinel/tactical's safe Lv1 stats (the existing pattern), scaling to a real speed/coin premium above Lv1 while staying below every generator's output; two new regression tests (`items.test.ts`) lock in both invariants. Reserve generator's blurb also rewritten — "Charge then unleash" recommended the exact heavy-weapon pairing the brownout punishes hardest (reserve+nova measured 0.0% clear) |
