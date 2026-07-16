@@ -21,6 +21,7 @@ import type { GeneratorKind, MotorKind, ShieldKind, ShipKind } from '../data/ite
 import { TICKS_PER_SECOND } from '../core/constants';
 import type { RearWeaponKind, ShipPassiveKind, SideWeaponKind, WeaponKind } from '../core/types';
 import type { SaveData } from '../save/SaveManager';
+import { hasCompletedCampaign } from '../save/SaveManager';
 import {
   iconTextureForGeneratorKind, iconTextureForMotorKind, iconTextureForRearWeaponId,
   iconTextureForShieldKind, iconTextureForShipKind, iconTextureForSideWeaponId, iconTextureForWeaponId,
@@ -33,6 +34,10 @@ export interface ShopSystemConfig {
   kinds: readonly string[];
   maxLevel: number;
   hasNoneOption: boolean;
+  /** Filters which of `kinds` actually get a row — e.g. the secret y2010 weapon stays
+   * hidden until the campaign is beaten or dev mode is on. Every kind is visible if
+   * omitted; only WEAPON_SYSTEM currently sets this. */
+  isKindVisible?: (kind: string, save: SaveData) => boolean;
 
   itemId: (kind: string, level: number) => string;
   kindDisplayName: (kind: string) => string;
@@ -90,11 +95,27 @@ function standardIconScale(displayLevel: number): number {
   return 1.2 + Math.max(0, displayLevel - 1) * 0.07;
 }
 
+/** "1 target" / "3 targets" / "∞ targets" — the raw count alone read as a grammar bug
+ * on single-target weapons. */
+function targetsLabel(maxTargets: number): string {
+  if (maxTargets === Infinity) return '∞ targets';
+  return `${String(maxTargets)} target${maxTargets === 1 ? '' : 's'}`;
+}
+
+/** Ticks-between-shots is an internal simulation unit (100ms/tick) with no player-facing
+ * meaning — "5t" reads as an opaque code, not a fire rate. Convert to seconds. */
+function fireRateLabel(ticksBetweenShots: number): string {
+  return `${(ticksBetweenShots / TICKS_PER_SECOND).toFixed(1)}s/shot`;
+}
+
 export const WEAPON_SYSTEM: ShopSystemConfig = {
   systemKey: 'weapon',
   kinds: WEAPON_KINDS,
   maxLevel: MAX_WEAPON_LEVEL,
   hasNoneOption: true,
+  // The secret y2010 Easter egg stays hidden until the campaign is beaten (or dev mode,
+  // for testing it without a full playthrough) — see hasCompletedCampaign, SaveManager.ts.
+  isKindVisible: (kind, save) => kind !== 'y2010' || save.devMode === true || hasCompletedCampaign(save),
   itemId: (kind, level) => `${kind}-${String(level)}`,
   kindDisplayName: (kind) => weaponKindDisplayName(kind as WeaponKind),
   itemPrice: (kind, level) => itemById(`${kind}-${String(level)}`).price,
@@ -106,11 +127,10 @@ export const WEAPON_SYSTEM: ShopSystemConfig = {
   detailLines: (kind, equippedLevel) => {
     if (equippedLevel <= 0) return [];
     const spec = weaponSpecAtLevel(kind as WeaponKind, equippedLevel);
-    const targets = spec.maxTargets === Infinity ? '∞' : String(spec.maxTargets);
     return [
       itemById(`${kind}-${String(equippedLevel)}`).blurb,
-      `${String(spec.damagePerShot)}dmg  ${String(spec.ticksBetweenShots)}t`,
-      `${targets} targets  ${String(spec.energyPerShot)} energy`,
+      `${String(spec.damagePerShot)}dmg  ${fireRateLabel(spec.ticksBetweenShots)}`,
+      `${targetsLabel(spec.maxTargets)}  ${String(spec.energyPerShot)} energy`,
     ];
   },
   rowStat: (kind, level) => {
@@ -137,8 +157,8 @@ export const REAR_WEAPON_SYSTEM: ShopSystemConfig = {
     const spec = rearWeaponSpecAtLevel(kind as RearWeaponKind, equippedLevel);
     return [
       REAR_WEAPON_ITEMS[`${kind}-${String(equippedLevel)}`]?.blurb ?? '',
-      `${String(spec.damagePerShot)}dmg  ${String(spec.ticksBetweenShots)}t`,
-      `${String(spec.maxTargets)} targets  ${String(spec.energyPerShot)} energy`,
+      `${String(spec.damagePerShot)}dmg  ${fireRateLabel(spec.ticksBetweenShots)}`,
+      `${targetsLabel(spec.maxTargets)}  ${String(spec.energyPerShot)} energy`,
     ];
   },
   rowStat: (kind, level) => {
@@ -163,11 +183,10 @@ export const SIDE_WEAPON_SYSTEM: ShopSystemConfig = {
   detailLines: (kind, equippedLevel) => {
     if (equippedLevel <= 0) return [];
     const spec = sideWeaponSpecAtLevel(kind as SideWeaponKind, equippedLevel);
-    const targets = spec.maxTargets === Infinity ? '∞' : String(spec.maxTargets);
     return [
       SIDE_WEAPON_ITEMS[`${kind}-${String(equippedLevel)}`]?.blurb ?? '',
       `${String(spec.damagePerShot)}dmg  ${String(spec.maxCharges ?? 0)} charges/mission`,
-      `${targets} targets`,
+      targetsLabel(spec.maxTargets),
     ];
   },
   rowStat: (kind, level) => {

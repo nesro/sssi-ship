@@ -1,0 +1,6 @@
+# pnpm's local content-addressable package store — a cache, not source, and huge
+# (10k+ files). Not covered by v2/.gitignore since it sits at the repo root, not in v2/.
+.pnpm-store/
+
+# OS noise
+.DS_Store

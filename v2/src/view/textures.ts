@@ -27,6 +27,7 @@ export function textureForEnemyKind(kind: string, isBoss: boolean, blocks: boole
     guardian: TEXTURE_KEYS.guardian,
     turret: TEXTURE_KEYS.turret,
     kamikaze: TEXTURE_KEYS.kamikaze,
+    booster: TEXTURE_KEYS.booster,
   };
   // Unnamed blockers (kind not in map) fall back to the blocker texture.
   if (blocks && !(kind in known)) return TEXTURE_KEYS.blocker;
@@ -66,6 +67,7 @@ export function laserTextureForWeaponId(weaponId: string): string {
   if (kind === 'ion')     return TEXTURE_KEYS.laserIon;
   if (kind === 'scatter') return upgraded ? TEXTURE_KEYS.laserScatter2 : TEXTURE_KEYS.laserScatter1;
   if (kind === 'nova')    return upgraded ? TEXTURE_KEYS.laserNova2    : TEXTURE_KEYS.laserNova1;
+  if (kind === 'y2010')   return TEXTURE_KEYS.laserY2010;
   console.warn(`Unknown weapon kind "${kind}" in laserTextureForWeaponId — falling back to pulse1`);
   return TEXTURE_KEYS.laserPulse1;
 }
@@ -249,6 +251,18 @@ function buildEnemyTextures(scene: Phaser.Scene): void {
     traceStar(g, px(20), px(20), px(17), px(7));
     g.strokeCircle(px(20), px(20), px(5));
   });
+  // Booster (fable-fun-review-followup.md Item 7): a core ring feeding two forward
+  // chevrons — "forward" meaning toward the ship (enemies move top→bottom down the
+  // lane, so distance-toward-0 is *down*), matching its actual mechanic of buffing
+  // whichever enemy is nearest-ahead of it (combat.ts's regenerateEnemies). Previously
+  // had no entry here at all, so it silently fell back to the fodder texture — a
+  // buff-support unit rendering identically to weak filler enemies.
+  bake(scene, TEXTURE_KEYS.booster, px(52), px(52), (g, w, a) => {
+    g.lineStyle(w, PALETTE.generatorAmber, a);
+    g.strokeCircle(px(26), px(16), px(11));
+    traceChevronDown(g, px(26), px(32), px(11));
+    traceChevronDown(g, px(26), px(42), px(11));
+  });
   bake(scene, TEXTURE_KEYS.boss, px(96), px(96), (g, w, a) => {
     g.lineStyle(w, PALETTE.enemyRed, a);
     strokeDiamond(g, px(48), px(48), px(40));
@@ -263,14 +277,23 @@ function buildEnemyTextures(scene: Phaser.Scene): void {
 }
 
 function buildProjectileTextures(scene: Phaser.Scene): void {
-  // Zigzag lightning bolt — ported from v1's iconic laserTex shape, with v2 multi-pass glow.
+  // A crisp elongated bolt — bright core + soft additive glow, via the same multi-pass
+  // bake() every other texture uses. Replaces the original zigzag shape, which read as a
+  // rendering glitch rather than a laser (Fable's 2nd visual-polish pass); the retired
+  // zigzag survives on as laserY2010 below — a deliberate nostalgia callback, not a bug.
   bake(scene, TEXTURE_KEYS.laserPulse1, px(8), px(40), (g, w, a) => {
     g.lineStyle(w, WEAPON_PALETTE.pulse1, a);
-    traceZigzag(g, [[4,1],[1,9],[7,17],[1,25],[7,33],[4,39]]);
+    g.lineBetween(px(4), px(4), px(4), px(38));
   });
   bake(scene, TEXTURE_KEYS.laserPulse2, px(10), px(40), (g, w, a) => {
     g.lineStyle(w, WEAPON_PALETTE.pulse2, a);
-    traceZigzag(g, [[5,1],[1,9],[9,17],[1,25],[9,33],[5,39]]);
+    g.lineBetween(px(5), px(3), px(5), px(38));
+  });
+  // v1's iconic laserTex shape, preserved verbatim — the secret 2010 Easter egg weapon's
+  // projectile. Deliberately unpolished; that's the joke.
+  bake(scene, TEXTURE_KEYS.laserY2010, px(8), px(40), (g, w, a) => {
+    g.lineStyle(w, WEAPON_PALETTE.y2010, a);
+    traceZigzag(g, [[4,1],[1,9],[7,17],[1,25],[7,33],[4,39]]);
   });
   bake(scene, TEXTURE_KEYS.laserIon, px(14), px(20), (g, w, a) => {
     g.fillStyle(WEAPON_PALETTE.ion, a * 0.6);
@@ -443,6 +466,11 @@ function buildWeaponIconTextures(scene: Phaser.Scene): void {
     g.strokeCircle(px(14), px(20), px(10));
     g.lineBetween(px(14), px(10), px(14), px(2));
     g.lineBetween(px(6), px(14), px(22), px(14));
+  });
+  // The old zigzag, shrunk to icon size — the shop row's own little nostalgia wink.
+  bake(scene, TEXTURE_KEYS.iconY2010, px(24), px(32), (g, w, a) => {
+    g.lineStyle(w, WEAPON_PALETTE.y2010, a);
+    traceZigzag(g, [[12,3],[5,13],[15,17],[6,27],[15,29]]);
   });
 }
 
@@ -759,6 +787,22 @@ function strokeDiamond(
   g.lineTo(cx, cy + radius);
   g.lineTo(cx - radius, cy);
   g.closePath();
+  g.strokePath();
+}
+
+/** Open "v" chevron pointing down — used by the booster texture to signal "pushes
+ * forward," where forward means toward the ship (down the lane). Args already in
+ * baked-canvas pixel space, matching strokeDiamond/traceStar's convention. */
+function traceChevronDown(
+  g: Phaser.GameObjects.Graphics,
+  cx: number,
+  cy: number,
+  halfWidth: number,
+): void {
+  g.beginPath();
+  g.moveTo(cx - halfWidth, cy - halfWidth * 0.6);
+  g.lineTo(cx, cy + halfWidth * 0.6);
+  g.lineTo(cx + halfWidth, cy - halfWidth * 0.6);
   g.strokePath();
 }
 

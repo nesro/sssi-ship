@@ -20,6 +20,7 @@ export const WEAPON_PALETTE = {
   scatter2: 0x99ff44,   // lime
   nova1: 0xffcc44,      // orange-gold
   nova2: 0xffeeaa,      // white-gold
+  y2010: 0x33ff33,      // retro CRT phosphor green — the secret 2010 Easter egg weapon
 } as const;
 
 /** CSS string form for Phaser text styles. */

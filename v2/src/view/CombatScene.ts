@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 import { resolveAbilityAction } from '../core/cards';
-import { activateAbility, fireSideWeapon, toggleAutoFire, toggleAutoShield, toggleRearWeapon } from '../core/combat';
+import { activateAbility, fireSideWeapon, nearestEnemyAhead, setPriorityTarget, toggleAutoFire, toggleAutoShield, toggleRearWeapon } from '../core/combat';
 import { resolveNarrator } from '../core/narrator';
-import { LANE_LENGTH, MS_PER_TICK } from '../core/constants';
+import { HOLD_CHARGE_TIER_2_TICKS, HOLD_CHARGE_TIER_3_TICKS, LANE_LENGTH, MS_PER_TICK } from '../core/constants';
 import { buildMissionResult } from '../core/result';
 import { createCoreState } from '../core/state';
 import { applyBoost } from '../core/supplies';
@@ -21,13 +21,13 @@ import { CardOverlay } from './CardOverlay';
 import { CombatHud } from './CombatHud';
 import { NarratorBar } from './NarratorBar';
 import { SupplyButtons } from './SupplyButtons';
-import { cssColor } from './palette';
+import { cssColor, PALETTE } from './palette';
 import { BTN_PANEL_W, BTN_X, DPR, fontPx, GAME_WIDTH, GAME_X, INFO_PANEL_W, LOGICAL_HEIGHT, LOGICAL_WIDTH, px, SHIP_GUN_X_OFFSET, SHIP_GUN_Y_OFFSET } from './layout';
 import { buildGameTextures, laserTextureForWeaponId, rearBoltTextureKey, sideBoltTextureKey, sideWeaponKindColor, textureForEnemyKind } from './textures';
 import { iconTextureForSideWeaponId, motorKindColorFromId, motorLevelFromId, splitWeaponId, textureForShipId } from './textureKeys';
 import { drawGeneratorCore, drawRearWeaponIndicator, drawShieldRings, drawSideWeaponIndicator, renderGunIndicator, renderThrusterAssembly, tickLaserBolts, tickMuzzleFlashes } from './shipRenderers';
 import type { LaserBolt, MuzzleFlash } from './shipRenderers';
-import { addModalBackdrop, addTextButton, drawDevBorder, UI_FONT } from './widgets';
+import { addModalBackdrop, addTextButton, drawDevBorder, ensureMinTapTarget, UI_FONT } from './widgets';
 
 // Ship sits at the bottom-centre of the game field; enemies stream from the top.
 const SHIP_CENTER_X = GAME_X + Math.floor(GAME_WIDTH / 2); // 480 logical
@@ -41,7 +41,7 @@ const SHIP_VISUAL_RADIUS = 26;
 // edge-touching purpose as SHIP_VISUAL_RADIUS above.
 const ENEMY_VISUAL_RADIUS: Record<string, number> = {
   fodder: 24, striker: 26, tank: 28, swarm: 15, blocker: 32,
-  guardian: 26, turret: 30, kamikaze: 20, boss: 48,
+  guardian: 26, turret: 30, kamikaze: 20, boss: 48, booster: 26,
 };
 const ENEMY_VISUAL_RADIUS_FALLBACK = ENEMY_VISUAL_RADIUS['fodder'] ?? 24;
 const LASER_TRAVEL_MS = 180;
@@ -57,11 +57,22 @@ const MUZZLE_FLASH_MS = 100;
 // seconds. Without this the accumulator would fast-forward dozens of ticks in one frame and
 // the mission could resolve the instant the player returns. 250 ms = at most ~3 ticks/frame.
 const MAX_CATCH_UP_MS = 250;
-// Ability activation slots — must clear the 4 toggle buttons above (last one, side weapon,
-// ends at y≈83) and leave room below for SupplyButtons.BUTTONS_TOP.
-const ABILITY_SLOTS_TOP = 100;
-const ABILITY_SLOT_GAP = 34;
-const ABILITY_SLOT_H = 28;
+// Right button panel: a dynamic top-down layout, not fixed Y offsets — the row count
+// varies with loadout (toggle buttons: fire+shield always, rear/side conditional;
+// supplies: 0-3 owned types), and fixed offsets already caused one real bug (a
+// changelog note: "SupplyButtons' BUTTONS_TOP was never adjusted when the side-weapon
+// toggle pushed the ability slots down"). Every row is 44px-pitch (mobile safe-zone
+// rule, docs/design/04-screens-and-layout.md — checked at runtime by
+// tools/tap-target-audit.ts) so hit areas from adjacent rows never overlap; each row's
+// *visual* box renders smaller than the pitch so a small gap reads between rows even
+// though hit areas sit pitch-to-pitch with zero gap.
+const PANEL_TOP_MARGIN = 20;
+const PANEL_BOTTOM_MARGIN = 20;
+const ROW_PITCH = 44;
+const SECTION_GAP = 8;
+const TOGGLE_VISUAL_H = 36;
+const ABILITY_SLOT_H = 36;
+const EXIT_VISUAL_H = 36;
 
 // Button-panel fill colors — the fill (not just the label text) now signals on/off state,
 // since text-color-only feedback was too easy to miss at a glance.
@@ -90,6 +101,13 @@ const PULSE_RING_EXPAND_PX_S = 120;
 const PULSE_RING_FADE_S = 1.6;
 // Hull fraction below which the red vignette starts appearing.
 const VIGNETTE_THRESHOLD = 0.35;
+// Peak alpha of the death flash — kept low enough that HUD text stays legible under it.
+const DEATH_FLASH_ALPHA = 0.4;
+// Matches the healthy-tier color in drawEnemyHpBar's own frac>0.55 branch — the booster
+// buff line reuses it so "connected to an HP bar" reads as one consistent color language.
+const BOOSTER_BUFF_GREEN = 0x22ee44;
+// Regen ticks every 100ms; throttle the floating-number feedback to something readable.
+const HEAL_FLOAT_INTERVAL_MS = 700;
 
 interface BurstParticle {
   x: number; y: number; vx: number; vy: number;
@@ -127,6 +145,9 @@ export class CombatScene extends Phaser.Scene {
   private motorKindColor: number = 0xff44cc;
   private thrusterPhase = 0;
   private enemySprites = new Map<number, Phaser.GameObjects.Image>();
+  private targetMarkerGfx!: Phaser.GameObjects.Graphics;
+  private targetMarkerPhase = 0;
+  private boosterBuffGfx!: Phaser.GameObjects.Graphics;
   private previousDistances = new Map<number, number>();
   private laserBolts: LaserBolt[] = [];
   private enemyBolts: { rect: Phaser.GameObjects.Rectangle; vy: number; targetY: number }[] = [];
@@ -147,10 +168,12 @@ export class CombatScene extends Phaser.Scene {
   private finished = false;
   private narratorSupportCallShown = false;
   private narratorBossShown = false;
+  private narratorBoosterShown = false;
 
   // Visual effects — combat feedback
   private particleGfx!: Phaser.GameObjects.Graphics;
   private vignetteGfx!: Phaser.GameObjects.Graphics;
+  private deathFlashGfx!: Phaser.GameObjects.Graphics;
   private shieldPulseGfx!: Phaser.GameObjects.Graphics;
   private burstParticles: BurstParticle[] = [];
   private floatingTexts: FloatingText[] = [];
@@ -189,6 +212,11 @@ export class CombatScene extends Phaser.Scene {
   private enemyCoinRewards = new Map<number, number>();
   /** HP snapshot from before the last tick — used to detect mid-tick hits for the hit burst. */
   private previousHps = new Map<number, number>();
+  /** Regen (guardian self-heal, booster feed) fires every tick — without throttling, a
+   * continuously-healed enemy would spawn a floating number ~10×/s. Accumulates healed hp
+   * per enemy and flushes to one floating number every HEAL_FLOAT_INTERVAL_MS. */
+  private healAccumulator = new Map<number, number>();
+  private healFloatCooldown = new Map<number, number>();
 
   constructor() {
     super('CombatScene');
@@ -218,8 +246,11 @@ export class CombatScene extends Phaser.Scene {
     this.add.rectangle(px(BTN_X), 0, px(BTN_PANEL_W), px(LOGICAL_HEIGHT), 0x04040f, 0.82).setOrigin(0, 0).setDepth(0);
     this.add.rectangle(px(BTN_X - 1), 0, px(2), px(LOGICAL_HEIGHT), 0x445577).setOrigin(0, 0).setDepth(1);
 
-    // Mission name at top of game field
-    this.add
+    // Mission name at top of game field — enemies spawn in and grow from
+    // GAME_TOP_Y (30px), so a sprite's top edge routinely reaches up into this text's
+    // row; rather than reserve dead vertical space for an establishing-shot label,
+    // fade it out shortly after it's had time to be read.
+    const missionTitle = this.add
       .text(px(GAME_X + GAME_WIDTH / 2), px(10), mission.name.toUpperCase(), {
         fontFamily: UI_FONT,
         fontSize: `${String(fontPx(9))}px`,
@@ -227,6 +258,7 @@ export class CombatScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0)
       .setDepth(10);
+    this.tweens.add({ targets: missionTitle, alpha: 0, delay: 1800, duration: 700 });
 
     // "ABILITIES" header — shown after first pick; in left panel below ability slots
     this.cardsHeader = this.add.text(px(INFO_PANEL_W / 2), px(180), '', {
@@ -238,19 +270,29 @@ export class CombatScene extends Phaser.Scene {
 
     this.hud = new CombatHud(this);
     this.cardOverlay = new CardOverlay(this, (action) => { this.handleCardAction(action); });
-    this.supplyButtons = new SupplyButtons(this, this.core, (slot) => { this.handleBoostTap(slot); });
     this.narrator = new NarratorBar(this);
 
-    this.buildToggleButtons();
-    this.buildAbilitySlots();
+    this.resetPerRunState();
+    // Dynamic top-down cursor (see the constants block above) — toggles, then ability
+    // slots, then supply buttons flow one after another; only rows actually present
+    // advance it, so the panel never reserves dead space for a hidden row and never
+    // runs two present rows close enough to overlap once every hit area is a real 44px.
+    let cursor = PANEL_TOP_MARGIN;
+    cursor = this.buildToggleButtons(cursor);
+    cursor = this.buildAbilitySlots(cursor);
+    this.supplyButtons = new SupplyButtons(this, this.core, cursor, (slot) => { this.handleBoostTap(slot); });
 
+    // Exit is reserved at the bottom, not flowing — its hit area's bottom edge must sit
+    // exactly on the 20px safe-zone floor regardless of how much (or little) content is
+    // above it. Previously fixed-position at LOGICAL_HEIGHT-22 with a 24px-tall box, whose
+    // real bottom edge measured 10px from the screen edge (tools/tap-target-audit.ts).
     const exitX = px(BTN_X + BTN_PANEL_W / 2);
-    const exitY = px(LOGICAL_HEIGHT - 22);
+    const exitY = px(LOGICAL_HEIGHT - PANEL_BOTTOM_MARGIN - ROW_PITCH / 2);
     const exitBg = this.add
-      .rectangle(exitX, exitY, px(BTN_PANEL_W - 40), px(24), 0x110a14, 0.9)
+      .rectangle(exitX, exitY, px(BTN_PANEL_W - 40), px(EXIT_VISUAL_H), 0x110a14, 0.9)
       .setStrokeStyle(px(1), 0x443355)
-      .setDepth(10)
-      .setInteractive({ useHandCursor: true });
+      .setDepth(10);
+    ensureMinTapTarget(exitBg);
     exitBg.on('pointerdown', () => { this.showExitConfirm(); });
     this.add.text(exitX, exitY, 'EXIT', {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: '#665577',
@@ -267,7 +309,10 @@ export class CombatScene extends Phaser.Scene {
     this.sideGunGfx    = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
     this.particleGfx   = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
     this.hpBarGfx = this.add.graphics().setDepth(7);
+    this.targetMarkerGfx = this.add.graphics().setDepth(7);
+    this.boosterBuffGfx = this.add.graphics().setDepth(7);
     this.vignetteGfx = this.add.graphics().setDepth(9);
+    this.deathFlashGfx = this.add.graphics().setDepth(9);
 
     this.shipSprite = this.add
       .image(px(SHIP_CENTER_X), px(SHIP_Y), textureForShipId(this.core.loadout.ship.id))
@@ -284,10 +329,24 @@ export class CombatScene extends Phaser.Scene {
       ease: 'Sine.easeInOut',
     });
 
+    this.addStarfield();
+
+    const startLine = getStoryLine(mission.id, 'mission-start');
+    if (startLine !== undefined) this.narrator.show(startLine);
+  }
+
+  /** Every collection create() must clear on a scene restart (mission retry, or
+   * __cheat.startMission from an already-active CombatScene) — miss one and its stale
+   * entries still reference GameObjects Phaser destroyed during the previous shutdown;
+   * touching them the next frame throws (destroyed Text/Image objects have a null
+   * texture). abilitySlots hit exactly this before it was added here. */
+  private resetPerRunState(): void {
     this.enemySprites.clear();
     this.previousDistances.clear();
     this.previousHps.clear();
     this.enemyCoinRewards.clear();
+    this.healAccumulator.clear();
+    this.healFloatCooldown.clear();
     this.laserBolts = [];
     this.sideLaserBolts = [];
     this.enemyBolts = [];
@@ -298,20 +357,18 @@ export class CombatScene extends Phaser.Scene {
     this.stars = [];
     this.exitConfirmObjects = [];
     this.cardEntries = [];
+    this.abilitySlots = [];
     this.shieldHitFlash = 0;
     this.gunToggle = false;
     this.thrusterPhase = 0;
+    this.targetMarkerPhase = 0;
     this.accumulatorMs = 0;
     this.finished = false;
     this.narratorSupportCallShown = false;
     this.narratorBossShown = false;
+    this.narratorBoosterShown = false;
     this.narratorModalObjects = [];
     this.narratorLineIdx = 0;
-
-    this.addStarfield();
-
-    const startLine = getStoryLine(mission.id, 'mission-start');
-    if (startLine !== undefined) this.narrator.show(startLine);
   }
 
   private addStarfield(): void {
@@ -435,6 +492,18 @@ export class CombatScene extends Phaser.Scene {
     this.floatingTexts.push({ text: txt, vy: -px(57), life: 700, maxLife: 700 });
   }
 
+  /** Deliberately not the coin glyph — a plain green "+HP" number reads as healing next
+   * to the coin popup's gold "+◈N" without sharing a symbol with it. */
+  private spawnHealFloat(x: number, y: number, amount: number): void {
+    if (amount < 0.5) return;
+    const txt = this.add.text(x, y - px(8), `+${amount.toFixed(0)} HP`, {
+      fontFamily: UI_FONT,
+      fontSize: `${String(fontPx(8))}px`,
+      color: '#44ff88',
+    }).setDepth(8).setOrigin(0.5);
+    this.floatingTexts.push({ text: txt, vy: -px(50), life: 700, maxLife: 700 });
+  }
+
   private updateBurstParticles(deltaMs: number): void {
     this.particleGfx.clear();
     this.burstParticles = this.burstParticles.filter((p) => {
@@ -464,6 +533,7 @@ export class CombatScene extends Phaser.Scene {
     if (this.finished) return;
     this.accumulatorMs += Math.min(deltaMs, MAX_CATCH_UP_MS);
     this.thrusterPhase += deltaMs;
+    this.targetMarkerPhase += deltaMs;
 
     const before = this.snapshotPreTickState();
     while (this.accumulatorMs >= MS_PER_TICK) {
@@ -476,6 +546,7 @@ export class CombatScene extends Phaser.Scene {
 
     // Decay flash
     this.shieldHitFlash = Math.max(0, this.shieldHitFlash - SHIELD_FLASH_DECAY * deltaMs / 1000);
+    for (const [id, remaining] of this.healFloatCooldown) this.healFloatCooldown.set(id, remaining - deltaMs);
 
     this.syncCardOverlay();
     this.syncNarratorModal();
@@ -504,7 +575,7 @@ export class CombatScene extends Phaser.Scene {
     this.updateEnemyBolts(deltaMs);
     this.updateBurstParticles(deltaMs);
     this.updateFloatingTexts(deltaMs);
-    this.hud.update(this.core, boss, progressFrac);
+    this.hud.update(this.core, boss, progressFrac, this.save.missionStars[this.core.mission.id] ?? []);
     this.supplyButtons.update(this.core);
     this.updateAbilityBar();
     this.narrator.update(deltaMs);
@@ -655,57 +726,98 @@ export class CombatScene extends Phaser.Scene {
     });
   }
 
-  private buildToggleButtons(): void {
+  /** Returns the Y cursor for whatever comes next (ability slots) — fire/shield always
+   * take a row; rear/side only advance the cursor when actually equipped, so an
+   * unequipped loadout doesn't leave dead vertical space reserved for a hidden row. */
+  private buildToggleButtons(startY: number): number {
     const cx = px(BTN_X + BTN_PANEL_W / 2);
     const btnW = px(BTN_PANEL_W - 40);
-    const btnH = px(14);
+    const btnH = px(TOGGLE_VISUAL_H);
+    let cursor = startY;
 
-    this.fireBg = this.add.rectangle(cx, px(22), btnW, btnH, TOGGLE_OFF_FILL)
-      .setStrokeStyle(px(1), 0x225533).setDepth(10).setInteractive({ useHandCursor: true });
+    // Each row's rectangle is centered in its slot (cursor + half-pitch), not placed at
+    // the slot's top edge — placing it at the top made the *first* row's naive center
+    // sit at y=20 with a 44px hit area spanning -2..42, which ensureMinTapTarget then
+    // clamped down to 20..64 to respect the top margin — silently colliding with
+    // whatever row started at the next slot (cursor=64). Centering in the slot up front
+    // means no edge-clamp is ever needed for an interior row (caught by
+    // tools/tap-target-audit.ts's overlap check, not eyeballed).
+    const fireY = cursor + ROW_PITCH / 2; cursor += ROW_PITCH;
+    this.fireBg = this.add.rectangle(cx, px(fireY), btnW, btnH, TOGGLE_OFF_FILL)
+      .setStrokeStyle(px(1), 0x225533).setDepth(10);
+    ensureMinTapTarget(this.fireBg);
     this.fireBg.on('pointerdown', () => { toggleAutoFire(this.core); });
-    this.autoFireLabel = this.add.text(cx, px(22), 'AUTO-FIRE  ON', {
+    this.autoFireLabel = this.add.text(cx, px(fireY), 'AUTO-FIRE  ON', {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#44ff66',
     }).setOrigin(0.5).setDepth(11);
 
-    this.rearBg = this.add.rectangle(cx, px(40), btnW, btnH, TOGGLE_OFF_FILL)
-      .setStrokeStyle(px(1), 0x336622).setDepth(10).setInteractive({ useHandCursor: true });
+    const rearEquipped = this.core.loadout.rearWeapon !== null;
+    const rearY = cursor + ROW_PITCH / 2;
+    if (rearEquipped) cursor += ROW_PITCH;
+    this.rearBg = this.add.rectangle(cx, px(rearY), btnW, btnH, TOGGLE_OFF_FILL)
+      .setStrokeStyle(px(1), 0x336622).setDepth(10);
+    ensureMinTapTarget(this.rearBg);
     this.rearBg.on('pointerdown', () => { toggleRearWeapon(this.core); });
-    this.rearWeaponLabel = this.add.text(cx, px(40), 'REAR  ON', {
+    this.rearWeaponLabel = this.add.text(cx, px(rearY), 'REAR  ON', {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#88ff44',
     }).setOrigin(0.5).setDepth(11);
-    if (this.core.loadout.rearWeapon === null) { this.rearBg.setAlpha(0.3); this.rearWeaponLabel.setAlpha(0.3); }
+    // A permanent loadout choice (unlike ability slots, which fill in mid-run) — an
+    // unowned system stays hidden rather than rendering a labeled "NO REAR WEAPON" row;
+    // half the panel reading as placeholders-for-things-you-don't-have was its own
+    // legibility problem (2nd Fable pass). Its absence is what communicates absence.
+    if (!rearEquipped) {
+      this.rearBg.setVisible(false).removeInteractive();
+      this.rearWeaponLabel.setVisible(false);
+    }
 
-    this.shieldBg = this.add.rectangle(cx, px(58), btnW, btnH, TOGGLE_OFF_FILL)
-      .setStrokeStyle(px(1), 0x223355).setDepth(10).setInteractive({ useHandCursor: true });
+    const shieldY = cursor + ROW_PITCH / 2; cursor += ROW_PITCH;
+    this.shieldBg = this.add.rectangle(cx, px(shieldY), btnW, btnH, TOGGLE_OFF_FILL)
+      .setStrokeStyle(px(1), 0x223355).setDepth(10);
+    ensureMinTapTarget(this.shieldBg);
     this.shieldBg.on('pointerdown', () => { toggleAutoShield(this.core); });
-    this.autoShieldLabel = this.add.text(cx, px(58), 'AUTO-SHIELD  ON', {
+    this.autoShieldLabel = this.add.text(cx, px(shieldY), 'AUTO-SHIELD  ON', {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#4488ff',
     }).setOrigin(0.5).setDepth(11);
 
-    this.sideWeaponBg = this.add.rectangle(cx, px(76), btnW, btnH, TOGGLE_OFF_FILL)
-      .setStrokeStyle(px(1), 0x552233).setDepth(10).setInteractive({ useHandCursor: true });
-    this.sideWeaponBg.on('pointerdown', () => { this.handleSideWeaponTap(); });
     const sideWeapon = this.core.loadout.sideWeapon;
-    // Fall back to a always-baked icon key when unequipped — the image just stays hidden.
-    this.sideWeaponIcon = this.add.image(cx - btnW / 2 + px(9), px(76), iconTextureForSideWeaponId(sideWeapon?.id ?? 'focus-1'))
-      .setOrigin(0.5).setScale(0.4).setDepth(11).setVisible(sideWeapon !== null);
-    this.sideWeaponLabel = this.add.text(cx + px(4), px(76), '—', {
+    const sideEquipped = sideWeapon !== null;
+    const sideY = cursor + ROW_PITCH / 2;
+    if (sideEquipped) cursor += ROW_PITCH;
+    this.sideWeaponBg = this.add.rectangle(cx, px(sideY), btnW, btnH, TOGGLE_OFF_FILL)
+      .setStrokeStyle(px(1), 0x552233).setDepth(10);
+    ensureMinTapTarget(this.sideWeaponBg);
+    this.sideWeaponBg.on('pointerdown', () => { this.handleSideWeaponTap(); });
+    this.sideWeaponIcon = this.add.image(cx - btnW / 2 + px(9), px(sideY), iconTextureForSideWeaponId(sideWeapon?.id ?? 'focus-1'))
+      .setOrigin(0.5).setScale(0.4).setDepth(11).setVisible(sideEquipped);
+    this.sideWeaponLabel = this.add.text(cx + px(4), px(sideY), '—', {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#ff6688',
     }).setOrigin(0.5).setDepth(11);
-    if (sideWeapon === null) { this.sideWeaponBg.setAlpha(0.3); this.sideWeaponLabel.setAlpha(0.3); }
+    // A permanent loadout choice (unlike ability slots, which fill in mid-run) — an
+    // unowned system stays hidden rather than rendering a labeled "NO SIDE WEAPON" row;
+    // half the panel reading as placeholders-for-things-you-don't-have was its own
+    // legibility problem (2nd Fable pass). Its absence is what communicates absence.
+    if (!sideEquipped) {
+      this.sideWeaponBg.setVisible(false).removeInteractive();
+      this.sideWeaponLabel.setVisible(false);
+    }
+
+    return cursor + SECTION_GAP;
   }
 
-  private buildAbilitySlots(): void {
+  /** Returns the Y cursor for whatever comes next (supply buttons). Always 3 slots —
+   * unlike loadout toggles, abilities fill in mid-run and aren't known at create(). */
+  private buildAbilitySlots(startY: number): number {
     const cx = px(BTN_X + BTN_PANEL_W / 2);
     const slotW = px(BTN_PANEL_W - 40);
     const slotH = px(ABILITY_SLOT_H);
+    let cursor = startY;
 
     for (let i = 0; i < 3; i++) {
-      const y = px(ABILITY_SLOTS_TOP + i * ABILITY_SLOT_GAP);
+      const y = px(cursor + ROW_PITCH / 2); cursor += ROW_PITCH;
       const bg = this.add.rectangle(cx, y, slotW, slotH, ABILITY_SLOT_EMPTY_FILL)
         .setStrokeStyle(px(1), 0x334455)
-        .setDepth(10)
-        .setInteractive({ useHandCursor: true });
+        .setDepth(10);
+      ensureMinTapTarget(bg);
       const idx = i;
       bg.on('pointerdown', () => { activateAbility(this.core, idx); });
       const dot = this.add.circle(cx - slotW / 2 + px(9), y, px(3.5), 0x334455).setDepth(11);
@@ -717,6 +829,8 @@ export class CombatScene extends Phaser.Scene {
       }).setOrigin(0.5).setDepth(11);
       this.abilitySlots.push({ bg, dot, nameText, cooldownText });
     }
+
+    return cursor + SECTION_GAP;
   }
 
   private updateAbilityBar(): void {
@@ -733,12 +847,14 @@ export class CombatScene extends Phaser.Scene {
     this.shieldBg.setFillStyle(this.core.autoShieldEnabled ? SHIELD_ON_FILL : TOGGLE_OFF_FILL);
 
     const sideWeaponVm = computeSideWeaponButtonViewModel(this.core);
-    this.sideWeaponLabel.setText(sideWeaponVm.equipped ? `${sideWeaponVm.label}  ${sideWeaponVm.chargesLabel}` : '—');
-    this.sideWeaponLabel.setColor(sideWeaponVm.canFire ? '#ff6688' : '#663344');
+    this.sideWeaponLabel.setText(sideWeaponVm.equipped ? `${sideWeaponVm.label}  ${sideWeaponVm.chargesLabel}` : sideWeaponVm.label);
+    this.sideWeaponLabel.setColor(sideWeaponVm.equipped ? (sideWeaponVm.canFire ? '#ff6688' : '#663344') : '#885566');
     this.sideWeaponBg.setFillStyle(sideWeaponVm.canFire ? SIDE_WEAPON_READY_FILL : SIDE_WEAPON_EMPTY_FILL);
-    this.sideWeaponBg.setAlpha(sideWeaponVm.equipped ? 1 : 0.3);
-    this.sideWeaponLabel.setAlpha(sideWeaponVm.equipped ? 1 : 0.3);
-    this.sideWeaponIcon.setAlpha(sideWeaponVm.equipped ? 1 : 0.3);
+    // Unequipped stays dim but must remain legible — full 0.3 read as an unlabeled
+    // broken button, not an empty loadout slot.
+    this.sideWeaponBg.setAlpha(sideWeaponVm.equipped ? 1 : 0.4);
+    this.sideWeaponLabel.setAlpha(sideWeaponVm.equipped ? 1 : 0.6);
+    this.sideWeaponIcon.setAlpha(sideWeaponVm.equipped ? 1 : 0.4);
 
     this.abilitySlots.forEach((slot, i) => {
       const equipped = this.core.equippedAbilities[i];
@@ -855,6 +971,11 @@ export class CombatScene extends Phaser.Scene {
     if (!this.narratorBossShown && this.core.enemies.some((e) => e.isBoss)) {
       this.narratorBossShown = true;
       const line = getStoryLine(missionId, 'boss-appear');
+      if (line !== undefined) this.narrator.show(line);
+    }
+    if (!this.narratorBoosterShown && this.core.enemies.some((e) => e.kind === 'booster')) {
+      this.narratorBoosterShown = true;
+      const line = getStoryLine(missionId, 'first-booster-appear');
       if (line !== undefined) this.narrator.show(line);
     }
   }
@@ -1071,9 +1192,25 @@ export class CombatScene extends Phaser.Scene {
   private detectHits(): void {
     for (const enemy of this.core.enemies) {
       const hpBefore = this.previousHps.get(enemy.id);
-      if (hpBefore !== undefined && enemy.hp < hpBefore - 0.5) {
-        const sprite = this.enemySprites.get(enemy.id);
-        if (sprite !== undefined) this.spawnHitBurst(sprite.x, sprite.y);
+      if (hpBefore === undefined) continue;
+      const sprite = this.enemySprites.get(enemy.id);
+      if (sprite === undefined) continue;
+      if (enemy.hp < hpBefore - 0.5) {
+        this.spawnHitBurst(sprite.x, sprite.y);
+      } else if (enemy.hp > hpBefore + 0.5) {
+        // regenerateEnemies (guardian self-heal, or a booster feeding the enemy ahead of
+        // it) ticks every 100ms and was otherwise silent — accumulate and flush to one
+        // floating number every HEAL_FLOAT_INTERVAL_MS rather than spawning ~10/s. Reads
+        // unambiguously next to the coin popup's gold "+◈N": green number = HP, gold
+        // "◈" = coins, never the same glyph.
+        const pending = (this.healAccumulator.get(enemy.id) ?? 0) + (enemy.hp - hpBefore);
+        if ((this.healFloatCooldown.get(enemy.id) ?? 0) <= 0) {
+          this.spawnHealFloat(sprite.x, sprite.y, pending);
+          this.healAccumulator.set(enemy.id, 0);
+          this.healFloatCooldown.set(enemy.id, HEAL_FLOAT_INTERVAL_MS);
+        } else {
+          this.healAccumulator.set(enemy.id, pending);
+        }
       }
     }
   }
@@ -1093,9 +1230,21 @@ export class CombatScene extends Phaser.Scene {
       liveIds.add(enemy.id);
       let sprite = this.enemySprites.get(enemy.id);
       if (sprite === undefined) {
+        const enemyId = enemy.id;
         sprite = this.add
           .image(px(SHIP_CENTER_X), px(GAME_TOP_Y), textureForEnemyKind(enemy.kind, enemy.isBoss, enemy.blocksConveyor))
-          .setBlendMode(Phaser.BlendModes.ADD);
+          .setBlendMode(Phaser.BlendModes.ADD)
+          // isGameplayEntity: read by tools/tap-target-audit.ts to exclude enemy sprites
+          // from the 44x44/20px UI safe-zone rules — they're combat entities sized by
+          // gameplay balance, not tap controls, and tap-to-target works at any size.
+          .setData('isGameplayEntity', true)
+          .setInteractive({ useHandCursor: true });
+        // Tap-to-target (front weapon only, fable-fun-review-followup.md Item 4): tapping
+        // the already-marked enemy clears it — soft priority, free and instant, never a
+        // wasted shot since fireShipWeapon falls back to front-most when unset/invalid.
+        sprite.on('pointerdown', () => {
+          setPriorityTarget(this.core, this.core.priorityTargetId === enemyId ? null : enemyId);
+        });
         this.enemySprites.set(enemy.id, sprite);
         this.addEnemyAnimTween(sprite, enemy);
         this.enemyCoinRewards.set(enemy.id, enemy.coinReward);
@@ -1104,7 +1253,10 @@ export class CombatScene extends Phaser.Scene {
       const distance = previous + (enemy.distance - previous) * alpha;
       sprite.setY(this.laneToY(distance, enemy.kind));
       sprite.setAlpha(0.4 + 0.6 * (enemy.hp / enemy.maxHp));
-      this.drawEnemyHpBar(sprite.x, sprite.y, enemy.hp / enemy.maxHp);
+      this.drawEnemyHpBar(sprite.x, sprite.y, enemy.hp / enemy.maxHp, enemy.isBoss);
+      if (enemy.blocksConveyor && enemy.holdChargeTicks > 0) {
+        this.drawHoldChargeRing(sprite.x, sprite.y, enemy.kind, enemy.holdChargeTicks, this.core.enemies.length > 1);
+      }
     }
     // Detect deaths: any id that was alive last frame but isn't now
     for (const [id, sprite] of this.enemySprites) {
@@ -1114,16 +1266,111 @@ export class CombatScene extends Phaser.Scene {
         this.enemySprites.delete(id);
       }
     }
+    this.renderTargetMarker();
+    this.renderBoosterBuffs();
   }
 
-  private drawEnemyHpBar(sx: number, sy: number, frac: number): void {
-    const bw = px(32); const bh = px(3);
-    const bx = sx - bw / 2; const by = sy - px(34);
+  /** Item 7's booster mechanic (regenerateEnemies, core/combat.ts) is otherwise invisible
+   * — the buff target changes tick-to-tick with no player-facing signal at all. Draws a
+   * thin pulsing line from each alive booster to whichever enemy it's currently feeding,
+   * using the exact same nearestEnemyAhead() the core uses, so this can never show a
+   * connection that doesn't match what's actually happening in the sim. */
+  private renderBoosterBuffs(): void {
+    this.boosterBuffGfx.clear();
+    const boosters = this.core.enemies.filter((e) => e.kind === 'booster');
+    if (boosters.length === 0) return;
+    const pulse = 0.4 + 0.35 * Math.sin(this.targetMarkerPhase / 260);
+    for (const booster of boosters) {
+      const target = nearestEnemyAhead(this.core.enemies, booster);
+      if (target === null) continue;
+      const from = this.enemySprites.get(booster.id);
+      const to = this.enemySprites.get(target.id);
+      if (from === undefined || to === undefined) continue;
+      // Green, not amber — amber is already the enemy-side "energy/coin" hue (hold-charge
+      // rings, coin popups); this is a heal, so it reuses the same green the healthy-HP
+      // bar fill already uses, reading instantly as "topping up that HP bar" at a glance.
+      this.boosterBuffGfx.lineStyle(px(1.6), BOOSTER_BUFF_GREEN, pulse);
+      this.boosterBuffGfx.beginPath();
+      this.boosterBuffGfx.moveTo(from.x, from.y);
+      this.boosterBuffGfx.lineTo(to.x, to.y);
+      this.boosterBuffGfx.strokePath();
+      const targetRadius = px((ENEMY_VISUAL_RADIUS[target.kind] ?? ENEMY_VISUAL_RADIUS_FALLBACK) + 3);
+      this.boosterBuffGfx.lineStyle(px(1.8), BOOSTER_BUFF_GREEN, pulse + 0.2);
+      this.boosterBuffGfx.strokeCircle(to.x, to.y, targetRadius);
+    }
+  }
+
+  /** Corner-bracket reticle on the current priority target — reading this.core directly
+   * (not passed in) keeps renderEnemies' signature stable; auto-clears for free the
+   * instant the target dies, since enemySprites.get() then returns undefined and nothing
+   * draws (no separate "target lost" bookkeeping needed). */
+  private renderTargetMarker(): void {
+    this.targetMarkerGfx.clear();
+    if (this.core.priorityTargetId === null) return;
+    const sprite = this.enemySprites.get(this.core.priorityTargetId);
+    if (sprite === undefined) return;
+    const enemy = this.core.enemies.find((e) => e.id === this.core.priorityTargetId);
+    const radius = px((ENEMY_VISUAL_RADIUS[enemy?.kind ?? 'fodder'] ?? ENEMY_VISUAL_RADIUS_FALLBACK) + 6);
+    const pulse = 0.7 + 0.3 * Math.sin(this.targetMarkerPhase / 220);
+    const armLen = radius * 0.42;
+    this.targetMarkerGfx.lineStyle(px(1.4), PALETTE.weaponCyan, pulse);
+    for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) {
+      const cx = sprite.x + sx * radius;
+      const cy = sprite.y + sy * radius;
+      this.targetMarkerGfx.beginPath();
+      this.targetMarkerGfx.moveTo(cx - sx * armLen, cy);
+      this.targetMarkerGfx.lineTo(cx, cy);
+      this.targetMarkerGfx.lineTo(cx, cy - sy * armLen);
+      this.targetMarkerGfx.strokePath();
+    }
+  }
+
+  /** A boss reusing a regular enemy's 32×3px overhead bar reads as an afterthought next to
+   * its much larger sprite (ENEMY_VISUAL_RADIUS.boss = 48 vs. 24-32 for everything else) —
+   * scale the bar with the sprite so a final boss actually looks like one at a glance,
+   * without relying solely on the separate BOSS bar in the left info panel. */
+  private drawEnemyHpBar(sx: number, sy: number, frac: number, isBoss = false): void {
+    const bw = px(isBoss ? 64 : 32); const bh = px(isBoss ? 5 : 3);
+    const bx = sx - bw / 2; const by = sy - px(isBoss ? 58 : 34);
     this.hpBarGfx.fillStyle(0x111122, 0.8);
     this.hpBarGfx.fillRect(bx, by, bw, bh);
     const col = frac > 0.55 ? 0x22ee44 : frac > 0.25 ? 0xffaa00 : 0xff2200;
     this.hpBarGfx.fillStyle(col, 0.85);
     this.hpBarGfx.fillRect(bx, by, bw * frac, bh);
+    if (isBoss) {
+      this.hpBarGfx.lineStyle(px(1), 0x662211, 0.6);
+      this.hpBarGfx.strokeRect(bx, by, bw, bh);
+    }
+  }
+
+  /** Fable-fun-review-followup.md Item 6: the UI signal for "you're holding a blocker and
+   * charge is accruing/frozen" — a filling ring around the blocker. Hugs the sprite bounds
+   * tightly (not a big halo) since blockers commonly queue two-deep on the conveyor and a
+   * wide ring produces an unreadable venn-diagram overlap between them. Color ramps
+   * amber→red as charge builds (a "heat" reading, and distinct from the booster-buff
+   * line's green); accruing-vs-frozen (pressure present vs. the lane cleared to just this
+   * blocker — tick.ts's accrueHoldCharge) reads through alpha/width, not hue, so the two
+   * signals never fight each other. A tick mark shows the tier-2 bonus-call threshold. */
+  private drawHoldChargeRing(sx: number, sy: number, kind: string, holdChargeTicks: number, accruing: boolean): void {
+    const radius = px((ENEMY_VISUAL_RADIUS[kind] ?? ENEMY_VISUAL_RADIUS_FALLBACK) + 6);
+    const frac = Math.min(1, holdChargeTicks / HOLD_CHARGE_TIER_3_TICKS);
+    this.hpBarGfx.lineStyle(px(1.2), 0x664422, 0.3);
+    this.hpBarGfx.strokeCircle(sx, sy, radius);
+    const color = lerpColor(PALETTE.generatorAmber, 0xff2200, frac);
+    this.hpBarGfx.lineStyle(px(accruing ? 2.4 : 1.6), color, accruing ? 0.9 : 0.45);
+    this.hpBarGfx.beginPath();
+    this.hpBarGfx.arc(sx, sy, radius, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2, false);
+    this.hpBarGfx.strokePath();
+    const tickAngle = -Math.PI / 2 + (HOLD_CHARGE_TIER_2_TICKS / HOLD_CHARGE_TIER_3_TICKS) * Math.PI * 2;
+    const tx1 = sx + Math.cos(tickAngle) * (radius - px(3));
+    const ty1 = sy + Math.sin(tickAngle) * (radius - px(3));
+    const tx2 = sx + Math.cos(tickAngle) * (radius + px(3));
+    const ty2 = sy + Math.sin(tickAngle) * (radius + px(3));
+    this.hpBarGfx.lineStyle(px(1.2), PALETTE.hullWhite, 0.5);
+    this.hpBarGfx.beginPath();
+    this.hpBarGfx.moveTo(tx1, ty1);
+    this.hpBarGfx.lineTo(tx2, ty2);
+    this.hpBarGfx.strokePath();
   }
 
   private onEnemyDeath(x: number, y: number, enemyId: number): void {
@@ -1215,7 +1462,31 @@ export class CombatScene extends Phaser.Scene {
   }
 
   private playDeathAnimation(): void {
-    this.cameras.main.flash(300, 255, 30, 30);
+    // Confined to the playfield (not cameras.main.flash(), which also washes out both
+    // side panels — the HUD is exactly what a player needs to still read at 0 hull) and
+    // driven by a tween rather than update()'s own deltaMs accumulator, since `finished`
+    // is set right before this call and short-circuits update() for the rest of the scene.
+    // An edge vignette (matching renderLowHullVignette's own shape), not a flat fill —
+    // a solid rectangle over the whole playfield read as a rendering glitch and buried
+    // every enemy/effect underneath it (fable-fun-review-followup.md's 2nd visual pass).
+    const flashState = { alpha: DEATH_FLASH_ALPHA };
+    this.tweens.add({
+      targets: flashState,
+      alpha: 0,
+      duration: 550,
+      ease: 'Cubic.easeOut',
+      onUpdate: () => {
+        this.deathFlashGfx.clear();
+        if (flashState.alpha <= 0) return;
+        const vx = px(GAME_X); const vw = px(GAME_WIDTH); const vh = px(LOGICAL_HEIGHT);
+        const edgeW = px(50);
+        this.deathFlashGfx.fillStyle(0xff2200, flashState.alpha);
+        this.deathFlashGfx.fillRect(vx, 0, edgeW, vh);
+        this.deathFlashGfx.fillRect(vx + vw - edgeW, 0, edgeW, vh);
+        this.deathFlashGfx.fillRect(vx + edgeW, 0, vw - 2 * edgeW, edgeW * 0.6);
+        this.deathFlashGfx.fillRect(vx + edgeW, vh - edgeW * 0.6, vw - 2 * edgeW, edgeW * 0.6);
+      },
+    });
     this.cameras.main.shake(400, 0.018);
     const cx = px(SHIP_CENTER_X) + this.driftX();
     const cy = px(SHIP_Y) + this.bobY();
@@ -1227,6 +1498,77 @@ export class CombatScene extends Phaser.Scene {
     }
     this.tweens.add({ targets: this.shipSprite, alpha: 0, duration: 500, delay: 100 });
   }
+
+  // ── Dev-only cheats (__cheat.combat.*, main.ts) — a screenshot/test harness needs
+  // to reach any point in a mission instantly rather than waiting through it or
+  // clicking. Sprite sync happens for free: renderEnemies() (called every real frame
+  // from update()) rebuilds its sprite map purely by diffing `this.core.enemies`
+  // against what's already on screen, so it's safe to call these mid-fast-forward and
+  // let the next natural frame catch the view up — no manual re-sync needed.
+
+  /** __cheat.combat.fastForward(ticks) — advances the core simulation instantly,
+   * auto-dismissing narrator lines and always picking the first card offer so a
+   * support call or story beat along the way can't stall the jump. Guarded against
+   * runaway loops (e.g. ticks requested past mission end). */
+  // fallow-ignore-next-line unused-class-member
+  cheatFastForward(ticks: number): void {
+    let advanced = 0;
+    let guard = 0;
+    const guardLimit = ticks * 20 + 1000;
+    while (advanced < ticks && this.core.status === 'running' && guard < guardLimit) {
+      guard += 1;
+      if (this.core.pendingNarrator !== null) { resolveNarrator(this.core); continue; }
+      if (this.core.pendingOffer !== null) { resolveAbilityAction(this.core, 0); continue; }
+      advanceTick(this.core);
+      advanced += 1;
+    }
+  }
+
+  /** __cheat.combat.markTarget(enemyId) — sets/clears the front weapon's priority
+   * target without a real pointer click on the (possibly still-animating) sprite. */
+  // fallow-ignore-next-line unused-class-member
+  cheatMarkTarget(enemyId: number | null): void {
+    setPriorityTarget(this.core, enemyId);
+  }
+
+  /** __cheat.combat.setToggle('fire'|'rear'|'shield', on) — sets a toggle to an exact
+   * state (the real toggle functions just flip, which needs the current state to be
+   * read first from JS anyway — this is the one-call version). */
+  // fallow-ignore-next-line unused-class-member
+  cheatSetToggle(system: 'fire' | 'rear' | 'shield', on: boolean): void {
+    if (system === 'fire' && this.core.autoFireEnabled !== on) toggleAutoFire(this.core);
+    if (system === 'rear' && this.core.rearWeaponEnabled !== on) toggleRearWeapon(this.core);
+    if (system === 'shield' && this.core.autoShieldEnabled !== on) toggleAutoShield(this.core);
+  }
+
+  /** __cheat.combat.showExitConfirm() — opens the "ABANDON MISSION?" modal without a
+   * real tap on the EXIT button, for screenshot/touch-target coverage of that state. */
+  // fallow-ignore-next-line unused-class-member
+  cheatShowExitConfirm(): void {
+    this.showExitConfirm();
+  }
+
+  /** __cheat.combat.inspect() — a JSON-safe snapshot of ship/enemy state for a
+   * screenshot harness to read back and decide what to do next (e.g. which enemy id
+   * to pass to markTarget). */
+  // fallow-ignore-next-line unused-class-member
+  cheatInspect(): unknown {
+    return {
+      missionId: this.core.mission.id,
+      tick: this.core.tick,
+      status: this.core.status,
+      priorityTargetId: this.core.priorityTargetId,
+      hasPendingOffer: this.core.pendingOffer !== null,
+      ship: {
+        hull: this.core.ship.hull, maxHull: this.core.ship.maxHull,
+        shield: this.core.ship.shield, energy: this.core.ship.energy,
+      },
+      enemies: this.core.enemies.map((e) => ({
+        id: e.id, kind: e.kind, distance: e.distance, hp: e.hp, maxHp: e.maxHp,
+        holdChargeTicks: e.holdChargeTicks, blocksConveyor: e.blocksConveyor,
+      })),
+    };
+  }
 }
 
 
@@ -1237,6 +1579,17 @@ function randomSeed(): number {
 /** Glow/size multiplier for a laser bolt: level 1 = 0.85×, level 5 = 1.13×. */
 function boltScaleForLevel(level: number): number {
   return 0.8 + level * 0.06;
+}
+
+/** Per-channel RGB lerp between two 0xRRGGBB colors, t clamped to [0, 1]. */
+function lerpColor(from: number, to: number, t: number): number {
+  const clamped = Math.max(0, Math.min(1, t));
+  const fr = (from >> 16) & 0xff; const fg = (from >> 8) & 0xff; const fb = from & 0xff;
+  const tr = (to >> 16) & 0xff; const tg = (to >> 8) & 0xff; const tb = to & 0xff;
+  const r = Math.round(fr + (tr - fr) * clamped);
+  const g = Math.round(fg + (tg - fg) * clamped);
+  const b = Math.round(fb + (tb - fb) * clamped);
+  return (r << 16) | (g << 8) | b;
 }
 
 

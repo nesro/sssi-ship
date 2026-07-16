@@ -19,6 +19,8 @@ import { ShopPreviewPanel } from './ShopPreviewPanel';
 import type { PreviewLayout } from './ShopPreviewPanel';
 import { buildGameTextures } from './textures';
 import { addLabel, addTextButton, drawDevBorder, UI_FONT } from './widgets';
+import { HubTour } from './HubTour';
+import type { TourStep } from './HubTour';
 import { Sound } from '../audio/SoundManager';
 import {
   DEFAULT_HUB_UI_STATE, computeDetailHint, computeDispatch, computeGalaxyMap,
@@ -36,9 +38,32 @@ const SHIP_TAB_COLOR = 0x44ffaa;
 
 type NavItem = Exclude<HubNav, null>;
 
-const NAV_Y = 22;
-const CONTENT_TOP = 48;
+// 42, not 22 — a centered 44px-tall tap target at NAV_Y=22 needs its top edge-clamped
+// down to y=20 (the mobile safe margin), which desyncs the hit area from BACK/DEBUG's
+// visual button: the top ~12px of the visible button no longer responds to taps. At
+// NAV_Y=42 the target's natural top (42-22=20) already sits exactly on the safe margin,
+// so no clamp — and no dead zone — is needed. Moves the whole nav row (title, coins/
+// stars, nav labels share this constant) down 20px together, so it stays one aligned row.
+const NAV_Y = 42;
+// 70, not 48 — the (now unclamped) 44px-tall tap target still extends to y=64 (NAV_Y=42
+// + 22 half-height); content starting at 48 overlapped it (tools/tap-target-audit.ts
+// caught this, not eyeballed — it looked fine visually).
+const CONTENT_TOP = 70;
 const CONTENT_PAD = 20;       // mobile safe-area left/right margin
+
+// Settings panel's left-column row rhythm (buildSettingsContent/buildDevToolsSection).
+// Every row offset below is derived from these two, not hand-copied — a prior version
+// hardcoded each Y as its own magic number with a comment claiming they were "named,
+// computed values kept in sync," which was false (Fable's post-implementation review
+// caught the contradiction): they were literals that had to be manually re-typed in
+// lockstep on every insertion. MUSIC/SFX/DEV MODE/HOW TO PLAY sit on SETTINGS_ROW_PITCH;
+// the DEV TOOLS section (only shown when devOn) starts tighter below HOW TO PLAY (a
+// section header, not another full row) and then resumes the same pitch internally.
+const SETTINGS_ROW_PITCH = 52;
+const SETTINGS_ROW_1_Y = 36; // MUSIC's offset from CONTENT_TOP
+const SETTINGS_HOW_TO_PLAY_Y = SETTINGS_ROW_1_Y + 3 * SETTINGS_ROW_PITCH;
+const DEV_TOOLS_HEADER_Y = SETTINGS_HOW_TO_PLAY_Y + 30;
+const DEV_TOOLS_START_Y = SETTINGS_HOW_TO_PLAY_Y + 66;
 const INFO_PANEL_TOP = 378;
 const INFO_PANEL_H = 152;
 const SHOP_TAB_W = 130;
@@ -56,6 +81,7 @@ const SHOP_NAME_X_OFFSET = 38;   // name label left x within row
 const LOADOUT_ICON_X_OFFSET = 130;   // icon centre x within a loadout row
 const LOADOUT_NAME_X_OFFSET = 152;   // name label left x within a loadout row
 
+const DR_LEFT_X = 20; // mobile safe-zone left inset (04-screens-and-layout.md)
 const DR_LEFT_W = 200;
 const DR_RIGHT_X = DR_LEFT_W + 4;
 const DR_ROW_H = 70;
@@ -72,6 +98,16 @@ const NAV_ITEMS: { key: NavItem; label: string; color: number }[] = [
   { key: 'shop',                    label: 'SHIP CONFIGURATION',      color: PALETTE.motorMagenta },
   { key: 'dispatch-reinforcements', label: 'DISPATCH REINFORCEMENTS', color: PALETTE.shieldBlue },
   { key: 'settings',                label: 'SETTINGS',                color: PALETTE.hullWhite },
+];
+
+// Main-menu button tour (docs/plans/first-open-and-tutorial-tour.md, Part B) — one step
+// per NAV_ITEMS key, matched at runtime via .setData('tourId', ...) in buildMainMenu.
+// Voice matches W0_NARRATOR_EVENTS's direct "Commander…" briefing tone (missions.ts).
+const HUB_TOUR_STEPS: TourStep[] = [
+  { tourId: 'missions', caption: 'Commander. This is your galaxy map — pick a mission to fly.' },
+  { tourId: 'shop', caption: 'Outfit your ship here: weapons, shields, and more.' },
+  { tourId: 'dispatch-reinforcements', caption: 'Subscribe for support cards you\'ll draw mid-mission.' },
+  { tourId: 'settings', caption: 'Audio, dev tools, and this tour again — any time.' },
 ];
 
 const SHOP_TABS: { key: ShopTab; label: string; color: number }[] = [
@@ -145,8 +181,30 @@ export class HubScene extends Phaser.Scene {
    * inspectable via the dev-mode DEBUG button so bugs can be diagnosed from the
    * printed data itself, without reading pixels off a screenshot. */
   private lastViewModel: unknown = null;
+  private hubTour: HubTour | null = null;
+  private showTourOnCreate = false;
 
   constructor() { super('HubScene'); }
+
+  /** Phaser calls init(data) before create() when the scene is started with data —
+   * OnboardingScene.ts passes { showTour: true } on both its buttons.
+   *
+   * Must consume the flag by mutating `data` in place, not just read it: Phaser's
+   * SceneManager only overwrites `scene.sys.settings.data` when a *later* start() call
+   * passes a truthy data object (Systems.start) — every subsequent bare
+   * `scene.start('HubScene')` / `scene.restart()` (ResultScene's MISSIONS/SHOP buttons,
+   * CombatScene's exit-confirm, the settings panel's DEV MODE/ADD COINS/UNLOCK STARS
+   * buttons — none of them pass data) keeps re-delivering this SAME retained object to
+   * init() forever, replaying the tour after every mission and every dev-tools restart
+   * for the rest of the session. Confirmed as a real, reproducible bug (Fable's
+   * post-implementation review), not a theoretical one. Setting `data.showTour = false`
+   * mutates the retained object itself, so the next bare start() sees it already
+   * cleared. */
+  // fallow-ignore-next-line unused-class-member
+  init(data: { showTour?: boolean }): void {
+    this.showTourOnCreate = data.showTour === true;
+    data.showTour = false;
+  }
 
   private get playerStars(): number {
     return totalStars(this.save);
@@ -162,6 +220,14 @@ export class HubScene extends Phaser.Scene {
     this.uiState = DEFAULT_HUB_UI_STATE;
     this.contentObjects = [];
     this.scrollingStars = [];
+    // Phaser reuses this Scene instance across stop/restart (__cheat's goTo() stops
+    // every scene then starts HubScene fresh) — every display object from a previous
+    // life, including any HubTour's target/backdrop/ring, is already destroyed by the
+    // time create() runs again, but this class field isn't reset automatically. Discard
+    // it outright (not hubTour?.end() — that would call setInteractive() on an
+    // already-destroyed GameObject and throw "Cannot read properties of undefined
+    // (reading 'sys')", found via a real screenshot-batch crash, not eyeballed).
+    this.hubTour = null;
 
     buildGameTextures(this);
     Sound.attach(this.sound);
@@ -174,6 +240,36 @@ export class HubScene extends Phaser.Scene {
     this.preview = new ShopPreviewPanel(this, HUB_PREVIEW_LAYOUT);
 
     this.setNav(null);
+
+    if (this.showTourOnCreate) this.showTour();
+  }
+
+  /** Always forces the main menu first — HUB_TOUR_STEPS' targets are only tagged on
+   * buildMainMenu()'s buttons (nav === null), so invoking this from anywhere else (the
+   * Settings panel's HOW TO PLAY button, most commonly) would otherwise find nothing to
+   * highlight on step 1. setNav() itself tears down any previous tour, so this is safe
+   * to call while one is already running. */
+  private showTour(): void {
+    this.setNav(null);
+    this.hubTour = new HubTour(this, HUB_TOUR_STEPS);
+  }
+
+  /** __cheat.hub.showTour() — also wired to the Settings panel's HOW TO PLAY button. */
+  // fallow-ignore-next-line unused-class-member
+  cheatShowTour(): void {
+    this.showTour();
+  }
+
+  /** __cheat.hub.tourNext() — headless equivalent of tapping the tour's NEXT/DONE. */
+  // fallow-ignore-next-line unused-class-member
+  cheatTourNext(): void {
+    this.hubTour?.cheatNext();
+  }
+
+  /** __cheat.hub.tourSkip() — headless equivalent of tapping the tour's SKIP TOUR. */
+  // fallow-ignore-next-line unused-class-member
+  cheatTourSkip(): void {
+    this.hubTour?.cheatSkip();
   }
 
   // fallow-ignore-next-line unused-class-member
@@ -186,10 +282,35 @@ export class HubScene extends Phaser.Scene {
   }
 
   private setNav(nav: HubNav): void {
+    // A live HubTour points at main-menu buttons that rebuildContent() is about to
+    // destroy (they're only tagged/rendered while nav === null) — end it first on any
+    // navigation, for any reason, rather than leaving its backdrop/ring/caption
+    // orphaned on screen with a dangling reference to a destroyed target (found via
+    // tools/screenshot.ts, not eyeballed: a stray tour overlay from an earlier shot
+    // survived a later navTo() and rendered on top of an unrelated panel).
+    this.hubTour?.end();
+    this.hubTour = null;
     this.uiState = { ...this.uiState, nav };
     this.rebuildContent();
     this.preview.setVisible(nav === 'shop');
     if (nav === 'shop') this.updatePreview();
+  }
+
+  /** Dev-only: called by __cheat.navTo(nav) to jump directly to any top-level hub
+   * section ('missions' | 'shop' | 'dispatch-reinforcements' | 'settings' | null) —
+   * navShop only ever reaches 'shop', this covers the rest. */
+  // fallow-ignore-next-line unused-class-member
+  cheatNavTo(nav: string | null): void {
+    this.setNav(nav as HubNav);
+  }
+
+  /** Dev-only: called by __cheat.selectSubscription(id) — the Dispatch Reinforcements
+   * cards grid only renders once a subscription tier is selected (a real click on the
+   * left-panel row), which navTo alone can't reach. */
+  // fallow-ignore-next-line unused-class-member
+  cheatSelectSubscription(id: string): void {
+    this.uiState = { ...this.uiState, selectedSubscriptionId: id, dispatchPage: 1 };
+    this.setNav('dispatch-reinforcements');
   }
 
   /** Dev-only: called by __cheat.navShop(tab) to jump directly to a shop tab. */
@@ -205,19 +326,17 @@ export class HubScene extends Phaser.Scene {
 
     if (this.uiState.nav !== null) {
       const backBtn = addTextButton(this, {
-        x: px(CONTENT_PAD), y: px(NAV_Y),
+        x: px(CONTENT_PAD), y: px(NAV_Y), originX: 0, originY: 0.5,
         label: '‹ BACK', color: 0x8888aa, size: 11,
         onClick: () => { this.setNav(null); },
       });
-      backBtn.setOrigin(0, 0.5);
       this.addC(backBtn);
       if (this.devMode) {
         const debugBtn = addTextButton(this, {
-          x: px(CONTENT_PAD + 70), y: px(NAV_Y),
+          x: px(CONTENT_PAD + 70), y: px(NAV_Y), originX: 0, originY: 0.5,
           label: 'DEBUG', color: 0x66aa66, size: 11,
           onClick: () => { this.logViewModel(); },
         });
-        debugBtn.setOrigin(0, 0.5);
         this.addC(debugBtn);
       }
       const navItem = NAV_ITEMS.find((n) => n.key === this.uiState.nav);
@@ -270,7 +389,7 @@ export class HubScene extends Phaser.Scene {
           if (item.key === 'shop') this.uiState = { ...this.uiState, tab: 'loadout' };
           this.setNav(item.key);
         },
-      }));
+      }).setData('tourId', item.key)); // matched by HUB_TOUR_STEPS/HubTour.ts
     });
   }
 
@@ -294,12 +413,8 @@ export class HubScene extends Phaser.Scene {
   // ─── Missions (galaxy view) ──────────────────────────────────────────────────
 
   private buildMissionsContent(): void {
-    this.addC(addLabel(this, {
-      x: px(CONTENT_PAD), y: px(CONTENT_TOP),
-      text: `★ ${String(totalStars(this.save))}/${String(totalStarsAvailable())}   ⬤ ${String(this.save.coins)}`,
-      color: PALETTE.generatorAmber, size: 10,
-    }));
-
+    // The top nav bar (setNav()) already shows ★/coins for every screen — this used to
+    // repeat it a second time, top-left, directly under the top-right original.
     const map = computeGalaxyMap(this.save, this.uiState.selectedMissionId);
     const gfx = this.addC(this.add.graphics().setDepth(2));
     this.renderGalaxyConnections(gfx, map);
@@ -355,7 +470,11 @@ export class HubScene extends Phaser.Scene {
       }).setOrigin(0.5, 0).setDepth(3).setAlpha(0.75));
     }
 
-    const hitR = Math.max(r + 14, 20);
+    // 22, not 20 — a 44px-diameter minimum tap target (mobile safe-zone rule) regardless
+    // of the visual dot's radius; tutorials draw smaller (r=6 vs 8) to visually rank
+    // below main missions, but that shouldn't shrink their hit zone below the same floor
+    // every other node gets (tools/tap-target-audit.ts caught tutorials at 40x40).
+    const hitR = Math.max(r + 14, 22);
     const zone = this.addC(
       this.add.zone(px(mission.x), px(mission.y), px(hitR * 2), px(hitR * 2))
         .setInteractive({ useHandCursor: mission.unlocked }).setDepth(4),
@@ -422,7 +541,9 @@ export class HubScene extends Phaser.Scene {
   private buildShopContent(): void {
     this.uiState = resolveUiState(this.save, this.uiState);
     this.addC(this.add.rectangle(px(HUB_LEFT_W), 0, px(1), px(LOGICAL_HEIGHT), 0x333355).setOrigin(0, 0).setDepth(1));
-    const tabH = (LOGICAL_HEIGHT - CONTENT_TOP) / SHOP_TABS.length;
+    // -20 reserves the mobile safe-zone bottom margin (04-screens-and-layout.md) — without
+    // it the last tab's row ran to y=539, 1px from the screen edge (tap-target-audit.ts).
+    const tabH = (LOGICAL_HEIGHT - 20 - CONTENT_TOP) / SHOP_TABS.length;
     SHOP_TABS.forEach((tab, i) => {
       const tabY = CONTENT_TOP + tabH * (i + 0.5);
       const active = tab.key === this.uiState.tab;
@@ -436,13 +557,15 @@ export class HubScene extends Phaser.Scene {
         this.rebuildContent();
         this.updatePreview();
       });
+      // Inactive tabs must stay readable — the player needs to see what else the shop
+      // offers, not just the currently-open tab.
       this.addC(
         this.add.text(px(CONTENT_PAD + SHOP_TAB_W / 2), px(tabY), tab.label, {
           fontFamily: UI_FONT,
           fontSize: `${String(fontPx(9))}px`,
-          color: cssColor(active ? tab.color : 0x555577),
+          color: cssColor(active ? tab.color : 0x8899bb),
           align: 'center',
-        }).setOrigin(0.5).setAlpha(active ? 1 : 0.5),
+        }).setOrigin(0.5).setAlpha(active ? 1 : 0.8),
       );
     });
 
@@ -732,8 +855,11 @@ export class HubScene extends Phaser.Scene {
     dispatch.subscriptions.forEach((sub, i) => {
       const rowY = CONTENT_TOP + i * DR_ROW_H;
       const midY = rowY + DR_ROW_H / 2;
+      // DR_LEFT_X insets the row from the screen's left edge (mobile safe-zone rule,
+      // 04-screens-and-layout.md) — this used to start flush at x=0 (tap-target-audit.ts
+      // caught the hit area's left edge at 0px, not eyeballed).
       const bg = this.addC(
-        this.add.rectangle(px(0), px(rowY), px(DR_LEFT_W), px(DR_ROW_H - 1), sub.isSelected ? 0x111128 : 0x080818, 0.95)
+        this.add.rectangle(px(DR_LEFT_X), px(rowY), px(DR_LEFT_W - DR_LEFT_X), px(DR_ROW_H - 1), sub.isSelected ? 0x111128 : 0x080818, 0.95)
           .setOrigin(0, 0).setInteractive({ useHandCursor: true }),
       );
       if (sub.isSelected) bg.setStrokeStyle(px(1), sub.color, 0.5);
@@ -742,7 +868,7 @@ export class HubScene extends Phaser.Scene {
         this.uiState = { ...this.uiState, selectedSubscriptionId: sub.id, dispatchPage: wasSelected ? this.uiState.dispatchPage : 1 };
         this.rebuildContent();
       });
-      this.addC(this.add.text(px(8), px(midY - 10), sub.name, {
+      this.addC(this.add.text(px(DR_LEFT_X + 8), px(midY - 10), sub.name, {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(12))}px`,
         color: cssColor(sub.isSelected ? sub.color : (sub.ownedLevel > 0 ? 0x9999bb : 0x555577)),
       }).setOrigin(0, 0.5));
@@ -750,7 +876,7 @@ export class HubScene extends Phaser.Scene {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`,
         color: cssColor(sub.ownedLevel > 0 ? sub.color : 0x444466),
       }).setOrigin(1, 0.5));
-      this.addC(this.add.text(px(8), px(midY + 10), sub.statusText, {
+      this.addC(this.add.text(px(DR_LEFT_X + 8), px(midY + 10), sub.statusText, {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`,
         color: cssColor(sub.ownedLevel > 0 ? 0x778899 : 0x334455),
       }).setOrigin(0, 0.5));
@@ -866,13 +992,17 @@ export class HubScene extends Phaser.Scene {
   }
 
   private renderDRCard(x: number, y: number, card: DispatchCardViewModel): void {
-    const alpha = card.accessible ? 1.0 : 0.35;
+    // Locked cards must stay legible enough to preview what a subscription buys before
+    // paying for it — 0.35 alpha compounded with a near-black name color (0x334455)
+    // made every locked card unreadable, not just "de-emphasized."
+    const alpha = card.accessible ? 1.0 : 0.55;
+    const lockedNameColor = 0x556677;
     const panel = this.add.rectangle(px(x), px(y), px(DR_CARD_W), px(DR_CARD_H), 0x0a0a18, 0.95)
-      .setOrigin(0, 0).setAlpha(alpha).setStrokeStyle(px(1.5), card.companyColor, card.accessible ? 0.75 : 0.25);
+      .setOrigin(0, 0).setAlpha(alpha).setStrokeStyle(px(1.5), card.companyColor, card.accessible ? 0.75 : 0.4);
     this.addC(panel);
     this.addC(this.add.text(px(x + DR_CARD_W - 4), px(y + 5), `LV${String(card.levelRequired)}`, {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`,
-      color: cssColor(card.accessible ? card.companyColor : 0x334455),
+      color: cssColor(card.accessible ? card.companyColor : lockedNameColor),
     }).setOrigin(1, 0).setAlpha(alpha));
     const kindColor = card.kindLabel === 'ACTIVE' ? PALETTE.generatorAmber : 0x7788aa;
     this.addC(this.add.text(px(x + 4), px(y + 5), card.kindLabel, {
@@ -881,16 +1011,16 @@ export class HubScene extends Phaser.Scene {
     const iconX = px(x + DR_CARD_W / 2);
     const iconY = px(y + 28);
     const iconGfx = this.add.graphics().setBlendMode(Phaser.BlendModes.ADD).setAlpha(alpha);
-    iconGfx.fillStyle(card.companyColor, card.accessible ? 0.08 : 0.04);
+    iconGfx.fillStyle(card.companyColor, card.accessible ? 0.08 : 0.05);
     iconGfx.fillCircle(iconX, iconY, px(14));
-    iconGfx.fillStyle(card.companyColor, card.accessible ? 0.22 : 0.08);
+    iconGfx.fillStyle(card.companyColor, card.accessible ? 0.22 : 0.12);
     iconGfx.fillCircle(iconX, iconY, px(9));
-    iconGfx.fillStyle(card.companyColor, card.accessible ? 0.75 : 0.3);
+    iconGfx.fillStyle(card.companyColor, card.accessible ? 0.75 : 0.4);
     iconGfx.fillCircle(iconX, iconY, px(5));
     this.addC(iconGfx);
     this.addC(this.add.text(px(x + DR_CARD_W / 2), px(y + 50), card.name, {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(11))}px`,
-      color: cssColor(card.accessible ? card.companyColor : 0x334455),
+      color: cssColor(card.accessible ? card.companyColor : lockedNameColor),
       align: 'center', wordWrap: { width: px(DR_CARD_W - 10) },
     }).setOrigin(0.5, 0).setAlpha(alpha));
     if (card.description) {
@@ -898,7 +1028,7 @@ export class HubScene extends Phaser.Scene {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`,
         color: cssColor(0x9999bb), align: 'center',
         wordWrap: { width: px(DR_CARD_W - 10) },
-      }).setOrigin(0.5, 0).setAlpha(card.accessible ? 0.85 : 0.3));
+      }).setOrigin(0.5, 0).setAlpha(card.accessible ? 0.85 : 0.55));
     }
   }
 
@@ -913,7 +1043,7 @@ export class HubScene extends Phaser.Scene {
     const devLabel = (): string => `DEV MODE  ${settings.devMode ? 'ON' : 'OFF'}`;
 
     const musicBtn = addTextButton(this, {
-      x: baseX, y: px(CONTENT_TOP + 36), label: musicLabel(),
+      x: baseX, y: px(CONTENT_TOP + SETTINGS_ROW_1_Y), originX: 0, originY: 0.5, label: musicLabel(),
       color: settings.musicMuted ? 0x666688 : PALETTE.shieldBlue, size: 14,
       onClick: () => {
         Sound.toggleMusic();
@@ -921,11 +1051,10 @@ export class HubScene extends Phaser.Scene {
         musicBtn.setStyle({ color: cssColor(Sound.isMusicMuted() ? 0x666688 : PALETTE.shieldBlue) });
       },
     });
-    musicBtn.setOrigin(0, 0.5);
     this.addC(musicBtn);
 
     const sfxBtn = addTextButton(this, {
-      x: baseX, y: px(CONTENT_TOP + 88), label: sfxLabel(),
+      x: baseX, y: px(CONTENT_TOP + SETTINGS_ROW_1_Y + SETTINGS_ROW_PITCH), originX: 0, originY: 0.5, label: sfxLabel(),
       color: settings.sfxMuted ? 0x666688 : PALETTE.shieldBlue, size: 14,
       onClick: () => {
         Sound.toggleSfx();
@@ -933,12 +1062,11 @@ export class HubScene extends Phaser.Scene {
         sfxBtn.setStyle({ color: cssColor(Sound.isSfxMuted() ? 0x666688 : PALETTE.shieldBlue) });
       },
     });
-    sfxBtn.setOrigin(0, 0.5);
     this.addC(sfxBtn);
 
     const devOn = settings.devMode;
     const devBtn = addTextButton(this, {
-      x: baseX, y: px(CONTENT_TOP + 140), label: devLabel(),
+      x: baseX, y: px(CONTENT_TOP + SETTINGS_ROW_1_Y + 2 * SETTINGS_ROW_PITCH), originX: 0, originY: 0.5, label: devLabel(),
       color: devOn ? PALETTE.generatorAmber : 0x666688, size: 14,
       onClick: () => {
         this.save = { ...this.save, devMode: devOn ? false : true };
@@ -946,15 +1074,26 @@ export class HubScene extends Phaser.Scene {
         this.scene.restart();
       },
     });
-    devBtn.setOrigin(0, 0.5);
     this.addC(devBtn);
 
-    const resetY = devOn ? CONTENT_TOP + 296 : CONTENT_TOP + 192;
+    const howToPlayBtn = addTextButton(this, {
+      x: baseX, y: px(CONTENT_TOP + SETTINGS_HOW_TO_PLAY_Y), originX: 0, originY: 0.5, label: 'HOW TO PLAY',
+      color: PALETTE.weaponCyan, size: 14,
+      onClick: () => { this.showTour(); },
+    });
+    this.addC(howToPlayBtn);
+
+    // devOff: one row-pitch below HOW TO PLAY. devOn: two row-pitches below the dev
+    // tools section's first button (coins, stars, then reset) — both derived from
+    // SETTINGS_ROW_PITCH, not hand-copied (a prior version hardcoded +362/+244 as
+    // literals with a comment claiming they were "computed" when they weren't —
+    // Fable's post-implementation review caught the contradiction).
+    const resetY = devOn ? CONTENT_TOP + DEV_TOOLS_START_Y + 2 * SETTINGS_ROW_PITCH : CONTENT_TOP + SETTINGS_HOW_TO_PLAY_Y + SETTINGS_ROW_PITCH;
     let resetPending = false;
     const resetLabel = (): string => resetPending ? '▸ CONFIRM RESET' : 'RESET PROGRESS';
     const resetColor = (): number => resetPending ? 0xff4444 : 0x664444;
     const resetBtn = addTextButton(this, {
-      x: baseX, y: px(resetY), label: resetLabel(), color: resetColor(), size: 14,
+      x: baseX, y: px(resetY), originX: 0, originY: 0.5, label: resetLabel(), color: resetColor(), size: 14,
       onClick: () => {
         if (!resetPending) {
           resetPending = true;
@@ -966,7 +1105,6 @@ export class HubScene extends Phaser.Scene {
         }
       },
     });
-    resetBtn.setOrigin(0, 0.5);
     this.addC(resetBtn);
 
     // Right column: About
@@ -980,35 +1118,47 @@ export class HubScene extends Phaser.Scene {
       wordWrap: { width: px(rightColW) },
     }));
 
-    if (devOn) {
-      const coinsBtn = addTextButton(this, {
-        x: baseX, y: px(CONTENT_TOP + 192), label: 'ADD 999999 COINS',
-        color: PALETTE.generatorAmber, size: 14,
-        onClick: () => {
-          this.save = { ...this.save, coins: this.save.coins + 999999 };
-          persistSave(this.save);
-          this.scene.restart();
-        },
-      });
-      coinsBtn.setOrigin(0, 0.5);
-      this.addC(coinsBtn);
+    if (devOn) this.buildDevToolsSection(baseX);
+  }
 
-      const starsBtn = addTextButton(this, {
-        x: baseX, y: px(CONTENT_TOP + 244), label: 'UNLOCK ALL STARS',
-        color: PALETTE.generatorAmber, size: 14,
-        onClick: () => {
-          const allStars: Record<string, string[]> = {};
-          for (const mission of ALL_MISSIONS) {
-            if (mission.stars.length > 0) allStars[mission.id] = mission.stars.map((s) => s.id);
+  /** Save-mutating dev cheats — visually separated (own header, warning color) from
+   * MUSIC/SFX above so they don't read as ordinary player settings a tester might press
+   * by habit. */
+  private buildDevToolsSection(baseX: number): void {
+    this.addC(this.add.rectangle(baseX, px(CONTENT_TOP + DEV_TOOLS_HEADER_Y), px(180), px(1), 0x664422, 0.6).setOrigin(0, 0.5));
+    this.addC(addLabel(this, { x: baseX, y: px(CONTENT_TOP + DEV_TOOLS_HEADER_Y + 6), text: 'DEV TOOLS', color: 0xff8844, size: 9 }));
+
+    const coinsBtn = addTextButton(this, {
+      x: baseX, y: px(CONTENT_TOP + DEV_TOOLS_START_Y), originX: 0, originY: 0.5, label: 'ADD 999999 COINS',
+      color: PALETTE.generatorAmber, size: 14,
+      onClick: () => {
+        this.save = { ...this.save, coins: this.save.coins + 999999 };
+        persistSave(this.save);
+        this.scene.restart();
+      },
+    });
+    this.addC(coinsBtn);
+
+    const starsBtn = addTextButton(this, {
+      x: baseX, y: px(CONTENT_TOP + DEV_TOOLS_START_Y + SETTINGS_ROW_PITCH), originX: 0, originY: 0.5, label: 'UNLOCK ALL STARS',
+      color: PALETTE.generatorAmber, size: 14,
+      onClick: () => {
+        // Tutorials (forcedLoadout set) never earn missionStars in real play
+        // (applyMissionResult, SaveManager.ts) — including them here overcounts
+        // totalStars(save) past totalStarsAvailable()'s 50-star total (7 main
+        // missions only), producing an impossible "63/50" in the hub header.
+        const allStars: Record<string, string[]> = {};
+        for (const mission of ALL_MISSIONS) {
+          if (mission.forcedLoadout === undefined && mission.stars.length > 0) {
+            allStars[mission.id] = mission.stars.map((s) => s.id);
           }
-          this.save = { ...this.save, missionStars: allStars };
-          persistSave(this.save);
-          this.scene.restart();
-        },
-      });
-      starsBtn.setOrigin(0, 0.5);
-      this.addC(starsBtn);
-    }
+        }
+        this.save = { ...this.save, missionStars: allStars };
+        persistSave(this.save);
+        this.scene.restart();
+      },
+    });
+    this.addC(starsBtn);
   }
 
 }

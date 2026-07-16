@@ -42,7 +42,7 @@ import { DEFAULT_SUBSCRIPTION_CARD_IDS } from '../src/data/subscriptions';
 import { greedyPick, highValueTargetSideWeaponPolicy } from './policies';
 import { INTENDED_LOADOUT_LEVELS } from './loadoutPresets';
 
-const MISSIONS = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6'];
+const MISSIONS = ['m1', 'm2', 'm3', 'm3b', 'm4', 'm5', 'm6'];
 const RUNS_PER_CANDIDATE = 400; // search precision, not the 2000-run pnpm balance/final-verification precision
 // A representative level for optional slots (rear weapon, side weapon, ship) — these
 // aren't covered by INTENDED_LOADOUT_LEVELS, and the campaign-sim's own coin trajectory

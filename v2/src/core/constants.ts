@@ -33,3 +33,25 @@ export const OVERCHARGE_DAMAGE_MULT = 3;
 export const CARD_ACTION_REROLL = -2;
 export const CARD_ACTION_SKIP = -1;
 export const CARDS_PER_OFFER = 3;
+
+/** Blocker hold-charge → bonus support-call tiers (Item 6). `holdChargeTicks` only
+ * accrues while other enemies are also alive (see tick.ts's accrueHoldCharge), so these
+ * thresholds gate on sustained *real* pressure, not elapsed time alone. */
+export const HOLD_CHARGE_TIER_2_TICKS = 60; // ~6s of sustained pressure → 2 bonus calls
+export const HOLD_CHARGE_TIER_3_TICKS = 140; // ~14s of sustained pressure → 3 bonus calls
+
+/** Boss stall-and-bombard cycle (F3, docs/known-issues.md): the boss alternates
+ * APPROACH (closes distance at its normal `speed`) and STALL (speed 0 — it stops to
+ * bombard instead of closing in) in a repeating cycle, tracked via `EnemyState.aliveTicks`
+ * (see conveyor.ts's `bossEffectiveSpeed`). This is what stops the boss from simply
+ * walking into the player and winning the mission via collision before weapon DPS ever
+ * gets a real shot at it — the data-only fix (raising `shotDamage`) was tried and
+ * reverted; it made collision costlier without changing collision vs. weapon-kill odds
+ * at all, since that ratio is governed by time-to-collision vs. time-to-kill, which
+ * `shotDamage` never touches. Values chosen to roughly stretch time-to-collision at
+ * BOSS.speed=0.25 from 40s (constant walk) to ~93s (43% duty cycle) — comfortably past
+ * the ~63s a full weapon-kill already takes post-spawn (mission-fun-review.md F3), so
+ * DPS wins the race in most runs instead of losing it, while collision still remains
+ * a real (if now rarer) fallback for under-geared runs rather than a categorical block. */
+export const BOSS_APPROACH_TICKS = 60; // 6s advancing
+export const BOSS_STALL_TICKS = 80; // 8s stalled — the "bombard" half of the cycle

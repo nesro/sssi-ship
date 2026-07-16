@@ -12,7 +12,7 @@ import type { CoreState } from './types';
  * part of the determinism contract — replays break if it changes. It must match the call
  * order in the body exactly:
  * energy → timeline/spawns → enemy regen → ship fire → enemy fire → movement →
- * shield pulse → prune effects → bonus calls → outcome.
+ * shield pulse → prune effects → hold-charge accrual → bonus calls → outcome.
  *
  * While an ability offer is pending the sim is paused: this function returns without
  * advancing. Resolve the offer (resolveAbilityAction) to resume.
@@ -37,10 +37,24 @@ export function advanceTick(state: CoreState): void {
   advanceEnemies(state, stats);
   pulseShield(state, stats);
   pruneExpiredEffects(state);
+  accrueHoldCharge(state);
   maybeTriggerBonusCall(state);
 
   resolveOutcome(state);
   checkNarratorEvents(state);
+}
+
+/**
+ * A blocking enemy's hold-charge accrues only while at least one other enemy is also
+ * alive on the conveyor — the instant the lane clears to just the blocker, charge
+ * freezes and can't resume on its own, since the blocker itself keeps blocking new
+ * spawns (Item 6: "charge accrues only under pressure", not a risk-free wait).
+ */
+function accrueHoldCharge(state: CoreState): void {
+  if (state.enemies.length <= 1) return;
+  for (const enemy of state.enemies) {
+    if (enemy.blocksConveyor) enemy.holdChargeTicks += 1;
+  }
 }
 
 function checkNarratorEvents(state: CoreState): void {

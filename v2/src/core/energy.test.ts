@@ -69,7 +69,8 @@ describe('regenerateEnergy: conditional output bonuses', () => {
     state.modifiers = { ...state.modifiers, bossAliveGenBonus: 0.5 };
     state.enemies = [{ id: 1, kind: 'boss', hp: 100, maxHp: 100, distance: 50, speed: 0,
       shootTimer: 10, ticksBetweenShots: 10, blocksConveyor: true, coinReward: 50,
-      isBoss: true, regenPerTick: 0, shotDamage: 5, critChance: 0, missChance: 0, critMult: 2 }];
+      isBoss: true, regenPerTick: 0, shotDamage: 5, critChance: 0, missChance: 0, critMult: 2,
+      holdChargeTicks: 0, aliveTicks: 0 }];
     state.ship.energy = 0;
     const stats = statsFor();
     regenerateEnergy(state, stats);

@@ -2,7 +2,13 @@
 
 // ---------- Component specs (what the shop sells; what a loadout equips) ----------
 
-export type WeaponKind = 'pulse' | 'ion' | 'scatter' | 'nova';
+// y2010 is a secret, deliberately-unbalanced Easter egg weapon (Nesro's original 2010
+// laser) — hidden in the shop until the campaign is beaten or dev mode is on (see
+// WEAPON_SYSTEM.isKindVisible, viewmodel/shopSystems.ts). Appended last (index 4) so
+// tools/loadoutPresets.ts's kindAt(WEAPON_KINDS, 0) — which assumes 'pulse' — is
+// unaffected. NOT tuned for balance on purpose; if you run pnpm tune/campaign/balance,
+// expect it to dominate every sweep it's included in — that's expected, not a bug.
+export type WeaponKind = 'pulse' | 'ion' | 'scatter' | 'nova' | 'y2010';
 export type RearWeaponKind = 'grenade' | 'flak' | 'plasma' | 'arc' | 'cluster';
 export type SideWeaponKind = 'focus' | 'flechette' | 'railgun' | 'orbital';
 
@@ -351,6 +357,14 @@ export interface EnemyState {
   critChance: number;
   missChance: number;
   critMult: number;
+  /** Ticks this enemy has spent alive on the conveyor while at least one other enemy
+   * was also present (Item 6). Only accrues for `blocksConveyor` enemies; only a
+   * `blocker`'s kill handler reads it to scale its bonus support-call payout. */
+  holdChargeTicks: number;
+  /** Ticks this enemy has been alive on the conveyor, unconditionally (F3). Only a
+   * `boss` reads this — to drive its approach/stall cycle (see conveyor.ts's
+   * `bossEffectiveSpeed`) — but it's simplest to track for every enemy uniformly. */
+  aliveTicks: number;
 }
 
 export type ShotEventKind = 'player-crit' | 'player-miss' | 'enemy-crit' | 'enemy-miss';
@@ -424,6 +438,12 @@ export interface CoreState {
   rearWeaponEnabled: boolean;
   /** Whether the shield pulses automatically. */
   autoShieldEnabled: boolean;
+  /** Player-marked front-weapon priority target (tap-to-target, front weapon only —
+   * fable-fun-review-followup.md Item 4). Soft priority: the front weapon prefers this
+   * enemy at target-slot 0 (full damage, no falloff) whenever it's still alive and
+   * present; otherwise falls back to today's front-most targeting unchanged. Never
+   * affects the rear or side weapons. */
+  priorityTargetId: number | null;
   /** Active abilities slotted into the ability bar (max 3). */
   equippedAbilities: EquippedAbility[];
   rerollsLeft: number;
@@ -435,6 +455,9 @@ export interface CoreState {
   boostTaps: { tick: number; slot: number }[];
   /** Ticks at which the player manually fired the side weapon. Recorded in replays. */
   sideWeaponTaps: number[];
+  /** Ticks at which `priorityTargetId` was changed (set or cleared). Recorded in
+   * replays, same pattern as `boostTaps`. */
+  priorityTargetTaps: { tick: number; enemyId: number | null }[];
   /** Tick the boss died to weapon fire, or null. Collisions don't count. */
   bossKillTick: number | null;
   shieldBroke: boolean;

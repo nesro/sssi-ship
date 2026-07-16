@@ -12,6 +12,7 @@ import {
 } from './hub';
 import type { HubUIState } from './hub';
 import { SUBSCRIPTIONS } from '../data/subscriptions';
+import { ALL_MISSIONS } from '../data/missions';
 
 beforeEach(() => {
   resetSave();
@@ -160,6 +161,32 @@ describe('computeKindRows — states', () => {
     const none = rows.find((r) => r.isNoneRow);
     expect(none?.rowState).toBe('equipped');
     expect(none?.badge).toBeNull();
+  });
+});
+
+describe('computeKindRows — y2010 secret weapon visibility', () => {
+  it('hidden on a fresh save (campaign not beaten, dev mode off)', () => {
+    const rows = computeKindRows({ config: WEAPON_SYSTEM, save: defaultSave(), playerStars: 0 }, null);
+    expect(rows.find((r) => r.kind === 'y2010')).toBeUndefined();
+  });
+
+  it('visible once the campaign is beaten (m6 in completedMissionIds)', () => {
+    const save = { ...defaultSave(), completedMissionIds: ['m6'] };
+    const rows = computeKindRows({ config: WEAPON_SYSTEM, save, playerStars: 0 }, null);
+    expect(rows.find((r) => r.kind === 'y2010')).toBeDefined();
+  });
+
+  it('visible with dev mode on, even without beating the campaign', () => {
+    const save = { ...defaultSave(), devMode: true };
+    const rows = computeKindRows({ config: WEAPON_SYSTEM, save, playerStars: 0 }, null);
+    expect(rows.find((r) => r.kind === 'y2010')).toBeDefined();
+  });
+
+  it('every other weapon kind is unaffected by the y2010 visibility gate', () => {
+    const rows = computeKindRows({ config: WEAPON_SYSTEM, save: defaultSave(), playerStars: 0 }, null);
+    for (const kind of ['pulse', 'scatter', 'ion', 'nova']) {
+      expect(rows.find((r) => r.kind === kind)).toBeDefined();
+    }
   });
 });
 
@@ -314,13 +341,17 @@ describe('computeLevelChips', () => {
 describe('price and star table invariants', () => {
   const ALL_SYSTEMS = [WEAPON_SYSTEM, REAR_WEAPON_SYSTEM, SIDE_WEAPON_SYSTEM, SHIELD_SYSTEM, GENERATOR_SYSTEM, MOTOR_SYSTEM, SHIP_SYSTEM];
 
+  // y2010 (WEAPON_SYSTEM) is excluded on purpose: it's a secret, deliberately-unbalanced
+  // Easter egg (hidden until campaign completion — see hasCompletedCampaign,
+  // SaveManager.ts), not a real situational sidegrade, so this invariant doesn't apply to
+  // it — its flat joke pricing is intentional, not a bug this test should catch.
   it('every kind within a system shares an identical price/star ladder — no kind is a hidden tier', () => {
     for (const config of ALL_SYSTEMS) {
       const [firstKind, ...restKinds] = config.kinds;
       if (firstKind === undefined) continue;
       const referencePrices = Array.from({ length: config.maxLevel }, (_, i) => config.itemPrice(firstKind, i + 1));
       const referenceStars = Array.from({ length: config.maxLevel }, (_, i) => config.itemStarsRequired(firstKind, i + 1));
-      for (const kind of restKinds) {
+      for (const kind of restKinds.filter((k) => k !== 'y2010')) {
         for (let level = 1; level <= config.maxLevel; level++) {
           expect(config.itemPrice(kind, level)).toBe(referencePrices[level - 1]);
           expect(config.itemStarsRequired(kind, level)).toBe(referenceStars[level - 1]);
@@ -331,7 +362,7 @@ describe('price and star table invariants', () => {
 
   it('every kind\'s price and star requirement strictly increase level to level', () => {
     for (const config of ALL_SYSTEMS) {
-      for (const kind of config.kinds) {
+      for (const kind of config.kinds.filter((k) => k !== 'y2010')) {
         for (let level = 2; level <= config.maxLevel; level++) {
           expect(config.itemPrice(kind, level)).toBeGreaterThan(config.itemPrice(kind, level - 1));
           expect(config.itemStarsRequired(kind, level)).toBeGreaterThan(config.itemStarsRequired(kind, level - 1));
@@ -460,6 +491,20 @@ describe('computeSettings', () => {
 });
 
 describe('computeGalaxyMap / computeMissionDetail', () => {
+  // GALAXY_NODES (a hardcoded position map, hub.ts) silently skips any mission whose
+  // id isn't in it — m3b shipped without an entry and never rendered on the map at
+  // all, with no error anywhere. This is the regression test for that class of bug:
+  // adding a mission to ALL_MISSIONS without also giving it a node must fail loudly.
+  it('every mission in ALL_MISSIONS gets a galaxy node — catches a mission added without one', () => {
+    // w0 ("Calibration Run") is a deliberate exception — a pre-hub first-launch
+    // mission (SaveManager.ts special-cases 'w0'), never meant to appear on the map.
+    const save = defaultSave();
+    const map = computeGalaxyMap(save, null);
+    const mappedIds = new Set(map.missions.map((m) => m.id));
+    const missing = ALL_MISSIONS.filter((m) => m.id !== 'w0' && !mappedIds.has(m.id)).map((m) => m.id);
+    expect(missing).toEqual([]);
+  });
+
   it('t1 is unlocked from the start; m1 is locked until t1 clears', () => {
     const save = defaultSave();
     const map = computeGalaxyMap(save, null);

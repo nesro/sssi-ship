@@ -1,14 +1,17 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  acceptOnboarding,
   applyMissionResult,
   buildLoadout,
   buySupplyCharge,
   defaultSave,
+  hasCompletedCampaign,
   isMissionUnlocked,
   loadSave,
   persistSave,
   resetSave,
+  skipTutorials,
   switchCost,
   switchItem,
   switchRearWeapon,
@@ -136,6 +139,50 @@ describe('mission gating', () => {
     }
     expect(isMissionUnlocked(save, 'm3')).toBe(true);
     expect(isMissionUnlocked(save, 'm4')).toBe(false);
+  });
+});
+
+describe('onboarding', () => {
+  it('a fresh save has not seen onboarding', () => {
+    expect(defaultSave().onboardingSeen).toBeUndefined();
+  });
+
+  it('acceptOnboarding only sets the seen flag — no other mutation, tutorials stay playable', () => {
+    const save = defaultSave();
+    const after = acceptOnboarding(save);
+    expect(after.onboardingSeen).toBe(true);
+    expect(after.completedMissionIds).toEqual([]);
+    expect(after.coins).toBe(save.coins);
+    expect(isMissionUnlocked(after, 'm1')).toBe(false);
+  });
+
+  it('skipTutorials marks t1-t4 completed, unlocks m1, sets onboardingSeen, and grants zero coins', () => {
+    const save = defaultSave();
+    const after = skipTutorials(save);
+    expect(after.onboardingSeen).toBe(true);
+    expect(after.completedMissionIds).toEqual(expect.arrayContaining(['t1', 't2', 't3', 't4']));
+    expect(isMissionUnlocked(after, 'm1')).toBe(true);
+    expect(after.coins).toBe(save.coins);
+  });
+
+  it('skipTutorials is idempotent — safe to call on a save with some tutorials already completed', () => {
+    const save = { ...defaultSave(), completedMissionIds: ['t1', 't2'] };
+    const after = skipTutorials(save);
+    expect(after.completedMissionIds.filter((id) => id === 't1').length).toBe(1);
+    expect(after.completedMissionIds).toEqual(expect.arrayContaining(['t1', 't2', 't3', 't4']));
+  });
+});
+
+describe('hasCompletedCampaign', () => {
+  it('false on a fresh save', () => {
+    expect(hasCompletedCampaign(defaultSave())).toBe(false);
+  });
+
+  it('false after beating an earlier mission, only true once m6 is in completedMissionIds', () => {
+    const { save: afterM1 } = applyMissionResult(defaultSave(), victoryResult({ missionId: 'm1', earnedStarIds: [] }));
+    expect(hasCompletedCampaign(afterM1)).toBe(false);
+    const { save: afterM6 } = applyMissionResult(afterM1, victoryResult({ missionId: 'm6', earnedStarIds: [] }));
+    expect(hasCompletedCampaign(afterM6)).toBe(true);
   });
 });
 

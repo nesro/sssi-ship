@@ -64,6 +64,7 @@ export const INTENDED_LOADOUT_LEVELS: Record<string, IntendedLoadoutLevels> = {
   m1: { weaponLevel: 1, shieldLevel: 1, generatorLevel: 1, motorLevel: 1 },
   m2: { weaponLevel: 1, shieldLevel: 2, generatorLevel: 1, motorLevel: 1 },
   m3: { weaponLevel: 2, shieldLevel: 1, generatorLevel: 2, motorLevel: 1 },
+  m3b: { weaponLevel: 2, shieldLevel: 2, generatorLevel: 2, motorLevel: 1 },
   m4: { weaponLevel: 2, shieldLevel: 2, generatorLevel: 2, motorLevel: 1 },
   m5: { weaponLevel: 3, shieldLevel: 2, generatorLevel: 2, motorLevel: 2 },
   m6: { weaponLevel: 4, shieldLevel: 3, generatorLevel: 3, motorLevel: 1 },
@@ -89,6 +90,51 @@ export function intendedLoadoutForMission(missionId: string, shieldKindIndex = 0
     shield: shieldSpecAtLevel(kindAt(SHIELD_KINDS, shieldKindIndex), levels.shieldLevel),
     generator: generatorSpecAtLevel(kindAt(GENERATOR_KINDS, 0), levels.generatorLevel),
     motor: motorSpecAtLevel(kindAt(MOTOR_KINDS, 0), levels.motorLevel),
+    supplies: [],
+    subscriptionCardIds: DEFAULT_SUBSCRIPTION_CARD_IDS,
+  };
+}
+
+/**
+ * Fixed, mission-independent reference loadouts for the T3/T4 time-star tiers (F4,
+ * docs/known-issues.md, decision 2026-07-15 + investigation). T1/T2 stay pinned to
+ * each mission's own `intendedLoadoutForMission` (unchanged) — this is specifically
+ * for T3/T4, which need to be objectively *faster* clears (via a compressed timeline),
+ * not just a percentile spread of the same run.
+ *
+ * A first attempt pairing only the faster motor with a bumped generator (motor-2/3 +
+ * everything else at the mission's own intended level) measured as still completely
+ * unwinnable on m1/m3 even at max generator (0% at 300 runs) — motor level compresses
+ * the *timeline* (2.0x/3.0x at motor-2/3), not just power draw, so the real requirement
+ * is more DPS to keep pace with a 2-3x faster spawn schedule, not more energy. Sweeping
+ * weapon level confirmed this: m1 needed weapon Lv5 (not just a higher generator) to
+ * clear at motor-3. These two fixed tiers were verified at 500 runs/mission across all
+ * 7 main missions: T3 ≥98%, T4 100% everywhere — a reliable, uniform "if you can afford
+ * this gear, you can beat this tier" bar, independent of any one mission's own budget.
+ */
+export function timeStarT3Loadout(): LoadoutSnapshot {
+  return {
+    ship: shipById(DEFAULT_SHIP_ID),
+    weapon: weaponSpecAtLevel(kindAt(WEAPON_KINDS, 0), 4),
+    rearWeapon: null,
+    sideWeapon: null,
+    shield: shieldSpecAtLevel(kindAt(SHIELD_KINDS, 0), 3),
+    generator: generatorSpecAtLevel(kindAt(GENERATOR_KINDS, 0), 5),
+    motor: motorSpecAtLevel(kindAt(MOTOR_KINDS, 0), 2),
+    supplies: [],
+    subscriptionCardIds: DEFAULT_SUBSCRIPTION_CARD_IDS,
+  };
+}
+
+export function timeStarT4Loadout(): LoadoutSnapshot {
+  return {
+    ship: shipById(DEFAULT_SHIP_ID),
+    weapon: weaponSpecAtLevel(kindAt(WEAPON_KINDS, 0), 5),
+    rearWeapon: null,
+    sideWeapon: null,
+    shield: shieldSpecAtLevel(kindAt(SHIELD_KINDS, 0), 4),
+    generator: generatorSpecAtLevel(kindAt(GENERATOR_KINDS, 0), 5),
+    motor: motorSpecAtLevel(kindAt(MOTOR_KINDS, 0), 3),
     supplies: [],
     subscriptionCardIds: DEFAULT_SUBSCRIPTION_CARD_IDS,
   };

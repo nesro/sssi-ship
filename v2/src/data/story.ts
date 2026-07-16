@@ -4,7 +4,8 @@
 export type NarratorTrigger =
   | 'mission-start'
   | 'first-support-call'
-  | 'boss-appear';
+  | 'boss-appear'
+  | 'first-booster-appear';
 
 interface NarratorLine {
   trigger: NarratorTrigger;
@@ -51,6 +52,12 @@ const STORY_LINES: Record<string, NarratorLine[]> = {
     {
       trigger: 'first-support-call',
       text: 'NOVAK COMMAND: Power support inbound. A generator card will stabilise your energy margin — take it.',
+    },
+  ],
+  m3b: [
+    {
+      trigger: 'first-booster-appear',
+      text: 'NOVAK COMMAND: That escort is feeding regen to the ship ahead of it. Mark the booster — your forward battery will do the rest.',
     },
   ],
   m6: [

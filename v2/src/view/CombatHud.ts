@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import type { CoreState, EnemyState } from '../core/types';
+import { TICKS_PER_SECOND } from '../core/constants';
 import { computeCombatHudViewModel, HULL_GREEN } from '../viewmodel/combat';
-import type { BarViewModel } from '../viewmodel/combat';
+import type { BarViewModel, StarIndicatorViewModel } from '../viewmodel/combat';
 import { cssColor, PALETTE } from './palette';
 import { fontPx, INFO_PANEL_W, px } from './layout';
 import { UI_FONT } from './widgets';
@@ -20,14 +21,23 @@ const VALUE_X = INFO_PANEL_W - 4;         // value text right edge (panel-intern
 const STATS_Y = ROW_TOP + 4 * ROW_GAP + 12;  // = 106
 const STAT_LINE_GAP = 12;
 
+// Item 3 (fable-fun-review-followup.md): live star progress, below the stat lines
+// (STATS_Y..142) and above CombatScene's "ABILITIES" header (fixed at y=180).
+const STAR_ROW_Y = 158;
+const COUNTDOWN_Y = 172;
+const STAR_FAMILIES: { family: StarIndicatorViewModel['family']; label: string; x: number }[] = [
+  { family: 'all-kills', label: 'NO HITS', x: 28 },
+  { family: 'shield-unbroken', label: 'SHIELD', x: 92 },
+];
+
 // Fixed per-row name + color, set once at construction (matches the real HUD, where
-// only the ENRG label recolors dynamically for brownout and the MISS/BOSS label only
+// only the ENRG label recolors dynamically for brownout and the PROG/BOSS label only
 // ever changes its text, never its color).
 const ROW_LABELS = [
   { label: 'HULL', color: HULL_GREEN },
   { label: 'SHLD', color: PALETTE.shieldBlue },
   { label: 'ENRG', color: PALETTE.generatorAmber },
-  { label: 'MISS', color: PALETTE.weaponCyan },
+  { label: 'PROG', color: PALETTE.weaponCyan },
 ] as const;
 
 /** Left control panel: 4 compact horizontal stat bars + stat lines. Reads a computeCombatHudViewModel() every frame — no game logic here. */
@@ -42,6 +52,8 @@ export class CombatHud {
     Phaser.GameObjects.Text,
     Phaser.GameObjects.Text,
   ];
+  private readonly starIcons: { dot: Phaser.GameObjects.Arc; label: Phaser.GameObjects.Text }[];
+  private readonly countdownText: Phaser.GameObjects.Text;
 
   constructor(scene: Phaser.Scene) {
     this.bgGfx   = scene.add.graphics().setDepth(5);
@@ -59,6 +71,11 @@ export class CombatHud {
         .setDepth(11),
     );
 
+    // A dark stroke, not just the fill color, is what actually fixes the legibility bug
+    // (fable-fun-review-followup.md's screenshot pass): this text sits directly on top of
+    // its own bar's fill, and at high fill% a bright same-hue background swallows the
+    // leading digit (78/80 misread as 8/80) — a fill-independent outline reads correctly
+    // regardless of what's rendered underneath.
     this.values = ROW_LABELS.map((row, i) =>
       scene.add
         .text(px(VALUE_X), px(ROW_TOP + i * ROW_GAP), '', {
@@ -66,6 +83,8 @@ export class CombatHud {
           fontSize: `${String(fontPx(7))}px`,
           color: cssColor(row.color),
           align: 'right',
+          stroke: cssColor(PALETTE.backgroundNearBlack),
+          strokeThickness: px(1.6),
         })
         .setOrigin(1, 0.5)
         .setAlpha(0.9)
@@ -80,10 +99,27 @@ export class CombatHud {
       scene.add.text(px(panelCX), px(STATS_Y + STAT_LINE_GAP * 2), '', statsStyle).setOrigin(0.5, 0).setDepth(11),
       scene.add.text(px(panelCX), px(STATS_Y + STAT_LINE_GAP * 3), '', statsStyle).setOrigin(0.5, 0).setDepth(11),
     ];
+
+    // Fable's 2nd pass: at the original px(3) dot + 7px font, these were effectively
+    // invisible in an actual screenshot — a bigger dot with its own contrast ring plus a
+    // stroked label (same fill-independent-outline trick as the bar values above) actually
+    // reads at native resolution instead of just existing in the DOM.
+    this.starIcons = STAR_FAMILIES.map((f) => ({
+      dot: scene.add.circle(px(f.x - 9), px(STAR_ROW_Y), px(4.5), 0x334455)
+        .setStrokeStyle(px(1), PALETTE.backgroundNearBlack, 0.8).setDepth(11),
+      label: scene.add.text(px(f.x), px(STAR_ROW_Y), f.label, {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: '#556677',
+        stroke: cssColor(PALETTE.backgroundNearBlack), strokeThickness: px(1.4),
+      }).setOrigin(0, 0.5).setDepth(11),
+    }));
+    this.countdownText = scene.add.text(px(BAR_LABEL_X), px(COUNTDOWN_Y), '', {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: cssColor(PALETTE.weaponCyan),
+      stroke: cssColor(PALETTE.backgroundNearBlack), strokeThickness: px(1.4),
+    }).setOrigin(0, 0.5).setDepth(11);
   }
 
-  update(state: CoreState, boss: EnemyState | null, progressFrac: number): void {
-    const vm = computeCombatHudViewModel(state, boss, progressFrac);
+  update(state: CoreState, boss: EnemyState | null, progressFrac: number, alreadyEarnedStarIds: string[]): void {
+    const vm = computeCombatHudViewModel(state, boss, progressFrac, alreadyEarnedStarIds);
     const bars: BarViewModel[] = [vm.hull, vm.shield, vm.energy, vm.missionOrBoss];
 
     this.bgGfx.clear();
@@ -102,6 +138,29 @@ export class CombatHud {
     this.statsTexts[1].setText(vm.timeLine);
     this.statsTexts[2].setText(vm.damageRangeLine);
     this.statsTexts[3].setText(vm.critLine);
+
+    this.renderStarIndicators(vm.starIndicators, vm.timeStarTicksRemaining);
+  }
+
+  private renderStarIndicators(indicators: StarIndicatorViewModel[], ticksRemaining: number | null): void {
+    const byFamily = new Map(indicators.map((i) => [i.family, i]));
+    STAR_FAMILIES.forEach((f, i) => {
+      const icon = this.starIcons[i];
+      if (icon === undefined) return;
+      const status = byFamily.get(f.family);
+      icon.dot.setVisible(status !== undefined);
+      icon.label.setVisible(status !== undefined);
+      if (status === undefined) return;
+      icon.dot.setFillStyle(status.onTrack ? 0x44ff66 : 0xff4444);
+      icon.label.setColor(cssColor(status.onTrack ? 0xaaffcc : 0xff9999));
+    });
+
+    if (ticksRemaining === null) {
+      this.countdownText.setVisible(false);
+      return;
+    }
+    this.countdownText.setVisible(true);
+    this.countdownText.setText(`TIME STAR  ${(ticksRemaining / TICKS_PER_SECOND).toFixed(1)}s`);
   }
 
   private renderBar(bar: BarViewModel, index: number): void {

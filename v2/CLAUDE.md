@@ -1,8 +1,10 @@
 # Nesro Nova v2 — Agent orientation guide
 
-Read `../GAME_DESIGN.md` **first** — it is the single source of truth for all design
-decisions (confirmed by Tomáš on 2026-07-01). Do not re-litigate anything settled there.
-This file covers how the v2 codebase itself is organized and the rules for working in it.
+Read `../GAME_DESIGN.md` **first** — it's a short index into `../docs/design/`, the single
+source of truth for all design decisions (confirmed by Tomáš on 2026-07-01, restructured into
+topic files 2026-07-15). Read the topic file(s) relevant to what you're working on; do not
+re-litigate anything settled there. This file covers how the v2 codebase itself is organized
+and the rules for working in it.
 
 ## What this is
 
@@ -25,6 +27,15 @@ tree is a **read-only reference corpus** — port knowledge, never code (except
 5. **Resource mechanics are slopes, never cliffs.** The brownout rule (fire interval
    stretches below 30% energy, capped at 2×, never stops) exists because v1's binary
    energy gate created an unrecoverable death spiral.
+
+## Known issues & gaps (mandatory)
+
+**When you find a gap, bug, inconsistency, or a design question with no clear answer —
+document it immediately in `../docs/known-issues.md`, even if it's out of scope for what
+you're doing right now.** That file is the durable catch-all; without it, findings from
+one conversation evaporate once the session ends. Check that file before starting new
+work in an area, and move an entry to its "Resolved" section (with date + what fixed it)
+once you close it out — don't just delete it.
 
 ## How to run
 

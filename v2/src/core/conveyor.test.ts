@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { COLLISION_DAMAGE_MULTIPLIER } from './constants';
+import { BOSS_APPROACH_TICKS, BOSS_STALL_TICKS, COLLISION_DAMAGE_MULTIPLIER } from './constants';
 import { advanceEnemies } from './conveyor';
 import { FIXTURE_LOADOUT, FIXTURE_MISSION, FIXTURE_SHIP, makeFixtureEnemy } from './fixtures';
 import { computeEffectiveStats } from './stats';
@@ -66,5 +66,53 @@ describe('advanceEnemies', () => {
     state.enemies = [makeFixtureEnemy({ distance: 1, speed: 2, shotDamage })];
     advanceEnemies(state, computeEffectiveStats(loadout, state.modifiers));
     expect(state.ship.hull).toBe(state.ship.maxHull - shotDamage * COLLISION_DAMAGE_MULTIPLIER * 0.5);
+  });
+});
+
+describe('advanceEnemies: boss stall-and-bombard cycle (F3)', () => {
+  it('a boss moves normally during the approach phase', () => {
+    const state = freshState();
+    state.enemies = [makeFixtureEnemy({ kind: 'boss', distance: 50, speed: 2, aliveTicks: 0 })];
+    advanceEnemies(state, statsOf(state));
+    expect(state.enemies[0]?.distance).toBe(48); // full speed, same as any other enemy
+  });
+
+  it('a boss does not move at all during the stall phase', () => {
+    const state = freshState();
+    // aliveTicks lands inside the stall window (just past the approach ticks).
+    state.enemies = [makeFixtureEnemy({
+      kind: 'boss', distance: 50, speed: 2, aliveTicks: BOSS_APPROACH_TICKS,
+    })];
+    advanceEnemies(state, statsOf(state));
+    expect(state.enemies[0]?.distance).toBe(50); // unchanged — stalled
+  });
+
+  it('a boss resumes moving once the stall phase ends and the cycle repeats', () => {
+    const state = freshState();
+    state.enemies = [makeFixtureEnemy({
+      kind: 'boss', distance: 50, speed: 2, aliveTicks: BOSS_APPROACH_TICKS + BOSS_STALL_TICKS,
+    })];
+    advanceEnemies(state, statsOf(state));
+    expect(state.enemies[0]?.distance).toBe(48); // back in the approach phase of cycle 2
+  });
+
+  it('a non-boss enemy with the same speed ignores the cycle entirely, even mid-stall-window', () => {
+    const state = freshState();
+    state.enemies = [makeFixtureEnemy({
+      kind: 'tank', distance: 50, speed: 2, aliveTicks: BOSS_APPROACH_TICKS,
+    })];
+    advanceEnemies(state, statsOf(state));
+    expect(state.enemies[0]?.distance).toBe(48); // moves normally — the cycle is boss-only
+  });
+
+  it('aliveTicks increments every tick for every enemy, unconditionally', () => {
+    const state = freshState();
+    state.enemies = [
+      makeFixtureEnemy({ id: 1, kind: 'fodder', distance: 50, aliveTicks: 5 }),
+      makeFixtureEnemy({ id: 2, kind: 'boss', distance: 50, aliveTicks: 5 }),
+    ];
+    advanceEnemies(state, statsOf(state));
+    expect(state.enemies.find((e) => e.id === 1)?.aliveTicks).toBe(6);
+    expect(state.enemies.find((e) => e.id === 2)?.aliveTicks).toBe(6);
   });
 });

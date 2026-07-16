@@ -71,10 +71,14 @@ describe('computeResultViewModel', () => {
     expect(() => computeResultViewModel(victoryResult({ status: 'running' }), [])).toThrow(/still running/);
   });
 
-  it('shortName strips the mission-id prefix and uppercases the rest', () => {
+  it('shortName describes the star\'s real requirement, not its raw id', () => {
     const result = victoryResult({ earnedStarIds: [] });
     const vm = computeResultViewModel(result, []);
-    const hullStar = vm.stars.find((s) => s.id === 'm1-hull-50');
-    expect(hullStar?.shortName).toBe('HULL-50');
+    const byId = (id: string): string | undefined => vm.stars.find((s) => s.id === id)?.shortName;
+    expect(byId('m1-hull-50')).toBe('HULL 50%+');
+    expect(byId('m1-hull-90')).toBe('HULL 90%+');
+    expect(byId('m1-all-kills')).toBe('ALL KILLS');
+    expect(byId('m1-shield')).toBe('SHIELD UNBROKEN');
+    expect(byId('m1-time-t1')).toMatch(/^UNDER \d+S$/);
   });
 });

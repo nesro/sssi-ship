@@ -142,6 +142,8 @@ export function makeFixtureEnemy(overrides: Partial<EnemyState>): EnemyState {
     critChance: 0,
     missChance: 0,
     critMult: 2.0,
+    holdChargeTicks: 0,
+    aliveTicks: 0,
     ...overrides,
   };
 }

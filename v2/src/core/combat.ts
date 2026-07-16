@@ -1,4 +1,4 @@
-import { OVERCHARGE_DAMAGE_MULT } from './constants';
+import { HOLD_CHARGE_TIER_2_TICKS, HOLD_CHARGE_TIER_3_TICKS, OVERCHARGE_DAMAGE_MULT } from './constants';
 import { brownoutFactor } from './energy';
 import { computeEffectiveStats, isInvulnerable } from './stats';
 import type { EffectiveStats } from './stats';
@@ -29,7 +29,9 @@ export function fireShipWeapon(state: CoreState, stats: EffectiveStats): void {
   const shotDamage = baseDamage * computeConditionalDmgMult(state, stats, mods);
 
   const effectiveTargets = computeTargetCount(state, stats, mods);
-  const targets = selectTargets(state.enemies, effectiveTargets, mods.haywireTargeting, state.rng);
+  const targets = selectTargets(
+    state.enemies, effectiveTargets, mods.haywireTargeting, state.rng, state.priorityTargetId,
+  );
   const weapon = state.loadout.weapon;
 
   let hitCount = 0;
@@ -74,13 +76,42 @@ export function fireShipWeapon(state: CoreState, stats: EffectiveStats): void {
   state.ship.fireTimer += (stats.weaponInterval * stretch) / rateDivisor;
 }
 
-/** Enemy regenerates HP before the ship fires (guardian tutorial mechanic). */
+/**
+ * Enemy regenerates HP before the ship fires. Two mechanisms share the `regenPerTick`
+ * field: most regenerating enemies (t3's guardian) heal themselves. `booster`
+ * (fable-fun-review-followup.md Item 7) instead grants its `regenPerTick` to whichever
+ * alive enemy is currently nearest-ahead of it — distance-based, recomputed every tick
+ * (decision #14: enemies move at independent speeds and can overtake each other, so a
+ * spawn-order rule would sometimes buff an enemy that's visually behind the booster).
+ * No stacking: each booster targets exactly one nearest-ahead enemy; if that enemy is
+ * itself another booster, the buff chains rather than two boosters ever double-feeding
+ * the same target directly.
+ */
 export function regenerateEnemies(state: CoreState): void {
   for (const enemy of state.enemies) {
-    if (enemy.regenPerTick > 0) {
-      enemy.hp = Math.min(enemy.maxHp, enemy.hp + enemy.regenPerTick);
+    if (enemy.regenPerTick <= 0) continue;
+    if (enemy.kind === 'booster') {
+      const target = nearestEnemyAhead(state.enemies, enemy);
+      if (target !== null) target.hp = Math.min(target.maxHp, target.hp + enemy.regenPerTick);
+      continue;
     }
+    enemy.hp = Math.min(enemy.maxHp, enemy.hp + enemy.regenPerTick);
   }
+}
+
+/** The alive enemy with the largest distance that is still smaller than `from`'s own
+ * distance — i.e. the closest enemy currently nearer to the ship than `from`. Null if
+ * `from` is already the closest (or only) enemy on the lane. Exported (not just used by
+ * regenerateEnemies) so CombatScene's booster-buff visual reuses the exact same
+ * adjacency rule rather than a view-side approximation that could silently diverge. */
+export function nearestEnemyAhead(enemies: EnemyState[], from: EnemyState): EnemyState | null {
+  let nearest: EnemyState | null = null;
+  for (const candidate of enemies) {
+    if (candidate.id === from.id) continue;
+    if (candidate.distance >= from.distance) continue; // not ahead of `from`
+    if (nearest === null || candidate.distance > nearest.distance) nearest = candidate;
+  }
+  return nearest;
 }
 
 /** Enemies shoot back while descending the lane. Shield absorbs first, remainder hits hull. */
@@ -193,6 +224,16 @@ export function toggleAutoShield(state: CoreState): void {
   state.autoShieldEnabled = !state.autoShieldEnabled;
 }
 
+/** Player-triggered: mark (or clear, with `null`) the front weapon's priority target
+ * (fable-fun-review-followup.md Item 4). Soft priority only — does not validate the
+ * enemy exists here; `selectTargets` falls back to front-most targeting on its own if
+ * the marked enemy is no longer alive/present by the time the weapon fires. Front
+ * weapon only, never rear or side weapons. */
+export function setPriorityTarget(state: CoreState, enemyId: number | null): void {
+  state.priorityTargetId = enemyId;
+  state.priorityTargetTaps.push({ tick: state.tick, enemyId });
+}
+
 /**
  * Player-triggered: activate the ability in the given slot. No-ops if on cooldown or
  * insufficient energy. The caller (view) is responsible for routing this correctly.
@@ -278,13 +319,24 @@ function selectTargets(
   count: number,
   haywire: boolean,
   rng: () => number,
+  priorityTargetId: number | null,
 ): EnemyState[] {
   if (haywire) {
     // HAYWIRE: pick one random enemy instead of front-most
     const idx = Math.floor(rng() * enemies.length);
     return [enemies[idx] as EnemyState];
   }
-  return [...enemies].sort((a, b) => a.distance - b.distance).slice(0, count);
+  const sorted = [...enemies].sort((a, b) => a.distance - b.distance);
+  if (priorityTargetId === null) return sorted.slice(0, count);
+  const priority = sorted.find((e) => e.id === priorityTargetId);
+  // Soft priority: falls straight back to front-most if the marked enemy is dead or
+  // was never in range — never wastes a shot idling on a target that no longer exists.
+  if (priority === undefined) return sorted.slice(0, count);
+  // Priority target takes slot 0 (full damage, no falloff — fable-fun-review-followup.md
+  // Item 4's specified multi-target interaction); remaining slots fill from front-most,
+  // excluding the priority target itself so it's never counted twice.
+  const rest = sorted.filter((e) => e.id !== priorityTargetId).slice(0, Math.max(0, count - 1));
+  return [priority, ...rest];
 }
 
 function computeSituationalMult(enemy: EnemyState, mods: RunModifiers): number {
@@ -339,7 +391,7 @@ function applyEnemyDeathEffects(
     state.ship.hull = Math.min(state.ship.maxHull, state.ship.hull + mods.hullPerKill);
   }
   if (enemy.blocksConveyor) {
-    state.bonusCallsPending += 1;
+    state.bonusCallsPending += enemy.kind === 'blocker' ? bonusCallsForHoldCharge(enemy.holdChargeTicks) : 1;
     if (mods.extraEnergyOnBlockerKill > 0) {
       state.ship.energy = Math.min(
         stats.generatorCapacity,
@@ -354,6 +406,15 @@ function applyEnemyDeathEffects(
     );
   }
   return mods.killExplosionDamage;
+}
+
+/** Banks a blocker's accumulated hold-charge into its bonus-call payout at death
+ * (Item 6). Tiers, not a smooth curve — a clear "held long enough for the next tier"
+ * signal is easier to read mid-combat than a continuously scaling number. */
+export function bonusCallsForHoldCharge(holdChargeTicks: number): number {
+  if (holdChargeTicks >= HOLD_CHARGE_TIER_3_TICKS) return 3;
+  if (holdChargeTicks >= HOLD_CHARGE_TIER_2_TICKS) return 2;
+  return 1;
 }
 
 function removeDeadEnemies(state: CoreState, stats: EffectiveStats): void {

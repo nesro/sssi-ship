@@ -18,6 +18,7 @@ export const TEXTURE_KEYS = {
   guardian: 'enemy-guardian',
   turret: 'enemy-turret',
   kamikaze: 'enemy-kamikaze',
+  booster: 'enemy-booster',
   // Projectiles — one per weapon kind+tier
   laserPulse1: 'laser-pulse-1',
   laserPulse2: 'laser-pulse-2',
@@ -26,6 +27,7 @@ export const TEXTURE_KEYS = {
   laserScatter2: 'laser-scatter-2',
   laserNova1: 'laser-nova-1',
   laserNova2: 'laser-nova-2',
+  laserY2010: 'laser-y2010', // secret Easter egg weapon — the retired v1 zigzag shape
   // Weapon icons for shop list
   iconPulse1: 'icon-pulse-1',
   iconPulse2: 'icon-pulse-2',
@@ -34,6 +36,7 @@ export const TEXTURE_KEYS = {
   iconScatter2: 'icon-scatter-2',
   iconNova1: 'icon-nova-1',
   iconNova2: 'icon-nova-2',
+  iconY2010: 'icon-y2010',
   // Rear weapon projectiles — one per kind
   rearGrenade: 'rear-grenade',
   rearFlak:    'rear-flak',
@@ -175,6 +178,7 @@ export function iconTextureForWeaponId(weaponId: string): string {
   if (kind === 'ion')     return TEXTURE_KEYS.iconIon;
   if (kind === 'scatter') return upgraded ? TEXTURE_KEYS.iconScatter2 : TEXTURE_KEYS.iconScatter1;
   if (kind === 'nova')    return upgraded ? TEXTURE_KEYS.iconNova2    : TEXTURE_KEYS.iconNova1;
+  if (kind === 'y2010')   return TEXTURE_KEYS.iconY2010;
   console.warn(`Unknown weapon kind "${kind}" in iconTextureForWeaponId — falling back to pulse1`);
   return TEXTURE_KEYS.iconPulse1;
 }

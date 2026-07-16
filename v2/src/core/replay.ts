@@ -1,6 +1,6 @@
 import { CARD_ACTION_SKIP } from './constants';
 import { resolveAbilityAction } from './cards';
-import { fireSideWeapon } from './combat';
+import { fireSideWeapon, setPriorityTarget } from './combat';
 import { resolveNarrator } from './narrator';
 import { createCoreState } from './state';
 import { applyBoost } from './supplies';
@@ -24,6 +24,8 @@ export interface ReplayRecord {
   boostTaps: { tick: number; slot: number }[];
   /** Ticks at which the side weapon was manually fired. */
   sideWeaponTaps: number[];
+  /** Ticks at which the front-weapon priority target was set or cleared. */
+  priorityTargetTaps: { tick: number; enemyId: number | null }[];
   resultHash: string;
 }
 
@@ -41,10 +43,40 @@ export type BoostPolicy = (state: CoreState) => number | null;
 /** Returns true to fire the side weapon before the next tick. Defaults to never. */
 export type SideWeaponPolicy = (state: CoreState) => boolean;
 
+/**
+ * May flip `autoFireEnabled`/`rearWeaponEnabled`/`autoShieldEnabled` via the
+ * `toggle*` mutators in `combat.ts` before the next tick — models a player managing
+ * energy mid-combat (GAME_DESIGN.md §6's core skill loop). Defaults to never touching
+ * any toggle, i.e. today's always-on behavior. Like every other policy, sees only the
+ * current `CoreState` — no lookahead.
+ */
+export type TogglePolicy = (state: CoreState) => void;
+
+/**
+ * Read-only observer, called once per tick actually advanced (never during a paused
+ * narrator/offer resolution loop). Must not mutate `state` — it exists purely so
+ * external tooling (pacing/fun metrics) can accumulate per-tick history that
+ * `CoreState` itself doesn't retain, without adding any history array to the core.
+ * Never included in `hashCoreState`; cannot affect determinism.
+ */
+export type TickSampler = (state: CoreState) => void;
+
+/**
+ * Returns the enemy id to mark as the front weapon's priority target, `null` to clear
+ * the current mark, or `undefined` to leave it unchanged this tick (the common case —
+ * a policy only needs to act when it actually wants to change the mark, not every
+ * tick). Front weapon only (fable-fun-review-followup.md Item 4). Sees only the
+ * current `CoreState` — no lookahead, same constraint as every other policy.
+ */
+export type TargetPolicy = (state: CoreState) => number | null | undefined;
+
 export interface RunPolicies {
   pickAbility?: PickPolicy;
   useBoost?: BoostPolicy;
   useSideWeapon?: SideWeaponPolicy;
+  manageToggles?: TogglePolicy;
+  chooseTarget?: TargetPolicy;
+  sampleTick?: TickSampler;
   abilityPool?: AbilityDefinition[];
   maxTicks?: number;
 }
@@ -65,6 +97,9 @@ export function runMission(
   const pickAbility = policies.pickAbility ?? (() => CARD_ACTION_SKIP);
   const useBoost = policies.useBoost ?? (() => null);
   const useSideWeapon = policies.useSideWeapon ?? (() => false);
+  const manageToggles = policies.manageToggles ?? (() => {});
+  const chooseTarget = policies.chooseTarget ?? (() => undefined);
+  const sampleTick = policies.sampleTick ?? (() => {});
   const state = createCoreState(mission, loadout, seed, policies.abilityPool ?? []);
 
   while (state.status === 'running' && state.tick < maxTicks) {
@@ -76,7 +111,11 @@ export function runMission(
     const slot = useBoost(state);
     if (slot !== null) applyBoost(state, slot);
     if (useSideWeapon(state)) fireSideWeapon(state);
+    manageToggles(state);
+    const target = chooseTarget(state);
+    if (target !== undefined) setPriorityTarget(state, target);
     advanceTick(state);
+    sampleTick(state);
   }
   if (state.status === 'running') {
     throw new Error(
@@ -95,6 +134,7 @@ function buildReplayRecord(state: CoreState): ReplayRecord {
     cardPicks: [...state.abilityActions],
     boostTaps: [...state.boostTaps],
     sideWeaponTaps: [...state.sideWeaponTaps],
+    priorityTargetTaps: [...state.priorityTargetTaps],
     resultHash: hashCoreState(state),
   };
 }
@@ -113,6 +153,7 @@ export function verifyReplay(
     pickAbility: replayCardPolicy(record),
     useBoost: replayBoostPolicy(record),
     useSideWeapon: replaySideWeaponPolicy(record),
+    chooseTarget: replayTargetPolicy(record),
   });
   return rerun.replay.resultHash === record.resultHash;
 }
@@ -148,6 +189,19 @@ function replaySideWeaponPolicy(record: ReplayRecord): SideWeaponPolicy {
   };
 }
 
+/** Re-applies recorded priority-target taps at their original ticks, in order. */
+function replayTargetPolicy(record: ReplayRecord): TargetPolicy {
+  let cursor = 0;
+  return (state) => {
+    const tap = record.priorityTargetTaps[cursor];
+    if (tap !== undefined && tap.tick === state.tick) {
+      cursor += 1;
+      return tap.enemyId;
+    }
+    return undefined;
+  };
+}
+
 /** FNV-1a over the determinism-relevant fields of the final state. */
 export function hashCoreState(state: CoreState): string {
   const snapshot = JSON.stringify({
@@ -160,12 +214,15 @@ export function hashCoreState(state: CoreState): string {
     autoFireEnabled: state.autoFireEnabled,
     rearWeaponEnabled: state.rearWeaponEnabled,
     autoShieldEnabled: state.autoShieldEnabled,
+    priorityTargetId: state.priorityTargetId,
     equippedAbilities: state.equippedAbilities,
     shieldBroke: state.shieldBroke,
     bossKillTick: state.bossKillTick,
     spawnedCount: state.spawnedCount,
     firedNarratorTicks: state.firedNarratorTicks,
-    enemies: state.enemies.map((e) => ({ id: e.id, distance: e.distance, hp: e.hp })),
+    enemies: state.enemies.map((e) => ({
+      id: e.id, distance: e.distance, hp: e.hp, holdChargeTicks: e.holdChargeTicks, aliveTicks: e.aliveTicks,
+    })),
   });
   let hash = 0x811c9dc5;
   for (let i = 0; i < snapshot.length; i++) {

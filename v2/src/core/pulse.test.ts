@@ -140,6 +140,8 @@ const UNKILLABLE_ENEMY = (id: number, distance: number) => ({
   critChance: 0,
   missChance: 0,
   critMult: 1,
+  holdChargeTicks: 0,
+  aliveTicks: 0,
 });
 
 describe('Nova Wave weapon', () => {

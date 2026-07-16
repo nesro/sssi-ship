@@ -43,6 +43,13 @@ export interface SaveData {
   w0Completed?: boolean;
   /** Player's branch pick at the end of w0; used to open the right hub section on first load. */
   firstBranchChoice?: 'tutorial' | 'missions';
+  /** Set the moment OnboardingScene's tutorials-or-skip choice is made (either button) —
+   * absent/undefined on every pre-existing save means "hasn't seen it yet", the correct
+   * default with no migration needed. Deliberately distinct from a "fresh save" check
+   * (completedMissionIds.length === 0 && ...): "Start with tutorials" doesn't mutate
+   * anything else, so without this field the onboarding prompt and tour would reappear
+   * on every launch until the player finished a mission or earned a coin. */
+  onboardingSeen?: boolean;
 }
 
 const SAVE_VERSION = 13;
@@ -221,6 +228,13 @@ export function totalStars(save: SaveData): number {
   return Object.values(save.missionStars).reduce((sum, ids) => sum + ids.length, 0);
 }
 
+/** Has the player beaten the campaign (m6, the final mission)? Gates the secret y2010
+ * Easter-egg weapon (WEAPON_SYSTEM.isKindVisible, viewmodel/shopSystems.ts) — a reward
+ * for finishing the story, not a stars/coins purchase. */
+export function hasCompletedCampaign(save: SaveData): boolean {
+  return save.completedMissionIds.includes('m6');
+}
+
 /**
  * Completing a mission unlocks whatever it points to in `MISSION_UNLOCK_EDGES` — stars
  * are never required to progress (§9). A mission with no incoming edge (t1) is always
@@ -231,6 +245,22 @@ export function isMissionUnlocked(save: SaveData, missionId: string): boolean {
   const incoming = MISSION_UNLOCK_EDGES.filter(([, toId]) => toId === missionId);
   if (incoming.length === 0) return true;
   return incoming.some(([fromId]) => save.completedMissionIds.includes(fromId));
+}
+
+const TUTORIAL_MISSION_IDS = ['t1', 't2', 't3', 't4'];
+
+/** OnboardingScene's "Start with tutorials" choice: just marks the prompt seen, no
+ * other mutation — tutorials remain fully playable and rewarded normally. */
+export function acceptOnboarding(save: SaveData): SaveData {
+  return { ...save, onboardingSeen: true };
+}
+
+/** OnboardingScene's "Skip tutorials" choice: marks t1-t4 completed (so m1 unlocks via
+ * MISSION_UNLOCK_EDGES and t2-t4 don't sit around as unclaimed locked nodes) without
+ * granting their coin rewards — the player chose not to play them. */
+export function skipTutorials(save: SaveData): SaveData {
+  const completedMissionIds = [...new Set([...save.completedMissionIds, ...TUTORIAL_MISSION_IDS])];
+  return { ...save, completedMissionIds, onboardingSeen: true };
 }
 
 /** Builds the mission-start loadout snapshot from equipped items + owned supplies + subscription card pools. */

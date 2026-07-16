@@ -6,11 +6,15 @@
 // Usage: pnpm sim -- --mission m1 --runs 2000 --strategy random --loadout starter --percentiles
 // Usage: pnpm sim -- --mission t4 --runs 1000 --strategy greedy --loadout forced --use-supplies
 // Strategies: random (uniform pick) | greedy (biggest damage boost) | skip (never picks)
-// Loadouts: starter | mid | full | intended | forced
+// Loadouts: starter | mid | full | intended | forced | t3 | t4
 //   intended = the mission's own specific target loadout from GAME_DESIGN.md §13's
 //   balance table (a partial upgrade, e.g. m3 = Lv2 weapon + Lv2 generator, not a
 //   uniform tier) — use this, not starter/mid/full, when checking against that table.
 //   forced uses the mission's own forcedLoadout, required for tutorials.
+//   t3/t4 = the fixed, mission-independent reference loadouts for the T3/T4 time-star
+//   tiers (F4, docs/known-issues.md — weapon4/shield3/gen5/motor2 and
+//   weapon5/shield4/gen5/motor3, verified ≥98%/100% clear across every main mission).
+//   T1/T2 stay pinned to `intended` — only T3/T4 need a faster, gear-gated loadout.
 // --percentiles: suggests T4-T1 time-star thresholds from successful-run durations only,
 // per the 10th/25th/50th/75th percentile method in GAME_DESIGN.md §13. Output is a
 // suggestion to review, not an instruction to apply — mission-star values are tuned by
@@ -27,6 +31,10 @@
 //              full shield wastes it); damage-boost only when 3+ enemies are on screen
 //              (its 5s window is wasted on a lull). Models "uses supplies with
 //              reasonable judgment," not perfect optimal play.
+// --manage-toggles: models a player who cuts the rear weapon to recover from brownout
+// instead of leaving every toggle on for the whole mission (every strategy left energy
+// management entirely unmodeled before this flag existed — see tools/policies.ts's
+// brownoutAwareToggles). Off by default, matching every prior sim result's behavior.
 
 import { TICKS_PER_SECOND } from '../src/core/constants';
 import { runMission } from '../src/core/replay';
@@ -37,18 +45,19 @@ import type { LoadoutSnapshot } from '../src/core/types';
 import { abilityPoolForLoadout } from '../src/data/cards';
 import { ALL_MISSIONS, missionById } from '../src/data/missions';
 import { resolveForcedLoadout, STARTER_LOADOUT } from '../src/data/loadouts';
-import { intendedLoadoutForMission, starterKindLoadoutAtLevel } from './loadoutPresets';
-import { greedyPick, tapFirstChargedSupply, tapSuppliesReactively } from './policies';
+import { intendedLoadoutForMission, starterKindLoadoutAtLevel, timeStarT3Loadout, timeStarT4Loadout } from './loadoutPresets';
+import { alwaysOnToggles, brownoutAwareToggles, greedyPick, prioritizeHighValueTargets, tapFirstChargedSupply, tapSuppliesReactively } from './policies';
 
 interface CliOptions {
   missionId: string;
   runs: number;
   baseSeed: number;
   strategy: 'random' | 'greedy' | 'skip';
-  loadout: 'starter' | 'mid' | 'full' | 'intended' | 'forced';
+  loadout: 'starter' | 'mid' | 'full' | 'intended' | 'forced' | 't3' | 't4';
   percentiles: boolean;
   useSupplies: boolean;
   suppliesPolicy: 'naive' | 'reactive';
+  manageToggles: boolean;
 }
 
 const LOADOUTS: Record<'starter' | 'mid' | 'full', LoadoutSnapshot> = {
@@ -62,12 +71,13 @@ function parseArgs(rawArgv: string[]): CliOptions {
   const argv = rawArgv.filter((arg) => arg !== '--');
   const options: CliOptions = {
     missionId: 'm1', runs: 1000, baseSeed: 1, strategy: 'random', loadout: 'starter',
-    percentiles: false, useSupplies: false, suppliesPolicy: 'naive',
+    percentiles: false, useSupplies: false, suppliesPolicy: 'naive', manageToggles: false,
   };
   let i = 0;
   while (i < argv.length) {
     const flag = argv[i];
-    // --percentiles and --use-supplies are boolean switches (no value) — every other flag takes one.
+    // --percentiles, --use-supplies, and --manage-toggles are boolean switches (no
+    // value) — every other flag takes one.
     if (flag === '--percentiles') {
       options.percentiles = true;
       i += 1;
@@ -78,18 +88,23 @@ function parseArgs(rawArgv: string[]): CliOptions {
       i += 1;
       continue;
     }
+    if (flag === '--manage-toggles') {
+      options.manageToggles = true;
+      i += 1;
+      continue;
+    }
     const value = argv[i + 1];
     if (flag === undefined || value === undefined) break;
     if (flag === '--mission') options.missionId = value;
     else if (flag === '--runs') options.runs = parsePositiveInt(value, flag);
     else if (flag === '--seed') options.baseSeed = parsePositiveInt(value, flag);
     else if (flag === '--strategy') options.strategy = parseChoice(value, ['random', 'greedy', 'skip']);
-    else if (flag === '--loadout') options.loadout = parseChoice(value, ['starter', 'mid', 'full', 'intended', 'forced']);
+    else if (flag === '--loadout') options.loadout = parseChoice(value, ['starter', 'mid', 'full', 'intended', 'forced', 't3', 't4']);
     else if (flag === '--supplies-policy') options.suppliesPolicy = parseChoice(value, ['naive', 'reactive']);
     else {
       throw new Error(
         `Unknown flag "${flag}". Known: --mission --runs --seed --strategy --loadout ` +
-          `--percentiles --use-supplies --supplies-policy`,
+          `--percentiles --use-supplies --supplies-policy --manage-toggles`,
       );
     }
     i += 2;
@@ -115,12 +130,16 @@ function policiesFor(options: CliOptions, seed: number, loadout: LoadoutSnapshot
   const abilityPool = abilityPoolForLoadout(loadout);
   const boostPolicy = options.suppliesPolicy === 'reactive' ? tapSuppliesReactively : tapFirstChargedSupply;
   const boost = options.useSupplies ? { useBoost: boostPolicy } : {};
-  if (options.strategy === 'skip') return { abilityPool, ...boost };
+  const toggles = { manageToggles: options.manageToggles ? brownoutAwareToggles : alwaysOnToggles };
+  if (options.strategy === 'skip') return { abilityPool, ...boost, ...toggles };
   if (options.strategy === 'random') {
     const rng = mulberry32(seed ^ 0x5f3759df);
-    return { abilityPool, pickAbility: () => Math.floor(rng() * 3), ...boost };
+    return { abilityPool, pickAbility: () => Math.floor(rng() * 3), ...boost, ...toggles };
   }
-  return { abilityPool, pickAbility: greedyPick, ...boost };
+  // chooseTarget mirrors balance-sweep.ts's greedyPolicies (Item 7 note there) — greedy
+  // is this project's realistic-player proxy, and a realistic player acts on the
+  // in-game "tap to target it" hint, not just optimizes cards.
+  return { abilityPool, pickAbility: greedyPick, chooseTarget: prioritizeHighValueTargets, ...boost, ...toggles };
 }
 
 function resolveLoadout(options: CliOptions, mission: ReturnType<typeof missionById>): LoadoutSnapshot {
@@ -131,6 +150,8 @@ function resolveLoadout(options: CliOptions, mission: ReturnType<typeof missionB
     return resolveForcedLoadout(mission.forcedLoadout);
   }
   if (options.loadout === 'intended') return intendedLoadoutForMission(mission.id);
+  if (options.loadout === 't3') return timeStarT3Loadout();
+  if (options.loadout === 't4') return timeStarT4Loadout();
   return LOADOUTS[options.loadout];
 }
 
@@ -164,7 +185,7 @@ function main(): void {
   const suppliesLabel = options.useSupplies ? options.suppliesPolicy : 'false';
   console.log(
     `mission=${mission.id} runs=${String(options.runs)} strategy=${options.strategy} ` +
-      `loadout=${options.loadout} use-supplies=${suppliesLabel}`,
+      `loadout=${options.loadout} use-supplies=${suppliesLabel} manage-toggles=${String(options.manageToggles)}`,
   );
   console.log(`clear-rate=${clearRate.toFixed(1)}%  avg-duration=${avgSeconds.toFixed(1)}s (all runs, defeats included)`);
   for (const star of mission.stars) {

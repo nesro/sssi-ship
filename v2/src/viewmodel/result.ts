@@ -3,11 +3,12 @@
 
 import { TICKS_PER_SECOND } from '../core/constants';
 import type { MissionResult } from '../core/result';
+import type { StarFamily, StarSpec } from '../core/types';
 import { missionById } from '../data/missions';
 
 export interface StarResultViewModel {
   id: string;
-  shortName: string; // e.g. "FINISH-TIME"
+  shortName: string; // e.g. "UNDER 186S" — a player-readable label, not the raw star id
   // 'new' iff earned this run and not previously earned; 'earned' iff earned this run
   // but already had it; 'unearned' otherwise. Derived entirely from `result` +
   // `newStarIds` — NEVER from save.missionStars history (that's ever-earned, not
@@ -31,8 +32,20 @@ export interface ResultViewModel {
   buttons: ResultButtonSet;
 }
 
-function starShortName(id: string): string {
-  return id.split('-').slice(1).join('-').toUpperCase();
+/** Player-facing label built from the star's actual requirement, not its data id — the
+ * old `id.split('-').slice(1).join('-').toUpperCase()` just uppercased whatever the
+ * mission author happened to name the id (e.g. "m1-time-t1" -> "TIME-T1"), which told a
+ * player nothing about what they needed to do. */
+function starShortName(star: StarSpec): string {
+  const seconds = (ticks: number): string => String(Math.round(ticks / TICKS_PER_SECOND));
+  const family: StarFamily = star.family;
+  switch (family) {
+    case 'hull-above': return `HULL ${String(Math.round(star.threshold * 100))}%+`;
+    case 'all-kills': return 'ALL KILLS';
+    case 'shield-unbroken': return 'SHIELD UNBROKEN';
+    case 'finish-time': return `UNDER ${seconds(star.threshold)}S`;
+    case 'boss-time': return `BOSS UNDER ${seconds(star.threshold)}S`;
+  }
 }
 
 function computeStarState(id: string, earnedStarIds: string[], newStarIds: string[]): StarResultViewModel['state'] {
@@ -61,7 +74,7 @@ export function computeResultViewModel(result: MissionResult, newStarIds: string
     isTutorial,
     stars: isTutorial ? [] : mission.stars.map((star) => ({
       id: star.id,
-      shortName: starShortName(star.id),
+      shortName: starShortName(star),
       state: computeStarState(star.id, result.earnedStarIds, newStarIds),
     })),
     buttons: result.missionId === 'w0' && result.status === 'victory' ? { kind: 'w0-branch' } : { kind: 'standard' },

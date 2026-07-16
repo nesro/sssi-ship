@@ -51,7 +51,7 @@ import './localStorageShim';
 
 import { TICKS_PER_SECOND } from '../src/core/constants';
 import { runMission } from '../src/core/replay';
-import type { BoostPolicy, SideWeaponPolicy } from '../src/core/replay';
+import type { BoostPolicy, SideWeaponPolicy, TargetPolicy, TogglePolicy } from '../src/core/replay';
 import { buildMissionResult } from '../src/core/result';
 import type { MissionResult } from '../src/core/result';
 import type { LoadoutSnapshot } from '../src/core/types';
@@ -73,8 +73,8 @@ import {
 } from '../src/save/SaveManager';
 import { INTENDED_LOADOUT_LEVELS } from './loadoutPresets';
 import {
-  crowdSideWeaponPolicy, greedyPick, highValueTargetSideWeaponPolicy,
-  tapFirstChargedSupply, tapSuppliesReactively,
+  alwaysOnToggles, brownoutAwareToggles, crowdSideWeaponPolicy, greedyPick,
+  highValueTargetSideWeaponPolicy, prioritizeHighValueTargets, tapFirstChargedSupply, tapSuppliesReactively,
 } from './policies';
 import { RECOMMENDED_KIND_PER_MISSION } from './recommendedKinds.generated';
 
@@ -90,12 +90,41 @@ const DEFAULT_THOROUGH_N = 5000;
 const NEAR_MISS_HULL_THRESHOLD = 0.2;
 const COMBAT_MINUTES_TARGET = 50; // GAME_DESIGN.md §13: ~50min combat + ~20min shop/planning
 
+// ── "One hour of fun" score ─────────────────────────────────────────────────────
+// Composite score confirmed with Tomáš 2026-07-15: three sub-scores (completion,
+// time-fit, pacing-shape) combined via geometric mean — one weak dimension tanks the
+// total, since "one hour of FUN" is a compound goal, not an average of parts. Reuses
+// data summarizeArchetype already collects; runs no extra simulations. Failing
+// individual missions is explicitly NOT penalized (the player still nets coins and
+// keeps progressing, per §3's "never stuck" principle) — only permanently getting
+// stuck (patience-cap exhaustion) counts against the completion sub-score.
+
+// Aspirational full-experience target (combat + shop/planning), not the combat-only
+// COMBAT_MINUTES_TARGET above — deliberately scores against the real ~60-75min goal
+// now rather than the current honest ~30min baseline, so the score visibly improves
+// as real content (e.g. the follow-up plan's new mid-campaign mission) lands.
+const TARGET_TOTAL_MINUTES_MIN = 60;
+const TARGET_TOTAL_MINUTES_MAX = 75;
+// Estimated shop/planning time per mission — no live UI to measure, so this is a
+// labeled estimate, not a measurement. Derived from GAME_DESIGN §13's own breakdown
+// table (tutorials ~2min / early ~4min / mid ~6min / late ~8min ≈ 20min total across
+// 10 missions), not an arbitrary new guess.
+const SHOP_MINUTES_PER_MISSION_ESTIMATE = 2;
+// Points lost per minute outside the target band, either direction.
+const TIME_FIT_PENALTY_PER_MINUTE = 1.5;
+// Percentage-point spread in median-hull-at-clear across main missions needed for
+// full "real tension curve" credit — a flat campaign (spread near 0) scores low here
+// regardless of how easy or hard it is in aggregate.
+const PACING_SPREAD_TARGET_PP = 40;
+const PACING_SPREAD_WEIGHT = 70; // of pacing-shape's 100 points
+const PACING_FINALE_HARDEST_WEIGHT = 30; // of pacing-shape's 100 points, the rest
+
 // Tutorials cleared before m1 (confirmed route policy) — hardcoded, not derived from
 // MISSION_UNLOCK_EDGES, because the graph is agnostic to route order (m1 unlocks
 // immediately after t1 regardless); this array *is* the confirmed policy choice, not
 // something the graph shape alone determines.
-const MISSION_ROUTE = ['t1', 't2', 't3', 't4', 'm1', 'm2', 'm3', 'm4', 'm5', 'm6'];
-const MISSIONS_WITH_INTENDED_TARGET = new Set(['m1', 'm2', 'm3', 'm4', 'm5', 'm6']);
+const MISSION_ROUTE = ['t1', 't2', 't3', 't4', 'm1', 'm2', 'm3', 'm3b', 'm4', 'm5', 'm6'];
+const MISSIONS_WITH_INTENDED_TARGET = new Set(['m1', 'm2', 'm3', 'm3b', 'm4', 'm5', 'm6']);
 
 type Archetype = 'expert' | 'average';
 const ARCHETYPES: Archetype[] = ['expert', 'average'];
@@ -464,6 +493,21 @@ function boostPolicyFor(archetype: Archetype): BoostPolicy {
   return archetype === 'expert' ? tapSuppliesReactively : tapFirstChargedSupply;
 }
 
+/** `expert` reads the energy bar and cuts the rear weapon to recover from brownout;
+ * `average` leaves every toggle on for the whole mission, same as every archetype did
+ * before `manageToggles` existed — a real, unremarkable way to play, not a mistake
+ * (mirrors the "average commits, never switches" reasoning used for kind selection). */
+function manageTogglesPolicyFor(archetype: Archetype): TogglePolicy {
+  return archetype === 'expert' ? brownoutAwareToggles : alwaysOnToggles;
+}
+
+/** `expert` taps enemies the game flags "must be prioritized" (turret/booster/boss —
+ * added 2026-07-15 for Item 7's booster); `average` fires on default front-most
+ * targeting, same as every archetype did before tap-to-target existed. */
+function chooseTargetPolicyFor(archetype: Archetype): TargetPolicy | undefined {
+  return archetype === 'expert' ? prioritizeHighValueTargets : undefined;
+}
+
 function runOneCampaign(archetype: Archetype, campaignSeed: number): CampaignRecord {
   let save = defaultSave();
   const missionLog: MissionAttemptRecord[] = [];
@@ -486,9 +530,12 @@ function runOneCampaign(archetype: Archetype, campaignSeed: number): CampaignRec
         : buildLoadout(save);
       const abilityPool = abilityPoolForLoadout(loadout);
       const seed = attemptSeed(campaignSeed, missionIndex, attempts);
+      const chooseTarget = chooseTargetPolicyFor(archetype);
       const { state } = runMission(mission, loadout, seed, {
         abilityPool, pickAbility: greedyPick,
         useSideWeapon: sideWeaponPolicyFor(archetype), useBoost: boostPolicyFor(archetype),
+        manageToggles: manageTogglesPolicyFor(archetype),
+        ...(chooseTarget !== undefined ? { chooseTarget } : {}),
       });
       const result: MissionResult = buildMissionResult(state);
       combatTicks += result.durationTicks;
@@ -520,12 +567,105 @@ function percentile(sorted: number[], p: number): number {
   return sorted[index] ?? 0;
 }
 
+interface FunScore {
+  completion: number;
+  timeFit: number;
+  pacingShape: number;
+  overall: number;
+}
+
+function clamp0to100(n: number): number {
+  return Math.min(100, Math.max(0, n));
+}
+
+/** 100 at the target band, decaying linearly outside it in either direction. */
+function timeFitScore(totalMinutes: number): number {
+  if (totalMinutes >= TARGET_TOTAL_MINUTES_MIN && totalMinutes <= TARGET_TOTAL_MINUTES_MAX) return 100;
+  const distance = totalMinutes < TARGET_TOTAL_MINUTES_MIN
+    ? TARGET_TOTAL_MINUTES_MIN - totalMinutes
+    : totalMinutes - TARGET_TOTAL_MINUTES_MAX;
+  return clamp0to100(100 - distance * TIME_FIT_PENALTY_PER_MINUTE);
+}
+
+/** Median hull-at-clear per main mission (m-prefixed only — tutorials are forced-
+ * loadout/defeat-completes and aren't part of the tension question), in route order.
+ * Missions with zero recorded clears are dropped entirely, not defaulted to 0% —
+ * "no data" and "everyone dies at 0 hull" are very different things, and letting a
+ * no-data mission silently read as 0 would fake a huge, meaningless spread. */
+function medianHullByMainMission(campaigns: CampaignRecord[]): { missionId: string; medianHullPct: number }[] {
+  const mainMissionIds = MISSION_ROUTE.filter((id) => id.startsWith('m'));
+  const result: { missionId: string; medianHullPct: number }[] = [];
+  for (const missionId of mainMissionIds) {
+    const hullFractions = campaigns
+      .flatMap((c) => c.missionLog)
+      .filter((m) => m.missionId === missionId && m.cleared)
+      .map((m) => m.hullFractionAtClear)
+      .filter((h): h is number => h !== undefined)
+      .sort((a, b) => a - b);
+    if (hullFractions.length === 0) continue;
+    result.push({ missionId, medianHullPct: percentile(hullFractions, 0.5) * 100 });
+  }
+  return result;
+}
+
+/** Rewards a real tension curve (spread across missions) instead of flat-then-cliff,
+ * and requires the campaign's actual final main mission to be at or near the hardest
+ * point — a mid-campaign spike that leaves the finale comparatively easy doesn't fully
+ * solve "flat" (docs/plans/fable-fun-review-followup.md's Item 7 concern, generalized
+ * into a standing metric instead of a one-off manual check). */
+function pacingShapeScore(campaigns: CampaignRecord[]): number {
+  const byMission = medianHullByMainMission(campaigns);
+  if (byMission.length < 2) return 0; // not enough data to have a shape at all
+
+  const hulls = byMission.map((m) => m.medianHullPct);
+  const spread = Math.max(...hulls) - Math.min(...hulls);
+  const spreadScore = clamp0to100((spread / PACING_SPREAD_TARGET_PP) * 100) * (PACING_SPREAD_WEIGHT / 100);
+
+  const minHull = Math.min(...hulls);
+  const finaleHull = hulls[hulls.length - 1] ?? minHull;
+  // Full credit if the finale IS the hardest point; scaled down by how much easier
+  // the finale is than the hardest mission elsewhere in the campaign.
+  const finaleScore = clamp0to100(100 - (finaleHull - minHull)) * (PACING_FINALE_HARDEST_WEIGHT / 100);
+
+  return spreadScore + finaleScore;
+}
+
+function computeFunScore(campaigns: CampaignRecord[]): FunScore {
+  const completed = campaigns.filter((c) => c.stuckAt === null);
+  const completion = (completed.length / campaigns.length) * 100;
+
+  const combatMinutesMedian = completed.length > 0
+    ? percentile(completed.map((c) => c.combatTicks / TICKS_PER_SECOND / 60).sort((a, b) => a - b), 0.5)
+    : 0;
+  // Estimate total playtime from combat time + a per-mission shop-time estimate,
+  // scaled by how many missions were actually reached (stuck campaigns still shopped
+  // for the missions they did reach).
+  const missionsReachedMedian = completed.length > 0
+    ? percentile(completed.map((c) => c.missionLog.length).sort((a, b) => a - b), 0.5)
+    : MISSION_ROUTE.length;
+  const estimatedTotalMinutes = combatMinutesMedian + missionsReachedMedian * SHOP_MINUTES_PER_MISSION_ESTIMATE;
+  const timeFit = completed.length > 0 ? timeFitScore(estimatedTotalMinutes) : 0;
+
+  const pacingShape = pacingShapeScore(campaigns);
+
+  // Geometric mean — deliberately not an average. A campaign that's fast and
+  // never-stuck but completely flat should not score well just because nothing
+  // technically went wrong; "one hour of FUN" is a compound goal.
+  const overall = Math.cbrt(Math.max(0, completion) * Math.max(0, timeFit) * Math.max(0, pacingShape));
+
+  return { completion, timeFit, pacingShape, overall };
+}
+
 function summarizeArchetype(archetype: Archetype, campaigns: CampaignRecord[]): void {
   const completed = campaigns.filter((c) => c.stuckAt === null);
   const completionRate = (completed.length / campaigns.length) * 100;
 
   console.log(`\n=== ${archetype} (${String(campaigns.length)} campaigns) ===`);
   console.log(`Completion rate: ${completionRate.toFixed(1)}% (${String(completed.length)}/${String(campaigns.length)} cleared m6 within the patience cap)`);
+
+  const fun = computeFunScore(campaigns);
+  console.log(`"One hour of fun" score: ${fun.overall.toFixed(1)}/100 ` +
+    `(completion=${fun.completion.toFixed(1)} time-fit=${fun.timeFit.toFixed(1)} pacing-shape=${fun.pacingShape.toFixed(1)}, geometric mean)`);
 
   console.log('Retry-count distribution per mission (among attempts that reached it):');
   for (const missionId of MISSION_ROUTE) {
@@ -638,6 +778,7 @@ if (process.argv[1] !== undefined && import.meta.url === new URL(process.argv[1]
 }
 
 export {
-  MISSION_ROUTE, PATIENCE_CAP, applyPurchasePolicy, isStarLocked, runOneCampaign,
+  MISSION_ROUTE, PATIENCE_CAP, applyPurchasePolicy, computeFunScore, isStarLocked,
+  pacingShapeScore, runOneCampaign, timeFitScore,
 };
-export type { Archetype, CampaignRecord };
+export type { Archetype, CampaignRecord, FunScore };

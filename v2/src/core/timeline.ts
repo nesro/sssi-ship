@@ -68,5 +68,7 @@ function spawnEnemy(state: CoreState, spec: EnemySpec, baseDistance: number): vo
     critChance: spec.critChance,
     missChance: spec.missChance,
     critMult: spec.critMult,
+    holdChargeTicks: 0,
+    aliveTicks: 0,
   });
 }

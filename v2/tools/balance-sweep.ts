@@ -27,7 +27,8 @@ import type { AbilityOffer, CoreState, LoadoutSnapshot } from '../src/core/types
 import { abilityById, abilityPoolForLoadout } from '../src/data/cards';
 import { ALL_MISSIONS } from '../src/data/missions';
 import { STARTER_LOADOUT } from '../src/data/loadouts';
-import { intendedLoadoutForMission, starterKindLoadoutAtLevel, weaponAtKindIndex } from './loadoutPresets';
+import { intendedLoadoutForMission, starterKindLoadoutAtLevel, timeStarT3Loadout, timeStarT4Loadout, weaponAtKindIndex } from './loadoutPresets';
+import { prioritizeHighValueTargets } from './policies';
 
 // ── Flag thresholds ──────────────────────────────────────────────────────────
 // GAME_DESIGN.md §13 does not set one flat clear-rate band — it sets a declining
@@ -40,7 +41,7 @@ import { intendedLoadoutForMission, starterKindLoadoutAtLevel, weaponAtKindIndex
 // player). Only the intended+greedy combo is checked against this table — starter/mid/
 // full rows, and every row's `random` strategy, are informational only.
 const INTENDED_CLEAR_RATE_FLOOR: Record<string, number> = {
-  m1: 0.85, m2: 0.75, m3: 0.65, m4: 0.55, m5: 0.50, m6: 0.45,
+  m1: 0.85, m2: 0.75, m3: 0.65, m3b: 0.60, m4: 0.55, m5: 0.50, m6: 0.45,
 };
 const INTENDED_CLEAR_RATE_CEILING = 0.9; // ">90% is too easy", applies to every mission
 const STAR_UNREACHABLE = 0.05;
@@ -59,9 +60,18 @@ function intendedComboFlag(missionId: string, loadoutKey: string, strategyKey: s
   return null;
 }
 
-function starFlag(rate: number): StarFlag {
+/**
+ * `checkTrivial` is false for T3/T4 time-stars (F4, docs/known-issues.md): they're
+ * measured against their OWN matching gear tier (`t3`/`t4`), which was deliberately
+ * chosen to reliably clear (≥98%) — a T3/T4 star reading ~100% at that specific
+ * loadout is the intended behavior (the real gate is affording the gear, not run-to-run
+ * variance once you have it), not the "no real difficulty bar" problem TRIVIAL exists
+ * to catch for the standard intended-loadout case. UNREACHABLE still applies to every
+ * star — a T3/T4 star that its own matching loadout can't reach would be a real bug.
+ */
+function starFlag(rate: number, checkTrivial = true): StarFlag {
   if (rate < STAR_UNREACHABLE) return 'UNREACHABLE';
-  if (rate > STAR_TRIVIAL) return 'TRIVIAL';
+  if (checkTrivial && rate > STAR_TRIVIAL) return 'TRIVIAL';
   return null;
 }
 
@@ -85,14 +95,31 @@ const LOADOUTS: Record<string, LoadoutSnapshot> = {
   // Branched into the second weapon kind — represents having upgraded off the starter.
   full: { ...starterKindLoadoutAtLevel(3), weapon: weaponAtKindIndex(1, 4) },
 };
-const LOADOUT_KEYS = [...Object.keys(LOADOUTS), 'intended'];
+// t3/t4 are the fixed reference loadouts for the T3/T4 time-star tiers (F4,
+// docs/known-issues.md) — swept so their own stars can be checked for reachability
+// against the loadout they're actually designed for, not against `intended` (which
+// measured 0% for every T3/T4 star once those tiers stopped being a synthetic ±1s
+// spread on the intended loadout and started requiring genuinely better gear).
+const LOADOUT_KEYS = [...Object.keys(LOADOUTS), 'intended', 't3', 't4'];
 
-/** `intended` resolves per-mission (loadoutPresets.ts); the rest are the static LOADOUTS above. */
+/** `intended`/`t3`/`t4` resolve per-mission or fixed (loadoutPresets.ts); the rest are
+ * the static LOADOUTS above. */
 function resolveLoadout(missionId: string, loadoutKey: string): LoadoutSnapshot {
   if (loadoutKey === 'intended') return intendedLoadoutForMission(missionId);
+  if (loadoutKey === 't3') return timeStarT3Loadout();
+  if (loadoutKey === 't4') return timeStarT4Loadout();
   const loadout = LOADOUTS[loadoutKey];
   if (loadout === undefined) throw new Error(`Unknown loadout ${loadoutKey}`);
   return loadout;
+}
+
+/** Which swept loadout a given star's reachability should be measured against — T3/T4
+ * time-stars need the matching reference loadout, everything else uses `intended`
+ * (the mission's own §13 target gear, per the existing convention). */
+function baselineLoadoutKeyForStar(starId: string): string {
+  if (starId.endsWith('-time-t3')) return 't3';
+  if (starId.endsWith('-time-t4')) return 't4';
+  return 'intended';
 }
 
 // ── Card strategies ──────────────────────────────────────────────────────────
@@ -102,6 +129,12 @@ function randomPolicies(seed: number, loadout: LoadoutSnapshot): RunPolicies {
   return { abilityPool: abilityPoolForLoadout(loadout), pickAbility: () => Math.floor(rng() * 3) };
 }
 
+// chooseTarget added 2026-07-15 (Item 7) — a realistic-player proxy who reads the
+// in-game "tap to target it" hint (docs/design/08-enemies.md) also acts on it, not just
+// optimizes cards. No measurable effect on m4/m6 (single-target pulse weapon + a
+// stationary turret that becomes front-most on its own — see Item 4's verify notes),
+// but on m3b it's load-bearing: a booster left un-prioritized keeps out-healing the
+// tank ahead of it, making a collision structurally guaranteed regardless of DPS.
 function greedyPolicies(loadout: LoadoutSnapshot): RunPolicies {
   const priorities: Record<string, number> = { nexus: 0, quantum: 1, aegis: 2, comet: 3 };
   const pickAbility = (_state: CoreState, offer: AbilityOffer): number => {
@@ -113,7 +146,7 @@ function greedyPolicies(loadout: LoadoutSnapshot): RunPolicies {
     });
     return best;
   };
-  return { abilityPool: abilityPoolForLoadout(loadout), pickAbility };
+  return { abilityPool: abilityPoolForLoadout(loadout), pickAbility, chooseTarget: prioritizeHighValueTargets };
 }
 
 // ── Stats accumulator ────────────────────────────────────────────────────────
@@ -174,7 +207,9 @@ function formatReport(results: ComboResult[], missions: typeof ALL_MISSIONS): st
       `ceiling for every mission. starter/mid/full rows are informational only; no target was ` +
       `ever defined for those generic tiers.`,
     `**Star flags**: below ${(STAR_UNREACHABLE * 100).toFixed(0)}% (unreachable) or above ` +
-      `${(STAR_TRIVIAL * 100).toFixed(0)}% (trivial), measured on starter/greedy.`,
+      `${(STAR_TRIVIAL * 100).toFixed(0)}% (trivial), measured on \`intended\`/greedy — ` +
+      `except T3/T4 time-stars, measured on the \`t3\`/\`t4\` reference loadout instead ` +
+      `(F4, docs/known-issues.md).`,
     ``,
   ];
 
@@ -195,16 +230,20 @@ function formatReport(results: ComboResult[], missions: typeof ALL_MISSIONS): st
 
     lines.push(``);
 
-    // Star detail from the intended/greedy combo — the mission's own target gear, not
-    // generic starter (which understates reachability for m3-m6, whose intended loadout
-    // is a partial upgrade past starter per GAME_DESIGN.md §13).
-    const baseline = mResults.find((r) => r.loadout === 'intended' && r.strategy === 'greedy');
-    if (baseline !== undefined && mission.stars.length > 0) {
-      lines.push(`**Stars** (intended/greedy):`);
+    // Star detail — each star measured against its own reference loadout/greedy combo
+    // (baselineLoadoutKeyForStar): intended for most, t3/t4 for the T3/T4 time-star
+    // tiers (F4, docs/known-issues.md), not generic starter (which understates
+    // reachability for m3-m6, whose intended loadout is a partial upgrade past starter
+    // per GAME_DESIGN.md §13).
+    if (mission.stars.length > 0) {
+      lines.push(`**Stars** (loadout/greedy, per star — see docs/known-issues.md's F4 note):`);
       for (const star of mission.stars) {
+        const loadoutKey = baselineLoadoutKeyForStar(star.id);
+        const baseline = mResults.find((r) => r.loadout === loadoutKey && r.strategy === 'greedy');
+        if (baseline === undefined) continue;
         const rate = pct(baseline.starCounts.get(star.id) ?? 0, baseline.runs);
-        const flag = starFlag((baseline.starCounts.get(star.id) ?? 0) / baseline.runs);
-        lines.push(`- \`${star.id}\` ${rate}${flag !== null ? STAR_FLAG_LABEL[flag] : ''}`);
+        const flag = starFlag((baseline.starCounts.get(star.id) ?? 0) / baseline.runs, loadoutKey === 'intended');
+        lines.push(`- \`${star.id}\` (${loadoutKey}) ${rate}${flag !== null ? STAR_FLAG_LABEL[flag] : ''}`);
       }
       lines.push(``);
     }
@@ -243,11 +282,12 @@ function buildJsonReport(results: ComboResult[], missions: typeof ALL_MISSIONS):
   // UNREACHABLE exists to catch. Skipping missing keys here would silently drop it.
   const stars: JsonStarEntry[] = [];
   for (const mission of missions) {
-    const baseline = results.find((r) => r.missionId === mission.id && r.loadout === 'intended' && r.strategy === 'greedy');
-    if (baseline === undefined) continue;
     for (const star of mission.stars) {
+      const loadoutKey = baselineLoadoutKeyForStar(star.id);
+      const baseline = results.find((r) => r.missionId === mission.id && r.loadout === loadoutKey && r.strategy === 'greedy');
+      if (baseline === undefined) continue;
       const rate = (baseline.starCounts.get(star.id) ?? 0) / baseline.runs;
-      stars.push({ missionId: mission.id, starId: star.id, rate, flag: starFlag(rate) });
+      stars.push({ missionId: mission.id, starId: star.id, rate, flag: starFlag(rate, loadoutKey === 'intended') });
     }
   }
 

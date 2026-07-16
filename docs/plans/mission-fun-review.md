@@ -1,189 +1,166 @@
 # Mission-by-mission fun review — enemy distribution & pacing
 
-> Fable, 2026-07-11. Honest per-mission review of enemy distribution, asked by Tomáš
-> ("I want the game to be fun"). Written as a self-contained hand-off doc for a Sonnet
-> session to implement — every finding cites the exact data and gives a concrete fix +
-> verification loop. Grounded in `v2/src/data/missions.ts` (current working tree, after
-> today's tutorial trims), the enemy specs at the top of that file, GAME_DESIGN.md §13,
-> and this session's measured sim numbers (cited inline; re-measure anything stale).
->
-> **Standing constraints for the implementer:** blocker and tank counts-per-wave sit on
-> known sharp difficulty cliffs (2→3 blockers ≈ 95%→42%; +1 tank across three waves ≈
-> 87%→7%) — do not bump those counts anywhere. After every `missions.ts` change: the
-> touched mission's §13 floor must hold (`pnpm sim --loadout intended --strategy greedy
-> --runs 2000`), then a full `pnpm balance -- --runs 2000 --json` (0 flags) before done.
+> Fable, 2026-07-11. Original review below (F1-F6) is preserved for findings still
+> open. F1, F2, and F5 were implemented and verified 2026-07-15 — see each section's
+> "Resolution" note. A companion tool, `pnpm pacing` (`docs/plans/simulator and
+> pacing metrics work`, 2026-07-15), now measures several of these findings directly
+> instead of requiring a human to read `missions.ts` prose — run it after any further
+> mission change; it independently reproduced this doc's F2 and F3 findings almost
+> exactly (monotony streak 14, boss weapon-kill-share 28% vs. this doc's ~30% estimate).
 
 ## The verdict in one paragraph
 
 The campaign's skeleton is good — each mission has a distinct stated identity and the
-escalation math works. The fun problems are concentrated in four places: **(1) the enemy
-roster is distributed badly** — two of the eight enemy kinds (turret, kamikaze) exist
-only inside m6's finale chaos where they can't register as distinct threats, while m4
-mid-campaign actually has *fewer* enemy kinds (3) than m2 (4), and m4 structurally
-clones m3; **(2) m1 opens the game with ~2.5 minutes of fourteen near-identical fodder
-waves**; **(3) the final boss is an anticlimax by construction** — bumping into your
-ship costs only 30 damage, so ~70% of winning runs never actually kill it; and **(4) the
-time-star system is currently fake** — all four thresholds sit 1 second apart, and on
-m5 a motor-1 player *physically cannot* earn any of them. Plus one regression from
-today: t3 got slower, not faster.
+escalation math works. The fun problems were concentrated in four places: **(1) the
+enemy roster was distributed badly** — turret/kamikaze existed only inside m6's finale
+— **fixed 2026-07-15 (F1)**; **(2) m1 opened with ~2.5 minutes of near-identical fodder
+waves** — **fixed 2026-07-15 (F2)**; **(3) the final boss is now fixed** — the
+data-only fix (Option A) didn't work, but Option B (stall-and-bombard) did — **fixed
+2026-07-15 (F3)**; **(4) time-stars were fake** — **fixed 2026-07-15 (F4)** for all 7
+main missions, including m6's separate `boss-time` stars (re-anchored after F3 landed).
+Plus t3's guardian regression — **fixed 2026-07-15 (F5)**.
+
+**New findings from `pnpm pacing`, not in the original review:** m3 and m4 both showed a
+genuine sustained dead patch (longest idle stretch 20.0s, vs. m2's reference 14.0s) —
+**root-caused and fixed 2026-07-15** (`docs/known-issues.md`): not inherent to
+blocker-heavy pacing as first suspected, but a mechanical side effect of
+`blocksConveyor` freezing the timeline for a blocker wave's entire lifetime, so the
+nominal gap to the next wave replayed as pure dead time the instant it died. Fixed by
+tightening the final-push blocker-wave gaps (m3 20s→15s, m4 20s→12s); both missions now
+pass `pnpm pacing` clean. Also,
+m1's shield-unbroken star had dropped to ~2.6% reachability (below the project's 5%
+"unreachable" flag) as a side effect of F2's added density — **fixed 2026-07-15**, see
+`docs/known-issues.md`: traced to the scout striker + two dense fodder waves right after
+it (50-80s), loosened spacing there (counts unchanged, monotony fix intact), 2.6%→6.7%.
+`pnpm balance` now exits clean with zero flags.
 
 ## Per-mission scorecard
 
-| Mission | Kinds used | Real duration (measured) | Verdict |
-|---|---|---|---|
-| t1 Shield Basics | guardian | ~30s | ✅ Good after today's trim |
-| t2 Weapon Systems | fodder | ~16s | ✅ Good; borderline too short — playtest call |
-| t3 Support Cards | guardian (+dead `fodder` decl) | **~66s — REGRESSED** (was 51s) | ❌ Fix (F5) |
-| t4 Battle Supplies | fodder, striker | ~16s | ✅ Good; borderline too short — playtest call |
-| m1 First Contact | 2 (fodder, striker) | ~182s | ⚠️ Monotone opening (F2) |
-| m2 Picket Line | 4 | ~295s | ✅ Best-paced mission in the game — use as the template |
-| m3 The Wall | 4 | ~330s | ✅ OK alone, but see F1 (m4 clones it) |
-| m4 Blockade | **3** (fewer than m2!) | ~368s | ⚠️ Structure clone of m3, variety dip (F1) |
-| m5 Asteroid Run | 4 | ~157s at intended (motor-2) | ✅ Composition good; time-stars broken (F4) |
-| m6 Leviathan | 8 | ~320-370s | ⚠️ Boss anticlimax (F3); turret/kamikaze debut drowned (F1) |
-
-m2 deserves a explicit callout as the *positive* model: alternating fodder/striker
-rhythm, one blocker as a mid-mission speed bump, a genuinely new enemy (tank) as the
-finale — identity, variety, and escalation all in one mission. The fixes below mostly
-amount to "make the others more like m2 in shape, without copying its content."
+| Mission | Kinds used | Verdict |
+|---|---|---|
+| t1-t4 | — | ✅ Unchanged this pass |
+| m1 First Contact | fodder, striker | ✅ Fixed (F2) — see resolution below |
+| m2 Picket Line | 4 | ✅ Still the best-paced mission — reference point for `pnpm pacing`'s thresholds |
+| m3 The Wall | 4 | ✅ Idle-stretch flag fixed 2026-07-15 (see above) |
+| m4 Blockade | 4 (was 3) | ✅ Turret added (F1); idle-stretch flag fixed 2026-07-15 (see above) |
+| m5 Asteroid Run | 5 (was 4) | ✅ Kamikaze added (F1) |
+| m6 Leviathan | 8 | ✅ Boss anticlimax fixed (F3) — stall-and-bombard mechanic |
 
 ---
 
-## F1 (highest fun impact): redistribute the enemy roster — turret → m4, kamikaze → m5
+## F1 — redistribute the enemy roster — turret → m4, kamikaze → m5
 
-**Problem.** Turret and kamikaze appear *only* in m6, buried in the densest part of the
-campaign finale (turret at 70s/232s alongside swarms+strikers; kamikaze at 170s/236s
-between blocker gates and tanks). A first-time player meets two brand-new enemy types
-at the exact moment they have the least attention to spare — they read as noise, not as
-threats with learnable identities. Meanwhile m4 has only fodder/striker/blocker (a
-variety *regression* from m2/m3) and is structurally m3 again: same ~270s length, same
-escalating fodder/striker body, same three-blocker-wave climax (m3: 2/3/3, m4: 4/4/4).
-Two consecutive missions with the same shape and the same climax enemy is where a
-player's mid-campaign attention will sag.
+**Resolution (2026-07-15): done.** Turret swapped into m4's two single-blocker events
+(seconds 26/64); kamikaze swapped into two of m5's five striker events (seconds
+142/226). Verified via `pnpm sim`/`pnpm balance`/`pnpm campaign`/`pnpm pacing`.
 
-**Fix — two targeted insertions, no removals from m6** (m6 stays the "everything
-together" exam; that's correct final-mission design):
+One deviation from the original prescription, both due to real measured data: the
+doc's suggested kamikaze `count: 2` measured at ~95% clear-rate (over the 90% "too
+easy" ceiling) — 2 low-HP kamikaze is strictly less total threat than the 3 strikers
+they replaced against a continuously-firing greedy player. Re-tuned to `count: 4` (82%
+clear-rate, safely in-band). Turret's original `count: 1` needed no change.
 
-1. **m4 gets the turret as its signature** ("Blockade" fiction fits perfectly — a
-   static gun emplacement IS a blockade). Turret is `speed: 0, blocksConveyor: true`:
-   it parks at max range and stalls the timeline until burned down — mechanically a
-   *ranged* DPS check, distinct from the blocker's *approaching* DPS check, so it
-   deepens m4's stated "DPS check" identity rather than diluting it. Insert 2 single
-   turret spawns replacing/adjacent to the two mid-mission single-blocker events (the
-   ~26s and ~64s `blocker count: 1` events are the natural slots — swap those to
-   `turret count: 1` and keep every remaining blocker event untouched, since blocker
-   counts are cliff-sensitive but blocker *presence* at 106s/150s/finale still gives
-   m4 its blockade climax). Also update m4's `enemyKinds` to include `turret: TURRET`.
-2. **m5 gets a kamikaze taste** ("Asteroid Run" fiction: fast rocks). Kamikaze is the
-   sharpest enemy in the game (speed 2.8, collision 12×3 = 36 damage) — exactly the
-   kind of threat a player should meet in a readable context once before m6 throws four
-   at them mid-chaos. Insert two small waves (`count: 2, spacing: 10`) in the existing
-   striker slots at ~142s and ~226s (replace those two `striker count: 3` events — m5
-   keeps three other striker waves, so the striker mix survives). Update `enemyKinds`.
+---
 
-**Verification:** m4 floor ≥55%, m5 floor ≥50%, both <90%, at intended/greedy/2000;
-full balance sweep 0 flags; `pnpm campaign -- --runs 500` still 100% both archetypes.
-Turret swaps in m4 are replacing *harder* stalls (blocker 140hp vs turret 80hp, but
-turret shoots 7.5dps from spawn vs blocker's 2.7dps while approaching) — expect a small
-clear-rate move in either direction; iterate turret count/timing, never blocker counts.
-Re-run `pnpm tune` afterward (mission composition changed → recommended kinds may shift).
+## F2 — m1's opening is a 2.5-minute screensaver
 
-## F2: m1's opening is a 2.5-minute screensaver
+**Resolution (2026-07-15): done.** Striker scout added at second 50; the flat
+72-112s stretch (5 waves, count 6-7 each) collapsed to 3 (dense-tight/breather/
+dense-tight). `pnpm pacing`'s longest-same-kind-streak metric confirms the shape fix:
+14 → 7.
 
-**Problem.** Fourteen consecutive fodder-only waves (3→8 count, 10s apart) before the
-first striker at 148s. Under greedy autofire the median run finishes m1 with 100% hull
-(this session's margin data) — meaning for the first ~2.5 minutes of the real game the
-player makes no decisions and faces no visible threat evolution. First mission = first
-impression; this is where "is this game fun?" gets decided.
+**Residual, not chased further:** 7 still exceeds `pnpm pacing`'s own MONOTONY
+threshold (6, calibrated against m2's streak of 3). The straightforward version of this
+fix (doc's exact suggested counts) measured 90.2% clear-rate — right on the 90% "too
+easy" ceiling — and this region turned out to sit on a real difficulty cliff (dense-wave
+count 9→10 alone swung clear-rate from 90% to 77.5%, under the ≥85% floor). Landed on a
+combination that measures 87.6-88.1% (in-band) without fully clearing the monotony
+flag. A second variety break in the second fodder stretch would likely clear it but
+wasn't attempted — feels like a reasonable stopping point given the 50% streak
+reduction already achieved and the floor's limited headroom.
 
-**Fix (shape, not difficulty):** keep the total enemy budget roughly constant but break
-the monotony: (a) insert a single striker "scout" event (`count: 1`) around ~50s — a
-visibly faster, differently-colored enemy that previews the finale threat (m2 already
-uses this introduce-early-then-escalate pattern with its blocker); (b) collapse the 14
-fodder waves to ~10 by merging the flattest stretch (72s-112s currently repeats
-count 6-7 five times) into fewer, more differentiated waves — alternate one dense-tight
-wave (count 8, spacing 7) with one sparse-fast gap so the lane visibly breathes. Do NOT
-raise total density materially — m1's floor is the tightest (≥85%, currently 89.6%),
-so this is a reshuffle, not a buff. Iterate against the floor after each edit.
+---
 
 ## F3: the final boss is an anticlimax — bumping beats shooting
 
-**Problem (documented this session, still unfixed).** Boss collision costs
-`shotDamage 10 × collision multiplier 3 = 30` damage — less than two kamikaze hits —
-against an m6-intended ship with 110+ hull plus shield. So the dominant strategy
-(~70% of greedy wins) is: ignore the boss, let the LEVIATHAN gently bump you, absorb
-30 damage, mission complete. The campaign's climax is structurally optional.
+**Resolved 2026-07-15 — Option B (stall-and-bombard) implemented, see
+`docs/known-issues.md` for the full writeup.** Boss weapon-kill-share of victories:
+~30% → 100% (target was ≥70%), with m6's clear-rate (85.2%, within the 45-90% floor/
+ceiling band) and the `average` archetype's 100% campaign completion both intact —
+neither invariant broke this time. Original Option A investigation log kept below for
+context (it's what proved a data-only fix couldn't work and pointed at Option B).
 
-**Fix, two options (implementer should sim both, pick by numbers):**
-- **Option A (data-only, one number):** raise `BOSS.shotDamage` 10 → ~17-18. Collision
-  becomes ~51-54 — combined with the pre-boss gauntlet's chip damage, bump-tanking at
-  partial hull becomes a real defeat risk while a full-hull tank remains *possible*
-  (still no hard cliff, per the slopes rule). Its per-shot pressure during the DPS race
-  also rises, which is thematically right for a final boss that currently shoots softer
-  per-hit than a turret crits. Watch m6's floor (≥45%, currently 88.4% — there is a LOT
-  of headroom to spend on making the boss matter).
-- **Option B (bigger, only if A under-delivers):** give the boss a stall-and-bombard
-  phase — it advances to ~distance 30 and stops (`speed` staged via core change), never
-  colliding: the player *must* out-DPS it. That's a core-engine change (enemy movement
-  currently has no stop-at-distance concept) — real scope, new tests, tick-order care.
-  Do not start with this; it needs its own plan if A proves insufficient.
+**Investigated and reverted 2026-07-15 — Option A confirmed insufficient, not
+implemented.** Tried the doc's exact suggestion (`BOSS.shotDamage` 10 → 17): m6's
+intended/greedy clear-rate collapsed from ~88% to 8.5%, blowing through the ≥45% floor —
+the doc's own "floor stays ≥45%, there is a LOT of headroom" prediction did not hold
+against real simulation. Bisected down to a floor-safe value (12, clear-rate 58.8%) but
+that broke a harder invariant: `pnpm campaign`'s `average` archetype (the
+starter-kind-committed build GAME_DESIGN §13 calls "safe by design") dropped from 100%
+to 93.4% campaign completion — 33/500 runs got stuck at m6's patience cap, a real
+"player can get stuck" regression per §3's own philosophy.
 
-**Acceptance target:** weapon-kill share of m6 victories ≥70% (from today's ~30%),
-floor stays ≥45%, near-miss rate at m6 may rise (that's desirable tension, not a bug —
-see GAME_DESIGN §13's margin metric). Boss time-star thresholds must be recalibrated
-after (they anchor to the weapon-kill tick).
+Worse, at the floor-safe value, boss weapon-kill-share of victories was **unchanged**
+(28%, identical to the original shotDamage). This is the real finding: shotDamage only
+makes collision-tanking *costlier*, it never changes *which* death mechanism actually
+kills the boss — that's governed by weapon DPS vs. boss HP vs. approach time, a
+relationship shotDamage doesn't touch at all. **Reverted to the original value (10).**
+
+**Conclusion, higher-confidence than the original review:** Option A cannot hit the
+≥70% weapon-kill-share target at any value that doesn't also break an existing safety
+invariant. Option B (the doc's own fallback — a stall-and-bombard boss phase, `speed`
+staged via a core change so the boss cannot simply walk into the player) is the only
+path that can actually work, exactly as the doc anticipated ("only if A under-delivers,
+it needs its own plan"). That's real scope — new core mechanic, new tests, tick-order
+care — and stays explicitly out of scope here.
+
+---
 
 ## F4: time-stars are currently fake — and on m5, unearnable
 
-**Problem, two layers.** (1) Every m1-m5 time-star quartet is a synthetic 1-second
-spread around a single deterministic value (m1: 189/188/187/186 — the code comments
-admit this openly). From the player's side, four thresholds that differ by 1s are one
-threshold wearing four costumes: you get all four or none, and nothing you do in-run
-changes which. (2) Worse: thresholds were calibrated at each mission's *intended*
-loadout, and m5's intended loadout includes motor level 2 (2× timeline). A motor-1
-player's m5 physically runs ~290s+ real time against thresholds of 161-164s — **zero
-time-stars are earnable at motor 1 on m5, by arithmetic, not skill**. Stars are the
-hard currency gate (§2); locking some behind an unstated motor purchase is a hidden
-trap, exactly the pattern this project keeps rooting out.
+**Resolved 2026-07-15 — see `docs/known-issues.md` for the full writeup.** m1-m5/m3b's
+`finish-time` stars were re-anchored first; m6's `boss-time` stars (a different metric —
+when the boss dies by weapon fire, not overall duration) were re-anchored separately
+once F3 landed and changed the underlying weapon-kill-share dynamic they depend on.
+Original investigation log below, kept for context.
+Attempted the doc's proposed fix (re-anchor T1-T4 to motor tiers: T1/T2 at motor-1,
+T3 at motor-2 pace, T4 at motor-3 pace, everything else held at the mission's own
+intended loadout). Measured directly: **motor level 2 and 3, with every other system
+left at its own intended level, make most missions completely unwinnable** — 0 victories
+in 1000 runs each for m1/m2/m3 at motor-2, and m1-m5 at motor-3. Motor level scales both
+timeline speed *and* energy draw, so swapping only the motor field isn't "the same
+mission, faster" — it's a different, much harder power-budget problem the rest of the
+intended loadout was never sized for.
 
-**Fix:** re-anchor each mission's four thresholds to *motor tiers*, which is the one
-lever that genuinely changes completion time (the timeline is otherwise deterministic —
-that's why the percentiles collapsed): T1 = comfortably achievable at motor-1 (measured
-motor-1 duration + ~5s), T2 = tight motor-1, T3 = requires rush-2 pace, T4 = rush-3
-pace. Measure each via `pnpm sim` with the intended loadout's motor swapped to each
-level (loadoutPresets makes this trivial). This makes Rush's "time-star goldmine" shop
-blurb *true*, gives time-stars a real meaning ("invest in speed, earn stars faster"),
-and fixes the m5 impossibility as a side effect. Update the §13 time-star methodology
-paragraph in GAME_DESIGN.md in the same pass — the percentile method is dead; this
-replaces it.
+This means the "T3 = motor-2 pace" framing needs a real design decision before it can be
+implemented: does a higher-tier time-star also assume a correspondingly upgraded
+generator (and if so, which one, and does that then need re-verifying against the
+clear-rate floor too)? Or should the reference loadout for time-star measurement be
+something else entirely? Left open pending that decision — the original F4 problem
+(synthetic ±1s thresholds, m5 unearnable at motor-1) is unchanged and still real.
+
+**Decision (Tomáš, 2026-07-15):** motor *and* a correspondingly upgraded generator —
+pair the faster motor with the generator upgrade a real player would realistically fund
+alongside it, not the mission's own `intended` generator level held flat while only the
+motor climbs. Still needs: the actual per-tier generator level/kind pairing chosen,
+percentile data re-measured at each paired loadout, and re-verification against the
+clear-rate floor. Not yet implemented — see `docs/known-issues.md`.
+
+---
 
 ## F5: t3 regressed today — 66s, slower than before its "trim"
 
-**Problem.** Today's trim removed t3's fodder padding but kept two 80hp regen
-guardians, each `blocksConveyor: true`. The kill math dominates: base DPS 20 vs
-2.2/tick regen = the first guardian is unkillable until the +30% card arrives, then
-dies at ~4 net DPS ≈ 20+ seconds of watching one HP bar — twice. 66s of mostly-waiting
-versus the 51s it replaced. The lesson ("this enemy out-heals you; the right card
-breaks it") lands completely on guardian #1; #2 is redundant confirmation.
+**Resolution (2026-07-15): done.** Dropped to one guardian (was two);
+`GUARDIAN_REGEN.hp` 80 → 55; removed the dead `fodder` entry from t3's `enemyKinds`
+(no event ever spawned it).
 
-**Fix:** one guardian, not two — the problem *and* the solution demonstrated on the
-same enemy (watch it out-heal you for a few seconds, card arrives at ~5s, break it).
-Drop `GUARDIAN_REGEN.hp` 80 → ~55 so the post-card kill takes ~10s instead of 20+.
-Target: ≤35s total, clear-rate irrelevant now (completesOnDefeat). Also delete t3's
-now-dead `fodder: FODDER` entry in `enemyKinds` — no event spawns fodder anymore.
+---
 
 ## F6 (minor, flag-only): t2/t4 may now be one beat too short + stale §13 table
 
-t2 and t4 both land at ~16s. That's aggressive-but-defensible ("show it once"); whether
+**Still open — unchanged, playtest call only.** t2 and t4 both land at ~16s — whether
 the supply tutorial gives enough time to actually tap both supplies is a feel question
-only Tomáš's thumbs can answer — playtest before adding anything back. Separately,
-GAME_DESIGN §13's 1-hour breakdown table still claims m5≈10min/m6≈15min combat; reality
-is m5≈2.6min (intended) and the whole campaign median is ~30min combat — update the
-table to measured values while in the doc for F4's methodology edit.
-
-## Suggested implementation order
-
-F5 (5 min, pure win) → F1 (the real fun payload) → F2 → F3 option A → F4 (+ §13 doc
-edits) → F6 flags. After all of it: full `pnpm balance` (0 flags), `pnpm campaign`
-(100%/100%), `pnpm tune` re-run, `pnpm lint`/`build:dry`/`test`, and the plan-doc
-checklist conventions from CLAUDE.md apply as always.
+only Tomáš's thumbs can answer. GAME_DESIGN §13's 1-hour breakdown table still claims
+m5≈10min/m6≈15min combat against a measured reality closer to m5≈2.6min/whole-campaign
+median ≈30min combat — worth a table update whenever someone is next in that section of
+the doc, not urgent enough to justify a dedicated pass on its own.

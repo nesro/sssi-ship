@@ -83,7 +83,7 @@ export const SUBSCRIPTIONS: Record<string, SubscriptionSpec> = {
     levels: [
       {
         price: 350,
-        tagline: 'Weapon damage, fire rate, energy efficiency.',
+        tagline: 'Weapon damage, fire rate, energy efficiency, overcharge and pierce chains.',
         cardIds: [
           'w-dmg-15',               // FOCUS LENS
           'w-rate-13',              // RAPID CYCLER
@@ -92,17 +92,20 @@ export const SUBSCRIPTIONS: Record<string, SubscriptionSpec> = {
           'sit-demolisher',         // DEMOLISHER
           'quantum-efficiency-core', // EFFICIENCY CORE (energy cost ×0.8)
           'comet-early-assault',    // EARLY ASSAULT
+          // Chain enablers moved here from Lv2 2026-07-15 (fable-fun-review-followup.md
+          // Item 5) — at Lv2 (950 coins cumulative) they were unreachable for most of a
+          // campaign that only earns 4,000-8,000 coins total; payoff cards stay at Lv2.
+          'oc-core',                // OVERCHARGE
+          'pierce-lance',           // PIERCE LANCE
         ],
       },
       {
         price: 600,
-        tagline: 'Pierce, overcharge, and burst fire.',
+        tagline: 'Overcharge and pierce payoffs, burst fire.',
         cardIds: [
           'w-dmg-30',           // PRISM CORE
           'w-rate-20',          // TWIN ACTUATOR
           'w-cost-40',          // ICE BARREL
-          'oc-core',            // OVERCHARGE
-          'pierce-lance',       // PIERCE LANCE
           'cond-full-energy',   // FULL CHARGE
           'sit-boss-hunter',    // BOSS HUNTER
           'nexus-barrage',      // BARRAGE MODE (active ×2 fire rate)
@@ -146,7 +149,7 @@ export const SUBSCRIPTIONS: Record<string, SubscriptionSpec> = {
     levels: [
       {
         price: 350,
-        tagline: 'Shield pulses, capacity, hull recovery.',
+        tagline: 'Shield pulses, capacity, hull recovery, resonance chain.',
         cardIds: [
           's-pulse-25',           // HARMONIC TUNER
           's-cap-15',             // WIDE PROJECTOR
@@ -155,15 +158,17 @@ export const SUBSCRIPTIONS: Record<string, SubscriptionSpec> = {
           'cond-high-hull-gen',   // PRISTINE HULL
           'aegis-shield-resonance', // SHIELD RESONANCE (+40% pulse)
           'quantum-pulse-amplifier', // PULSE AMPLIFIER
+          // Chain enabler moved here from Lv2 2026-07-15 (fable-fun-review-followup.md
+          // Item 5) — same reasoning as sub-offensive's oc-core/pierce-lance move.
+          'res-sync',             // SHIELD SYNC
         ],
       },
       {
         price: 600,
-        tagline: 'Resonance chain and kill-triggered healing.',
+        tagline: 'Resonance payoffs and kill-triggered healing.',
         cardIds: [
           's-pulse-40',          // FIELD WEAVER
           's-cap-20',            // HEAVY PLATING
-          'res-sync',            // SHIELD SYNC
           'acc-leech',           // LEECH HULL
           'mile-chain-shot',     // BOUNTY SHIELD
           'cond-boss-gen',       // BOSS FOCUS

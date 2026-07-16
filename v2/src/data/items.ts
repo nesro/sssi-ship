@@ -21,7 +21,7 @@ export type CatalogItem =
 
 // ---------- Weapon level system ----------
 
-export const WEAPON_KINDS: WeaponKind[] = ['pulse', 'scatter', 'ion', 'nova'];
+export const WEAPON_KINDS: WeaponKind[] = ['pulse', 'scatter', 'ion', 'nova', 'y2010'];
 export const MAX_WEAPON_LEVEL = 5;
 
 /** Display info and base-level-1 stats for each weapon type. */
@@ -38,6 +38,10 @@ const WEAPON_BASE: Record<WeaponKind, {
   ion:     { displayName: 'Ion Lance',    blurb: 'Heavy single hits. Feed it energy.',       damage: 28, ticks: 7, energy: 14, targets: 1,        falloff: 1.0 },
   scatter: { displayName: 'Scatter Beam', blurb: 'Pierces multiple enemies. Crowd killer.',  damage: 7,  ticks: 5, energy: 9,  targets: 3,        falloff: 0.7 },
   nova:    { displayName: 'Nova Wave',    blurb: 'Hits every enemy. Swarm destroyer.',       damage: 5,  ticks: 7, energy: 6,  targets: Infinity, falloff: 1.0 },
+  // Secret Easter egg (hidden until campaign completion or dev mode — see
+  // WEAPON_SYSTEM.isKindVisible below). Deliberately absurd, not tuned: it exists purely
+  // as a nostalgia nod to the 2010 original, not as a real balance option.
+  y2010:   { displayName: '2010 ORIGINAL', blurb: "Looks terrible. Feels like 2010. Somehow still destroys everything.", damage: 500, ticks: 2, energy: 1, targets: Infinity, falloff: 1.0 },
   // Rebalanced 2026-07-11 (docs/plans/nova-weapon-and-campaign-tension-review.md) — old
   // base (damage 3 / ticks 9 / energy 16) cleared 0% on m1/m2/m3/m4 at the intended
   // loadout's own level: its energy cost sat nova permanently in brownout (energy.ts's
@@ -61,18 +65,23 @@ const WEAPON_BASE: Record<WeaponKind, {
 
 /** Stars required per weapon level (index = level − 1) — identical across every kind. */
 const WEAPON_STARS_BY_LEVEL: [number, number, number, number, number] = [0, 3, 8, 16, 26];
+// y2010's real gate is isKindVisible (campaign completion / dev mode), not stars — once
+// visible, it's already "earned" by finishing the game, so no additional star cost.
+const WEAPON_STARS_Y2010: [number, number, number, number, number] = [0, 0, 0, 0, 0];
 const WEAPON_STARS: Record<WeaponKind, [number, number, number, number, number]> = {
   pulse: WEAPON_STARS_BY_LEVEL, scatter: WEAPON_STARS_BY_LEVEL,
-  ion: WEAPON_STARS_BY_LEVEL, nova: WEAPON_STARS_BY_LEVEL,
+  ion: WEAPON_STARS_BY_LEVEL, nova: WEAPON_STARS_BY_LEVEL, y2010: WEAPON_STARS_Y2010,
 };
 
 // Coin cost per level (index = level − 1) — identical across every kind (see comment
 // above). Weapon has a NONE option, so level 1 — the mandatory starter — is priced
 // low but never 0, or it would be indistinguishable from NONE.
 const WEAPON_PRICES_BY_LEVEL: [number, number, number, number, number] = [100, 1050, 2300, 5100, 11200];
+// A flat, thematic joke price rather than a tuned ladder — see y2010's WEAPON_BASE comment.
+const WEAPON_PRICES_Y2010: [number, number, number, number, number] = [2010, 2010, 2010, 2010, 2010];
 const WEAPON_PRICES: Record<WeaponKind, [number, number, number, number, number]> = {
   pulse: WEAPON_PRICES_BY_LEVEL, scatter: WEAPON_PRICES_BY_LEVEL,
-  ion: WEAPON_PRICES_BY_LEVEL, nova: WEAPON_PRICES_BY_LEVEL,
+  ion: WEAPON_PRICES_BY_LEVEL, nova: WEAPON_PRICES_BY_LEVEL, y2010: WEAPON_PRICES_Y2010,
 };
 
 /** Computes a weapon spec at a given upgrade level (1 = base, 5 = max). */
@@ -407,7 +416,19 @@ const GENERATOR_BASE: Record<GeneratorKind, {
   // that pairing hardest — reserve+nova measured 0.0% clear this session. New text is
   // honest about the actual niche: low-drain weapons and burst-ability/supply synergy
   // with the huge capacity, not "charge up for a big weapon hit."
-  reserve: { displayName: 'Reserve', blurb: 'Vast tank, slow trickle. Feeds efficient weapons.',             outputs: [1.5, 2.5, 3.5,  5,  7], caps: [100, 160, 240, 340, 480], drains: [0.28, 0.24, 0.20, 0.17, 0.14], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
+  // Outputs rebalanced 2026-07-15 (docs/known-issues.md, `pnpm tune`'s "dominant kind"
+  // check, flagged on every run this session and never chased) — the 2026-07-11 pass
+  // above only fixed the *text*, not the stats: reserve+pulse still cleared m1 at 13%
+  // (vs. 87-100% for every other generator) and reserve+scatter cleared m3 at 0.0%,
+  // a real trap, not a situational tradeoff. +30% output at every level keeps the
+  // "vast tank, slow trickle" identity (still meaningfully behind torrent's output at
+  // every level, caps/drains untouched) while turning a near-guaranteed loss into a
+  // real but survivable disadvantage — m1 pulse+reserve 13%→73%, m5 scatter+reserve
+  // 13%→87.8%. Cases that stayed weak after the buff (e.g. m3+nova, m3+scatter) were
+  // confirmed to already be weak *weapon-vs-mission* pairings even with a full-output
+  // generator (nova clears m3 at only 18-21% with torrent/steady/surge) — a situational
+  // weapon weakness this fix doesn't touch, not a remaining generator trap.
+  reserve: { displayName: 'Reserve', blurb: 'Vast tank, slow trickle. Feeds efficient weapons.',             outputs: [1.95, 3.25, 4.55, 6.5, 9.1], caps: [100, 160, 240, 340, 480], drains: [0.28, 0.24, 0.20, 0.17, 0.14], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
   steady:  { displayName: 'Steady',  blurb: 'Reliable mid-range. Pairs well with any loadout.',              outputs: [2.5,  4,  6,  9, 13], caps: [70, 82, 95, 110, 128], drains: [0.38, 0.34, 0.30, 0.26, 0.22], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
   surge:   { displayName: 'Surge',   blurb: 'Maximum output, tiny battery. Ion and nova goldmine.',          outputs: [ 3,  5,  9, 14, 20], caps: [30, 28, 26, 25, 25], drains: [0.72, 0.78, 0.83, 0.88, 0.92], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
 };

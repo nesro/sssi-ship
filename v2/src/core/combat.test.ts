@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { damageShip, fireEnemyWeapons, fireShipWeapon } from './combat';
+import { damageShip, fireEnemyWeapons, fireShipWeapon, regenerateEnemies, setPriorityTarget } from './combat';
 import { advanceEnemies } from './conveyor';
 import { FIXTURE_LOADOUT, FIXTURE_MISSION, FIXTURE_SHIP, FIXTURE_WEAPON, makeFixtureEnemy } from './fixtures';
 import { computeEffectiveStats } from './stats';
@@ -491,6 +491,138 @@ describe('fireShipWeapon haywireTargeting', () => {
     const damagedCount = state.enemies.filter((e) => e.hp < 9999).length;
     expect(damagedCount).toBe(1);
     expect(state.stats.damageDealt).toBeCloseTo(FIXTURE_WEAPON.damagePerShot);
+  });
+});
+
+describe('setPriorityTarget', () => {
+  it('sets priorityTargetId and records a tap with the current tick', () => {
+    const state = freshState();
+    state.tick = 42;
+    setPriorityTarget(state, 7);
+    expect(state.priorityTargetId).toBe(7);
+    expect(state.priorityTargetTaps).toContainEqual({ tick: 42, enemyId: 7 });
+  });
+
+  it('null clears the mark and is recorded the same way', () => {
+    const state = freshState();
+    setPriorityTarget(state, 7);
+    setPriorityTarget(state, null);
+    expect(state.priorityTargetId).toBeNull();
+    expect(state.priorityTargetTaps).toHaveLength(2);
+    expect(state.priorityTargetTaps[1]).toEqual({ tick: state.tick, enemyId: null });
+  });
+});
+
+describe('fireShipWeapon priority targeting', () => {
+  it('hits the marked enemy even when it is not front-most', () => {
+    const state = freshState();
+    state.enemies = [
+      makeFixtureEnemy({ id: 1, hp: 9999, distance: 10 }), // front-most
+      makeFixtureEnemy({ id: 2, hp: 9999, distance: 90 }), // marked, deep in the queue
+    ];
+    setPriorityTarget(state, 2);
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    const marked = state.enemies.find((e) => e.id === 2);
+    const frontMost = state.enemies.find((e) => e.id === 1);
+    expect(marked?.hp).toBeLessThan(9999);
+    expect(frontMost?.hp).toBe(9999); // single-target weapon: only the marked enemy is hit
+  });
+
+  it('falls back to front-most when the marked enemy is no longer present (soft priority)', () => {
+    const state = freshState();
+    state.enemies = [
+      makeFixtureEnemy({ id: 1, hp: 9999, distance: 10 }),
+    ];
+    setPriorityTarget(state, 999); // marked enemy doesn't exist / already dead
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    expect(state.enemies.find((e) => e.id === 1)?.hp).toBeLessThan(9999); // never wastes the shot
+  });
+
+  it('marked target takes slot 0 (full damage, no falloff) when multiple targets are hit', () => {
+    const state = freshState();
+    state.loadout = { ...state.loadout, weapon: { ...FIXTURE_WEAPON, maxTargets: 2, falloffPerTarget: 0.5 } };
+    state.enemies = [
+      makeFixtureEnemy({ id: 1, hp: 9999, distance: 10 }), // front-most
+      makeFixtureEnemy({ id: 2, hp: 9999, distance: 20 }), // 2nd front-most
+      makeFixtureEnemy({ id: 3, hp: 9999, distance: 90 }), // marked, deepest
+    ];
+    setPriorityTarget(state, 3);
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    const marked = state.enemies.find((e) => e.id === 3); // slot 0: the priority target
+    const frontMost = state.enemies.find((e) => e.id === 1); // fills the 1 remaining slot
+    const secondClosest = state.enemies.find((e) => e.id === 2); // squeezed out — only 1 slot left
+    // Marked enemy (slot 0) takes full, un-falloff'd damage.
+    expect(9999 - (marked?.hp ?? 9999)).toBeCloseTo(FIXTURE_WEAPON.damagePerShot);
+    // The single remaining slot fills from front-most (id 1), excluding the marked enemy.
+    expect(frontMost?.hp).toBeLessThan(9999);
+    expect(secondClosest?.hp).toBe(9999); // maxTargets=2 total: marked + 1 front-most, no room left
+  });
+});
+
+describe('regenerateEnemies: booster buff-ahead mechanic', () => {
+  it('booster grants its regenPerTick to the nearest enemy ahead, not to itself', () => {
+    const state = freshState();
+    state.enemies = [
+      makeFixtureEnemy({ id: 1, kind: 'fodder', hp: 50, maxHp: 100, distance: 10 }), // ahead
+      makeFixtureEnemy({ id: 2, kind: 'booster', hp: 50, maxHp: 100, distance: 50, regenPerTick: 5 }),
+    ];
+    regenerateEnemies(state);
+    const target = state.enemies.find((e) => e.id === 1);
+    const booster = state.enemies.find((e) => e.id === 2);
+    expect(target?.hp).toBe(55); // healed
+    expect(booster?.hp).toBe(50); // unchanged — booster never heals itself
+  });
+
+  it('does nothing when the booster is already the closest enemy on the lane (nothing ahead of it)', () => {
+    const state = freshState();
+    state.enemies = [
+      makeFixtureEnemy({ id: 1, kind: 'booster', hp: 50, maxHp: 100, distance: 10, regenPerTick: 5 }),
+      makeFixtureEnemy({ id: 2, kind: 'fodder', hp: 50, maxHp: 100, distance: 50 }), // behind, not ahead
+    ];
+    regenerateEnemies(state);
+    expect(state.enemies.find((e) => e.id === 1)?.hp).toBe(50);
+    expect(state.enemies.find((e) => e.id === 2)?.hp).toBe(50);
+  });
+
+  it('no stacking: two boosters targeting the same nearest-ahead enemy chain instead of double-feeding it directly', () => {
+    // A (dist 90) and B (dist 92) both sit behind target C (dist 50), with nothing
+    // between them. B's nearest-ahead is A (dist 90 < 92), not C — so C is only ever
+    // buffed once, directly, by A; B's regen chains into A instead of stacking onto C.
+    const state = freshState();
+    state.enemies = [
+      makeFixtureEnemy({ id: 1, kind: 'fodder', hp: 50, maxHp: 100, distance: 50 }), // C
+      makeFixtureEnemy({ id: 2, kind: 'booster', hp: 50, maxHp: 100, distance: 90, regenPerTick: 5 }), // A
+      makeFixtureEnemy({ id: 3, kind: 'booster', hp: 50, maxHp: 100, distance: 92, regenPerTick: 7 }), // B
+    ];
+    regenerateEnemies(state);
+    expect(state.enemies.find((e) => e.id === 1)?.hp).toBe(55); // C: +5 from A only, once
+    expect(state.enemies.find((e) => e.id === 2)?.hp).toBe(57); // A: +7 from B (booster-buffs-booster)
+    expect(state.enemies.find((e) => e.id === 3)?.hp).toBe(50); // B: nothing ahead of it, unchanged
+  });
+
+  it('overtake case: buff target updates live as a faster enemy passes the booster', () => {
+    const state = freshState();
+    state.enemies = [
+      // Distance is measured from the ship — smaller is closer/"ahead". Enemy 1 starts
+      // BEHIND the booster (distance 80 > booster's 70), so it starts out of range.
+      makeFixtureEnemy({ id: 1, kind: 'fodder', hp: 50, maxHp: 100, distance: 80 }),
+      makeFixtureEnemy({ id: 2, kind: 'booster', hp: 50, maxHp: 100, distance: 70, regenPerTick: 5 }),
+    ];
+    regenerateEnemies(state);
+    // Not yet ahead (80 > 70) — booster has nothing to buff.
+    expect(state.enemies.find((e) => e.id === 1)?.hp).toBe(50);
+
+    // The fast enemy overtakes the (stationary in this test) booster, moving to a
+    // smaller distance — now closer to the ship than the booster.
+    const overtaking = state.enemies.find((e) => e.id === 1);
+    if (overtaking !== undefined) overtaking.distance = 40;
+    regenerateEnemies(state);
+    // Now ahead (40 < 70) — the booster's target picks it up live, no re-spawn or
+    // re-pairing needed, exactly the recomputed-every-tick guarantee decision #14 requires.
+    expect(state.enemies.find((e) => e.id === 1)?.hp).toBe(55);
   });
 });
 

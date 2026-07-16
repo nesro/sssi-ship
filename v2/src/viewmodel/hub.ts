@@ -245,6 +245,7 @@ export function computeKindRows(ctx: KindRowsCtx, selectedKind: string | null): 
   const rows: KindRowViewModel[] = [];
   if (ctx.config.hasNoneOption) rows.push(computeNoneRow(ctx.config, ctx.save, selectedKind));
   for (const kind of ctx.config.kinds) {
+    if (ctx.config.isKindVisible?.(kind, ctx.save) === false) continue;
     rows.push(computeKindRow({ config: ctx.config, save: ctx.save, kind, playerStars: ctx.playerStars }, selectedKind));
   }
   return rows;
@@ -454,15 +455,21 @@ export function computeLoadoutRows(save: SaveData): LoadoutViewModel {
 
 // ── Galaxy map ─────────────────────────────────────────────────────────────
 
+// m3b added 2026-07-15 (fable-fun-review-followup.md Item 7) — placed on the m3→m4
+// path per its mandatory unlock edge (MISSION_UNLOCK_EDGES), roughly at the midpoint
+// of m3/m4's own coordinates so its connecting lines read as "between" them rather
+// than crossing the map. Was missing entirely until this fix — computeGalaxyMap()
+// silently skips any mission without a GALAXY_NODES entry, so the node (and its
+// unlock-edge lines) just never rendered.
 const GALAXY_NODES: Record<string, { x: number; y: number }> = {
   t1: { x: 62, y: 130 }, t2: { x: 133, y: 200 }, t3: { x: 87, y: 285 }, t4: { x: 172, y: 330 },
   m1: { x: 253, y: 100 }, m2: { x: 315, y: 185 }, m3: { x: 369, y: 115 },
-  m4: { x: 408, y: 240 }, m5: { x: 450, y: 315 }, m6: { x: 494, y: 185 },
+  m3b: { x: 398, y: 172 }, m4: { x: 408, y: 240 }, m5: { x: 450, y: 315 }, m6: { x: 494, y: 185 },
 };
 
 const MISSION_DURATION: Record<string, string> = {
   t1: '~30s', t2: '~1min', t3: '~1min', t4: '~2min',
-  m1: '~3min', m2: '~5min', m3: '~8min', m4: '~8min',
+  m1: '~3min', m2: '~5min', m3: '~8min', m3b: '~6min', m4: '~8min',
   m5: '~12min', m6: '~15min',
 };
 

@@ -98,4 +98,46 @@ describe('hashCoreState', () => {
     state.ship.hull -= 1;
     expect(hashCoreState(state)).not.toBe(before);
   });
+
+  it('changes when priorityTargetId changes — a targeting divergence must be caught', () => {
+    const { state } = runMission(FIXTURE_MISSION, FIXTURE_LOADOUT, 5);
+    const before = hashCoreState(state);
+    state.priorityTargetId = 999;
+    expect(hashCoreState(state)).not.toBe(before);
+  });
+
+  it('changes when an enemy\'s holdChargeTicks changes — a hold-charge divergence must be caught (Item 6)', () => {
+    const { state } = runMission(FIXTURE_MISSION, FIXTURE_LOADOUT, 5);
+    state.enemies.push({
+      id: 9999, kind: 'blocker', distance: 50, hp: 100, maxHp: 100, shootTimer: 10,
+      speed: 0.5, shotDamage: 4, ticksBetweenShots: 15, blocksConveyor: true, coinReward: 25,
+      isBoss: false, regenPerTick: 0, critChance: 0, missChance: 0, critMult: 2, holdChargeTicks: 0,
+      aliveTicks: 0,
+    });
+    const before = hashCoreState(state);
+    const enemy = state.enemies.find((e) => e.id === 9999);
+    if (enemy === undefined) throw new Error('test enemy not found');
+    enemy.holdChargeTicks = 42;
+    expect(hashCoreState(state)).not.toBe(before);
+  });
+});
+
+describe('verifyReplay with priority-target taps', () => {
+  it('records taps and re-simulates to the same hash', () => {
+    // FIXTURE_MISSION's first wave spawns at tick 20 (seconds(2)); mark the front-most
+    // enemy once it exists (tick 25), clear the mark at tick 50 — exercises both a set
+    // and a clear through the real chooseTarget policy seam.
+    const policies = {
+      chooseTarget: (state: { tick: number; enemies: { id: number }[] }) => {
+        if (state.tick === 25) return state.enemies[0]?.id ?? null;
+        if (state.tick === 50) return null;
+        return undefined;
+      },
+    };
+    const { state, replay } = runMission(FIXTURE_MISSION, FIXTURE_LOADOUT, 7, policies);
+    expect(replay.priorityTargetTaps.length).toBeGreaterThanOrEqual(1);
+    expect(replay.priorityTargetTaps.some((t) => t.tick === 25 && t.enemyId !== null)).toBe(true);
+    expect(state.priorityTargetId).toBeNull(); // cleared at tick 50, never re-set after
+    expect(verifyReplay(replay, FIXTURE_MISSION)).toBe(true);
+  });
 });
