@@ -7,9 +7,17 @@ import { UI_FONT } from './widgets';
 
 /**
  * First scene: loads all audio assets (the only files Phaser must fetch — textures are
- * generated at runtime), then hands off to OnboardingScene (a save that hasn't seen the
- * tutorials-or-skip prompt yet) or straight to HubScene (every returning save). A tiny
- * loading label covers the brief fetch of the ~9 MB music track on first launch.
+ * generated at runtime), then hands off to `AlphaNoticeScene` — every save, fresh or
+ * returning, every launch (that screen has no save-flag gate of its own; it's a
+ * standing dev/alpha reminder, not a first-run-only prompt). There is no separate
+ * tutorials-or-skip prompt scene: the choice lives on the galaxy map itself (HubScene's
+ * missions screen renders a one-time "skip tutorials" link there when no tutorial has
+ * been completed yet, and t1 is always the one glowing, unlocked node on an otherwise-
+ * dim map). A fresh save (`!onboardingSeen`) gets `{ showTour: true }`, forwarded
+ * unchanged through `AlphaNoticeScene` to `HubScene`, so the hub button coach-mark tour
+ * still plays once on a genuinely new save — that question is orthogonal to both the
+ * tutorial choice and the alpha notice, not gated behind either. A tiny loading label
+ * covers the brief fetch of the ~9 MB music track on first launch.
  */
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -38,6 +46,12 @@ export class BootScene extends Phaser.Scene {
   // fallow-ignore-next-line unused-class-member
   create(): void {
     Sound.attach(this.sound);
-    this.scene.start(loadSave().onboardingSeen === true ? 'HubScene' : 'OnboardingScene');
+    // `onboardingSeen` is persisted by AlphaNoticeScene itself, only once the player
+    // actually reaches HubScene via CONTINUE — not here. Persisting it this early would
+    // mean a player who quits/crashes on the (unskippable, every-launch) alpha notice
+    // before ever tapping CONTINUE permanently loses the one-time hub button tour on
+    // their next real launch, despite never having seen it.
+    const isFirstLaunch = loadSave().onboardingSeen !== true;
+    this.scene.start('AlphaNoticeScene', { showTour: isFirstLaunch });
   }
 }

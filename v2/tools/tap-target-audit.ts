@@ -19,8 +19,10 @@
 import { chromium } from 'playwright';
 import type { Page } from 'playwright';
 import {
-  bootToHub, cheat, flushPendingOffer, SETTLE_MS, VIEWPORT, waitForMissionReady, waitForSceneActive,
+  bootToHub, cheat, DEVICE_SCALE_FACTOR, driveThroughOnboardingIfShown, flushPendingOffer, SETTLE_MS, VIEWPORT,
+  waitForMissionReady, waitForSceneActive,
 } from './playwrightHarness';
+import type { CombatSnapshot } from './playwrightHarness';
 
 const MIN_TAP = 44;
 const EDGE_MARGIN = 20;
@@ -36,21 +38,38 @@ interface AuditState {
   name: string;
   sceneKey: string;
   setup?: (page: Page) => Promise<void>;
+  /** Skip the automatic flushPendingOffer() — for the one state whose whole point is a
+   * pending offer (see screenshot.ts's identical Shot.skipFlush). */
+  skipFlush?: boolean;
 }
 
 const STATES: AuditState[] = [
   { name: 'Hub: main menu', sceneKey: 'HubScene', setup: (p) => cheat(p, 'navTo', null) },
   { name: 'Hub: missions map', sceneKey: 'HubScene', setup: (p) => cheat(p, 'navTo', 'missions') },
-  { name: 'Hub: shop weapon tab', sceneKey: 'HubScene', setup: (p) => cheat(p, 'navShop', 'weapon') },
-  { name: 'Hub: shop loadout tab', sceneKey: 'HubScene', setup: (p) => cheat(p, 'navShop', 'loadout') },
-  { name: 'Hub: shop supplies tab', sceneKey: 'HubScene', setup: (p) => cheat(p, 'navShop', 'supplies') },
-  { name: 'Hub: dispatch reinforcements', sceneKey: 'HubScene', setup: (p) => cheat(p, 'selectSubscription', 'sub-offensive') },
+  { name: 'Hub: mission detail panel', sceneKey: 'HubScene', setup: (p) => cheat(p, 'selectMission', 'm1') },
+  // The trailing tourSkip on the shop/dispatch states: a first visit auto-fires that
+  // screen's coach-mark tour (setNav, HubScene.ts), whose SKIP TOUR/NEXT buttons sit
+  // right on top of the level-chip row — so without it these states audited
+  // "screen + tour" (flagging chip×tour-button overlaps that the tour's own backdrop
+  // makes unreachable in practice) instead of the plain screen their names claim.
+  // The tours themselves keep their own dedicated states below. Null-safe when no
+  // tour fired (cheatTourSkip is `this.hubTour?.`).
+  { name: 'Hub: shop weapon tab', sceneKey: 'HubScene', setup: async (p) => { await cheat(p, 'navShop', 'weapon'); await cheat(p, 'hub.tourSkip'); } },
+  { name: 'Hub: shop loadout tab', sceneKey: 'HubScene', setup: async (p) => { await cheat(p, 'navShop', 'loadout'); await cheat(p, 'hub.tourSkip'); } },
+  { name: 'Hub: shop supplies tab', sceneKey: 'HubScene', setup: async (p) => { await cheat(p, 'navShop', 'supplies'); await cheat(p, 'hub.tourSkip'); } },
+  { name: 'Hub: dispatch reinforcements', sceneKey: 'HubScene', setup: async (p) => { await cheat(p, 'selectSubscription', 'sub-offensive'); await cheat(p, 'hub.tourSkip'); } },
   { name: 'Hub: settings', sceneKey: 'HubScene', setup: (p) => cheat(p, 'navTo', 'settings') },
+  { name: 'Hub: credits', sceneKey: 'HubScene', setup: (p) => cheat(p, 'navTo', 'credits') },
   // Only step 1 audited, not all 4 — each step's NEXT/SKIP TOUR controls share the same
   // layout/depth pattern (HubTour.ts), so one step is representative; the actual per-
   // step content (which button is highlighted) is verified visually via
   // tools/screenshot.ts's hub-tour-step-1..4 shots instead.
   { name: 'Hub: button tour, step 1', sceneKey: 'HubScene', setup: (p) => cheat(p, 'hub.showTour') },
+  // Same reasoning as above — one step each is representative of the shared HubTour
+  // layout; per-step content covered visually by screenshot.ts's hub-shop-tour-step-*/
+  // hub-dispatch-tour-step-* shots.
+  { name: 'Hub: shop tour, step 1', sceneKey: 'HubScene', setup: (p) => cheat(p, 'hub.showShopTour') },
+  { name: 'Hub: dispatch tour, step 1', sceneKey: 'HubScene', setup: (p) => cheat(p, 'hub.showDispatchTour') },
   {
     name: 'Combat: m1 early (minimal loadout)',
     sceneKey: 'CombatScene',
@@ -76,6 +95,49 @@ const STATES: AuditState[] = [
     },
   },
   {
+    name: 'Combat: card offer overlay',
+    sceneKey: 'CombatScene',
+    skipFlush: true, // the whole point of this state IS the pending offer
+    setup: async (p) => {
+      await cheat(p, 'startMission', 'm1');
+      await waitForMissionReady(p, 'm1');
+      await cheat(p, 'combat.fastForwardToOffer', 300);
+      // See tools/screenshot.ts's identical check on its combat-card-overlay shot: fail
+      // loudly if no offer opened, rather than silently auditing ordinary combat.
+      const snap = await cheat<CombatSnapshot>(p, 'combat.inspect');
+      if (!snap.hasPendingOffer) throw new Error('Combat: card offer overlay: no offer opened within 300 ticks');
+    },
+  },
+  {
+    // showReroll:false branch (CardOverlay.ts) — SKIP alone, centered, a genuinely
+    // different hit-area layout than the SKIP+REROLL pair above, never audited before.
+    name: 'Combat: card offer, rerolls exhausted',
+    sceneKey: 'CombatScene',
+    skipFlush: true,
+    setup: async (p) => {
+      await cheat(p, 'startMission', 'm1');
+      await waitForMissionReady(p, 'm1');
+      await cheat(p, 'combat.fastForwardToOffer', 300);
+      await cheat(p, 'combat.rerollCard'); // REROLLS_PER_MISSION = 2
+      await cheat(p, 'combat.rerollCard');
+      const snap = await cheat<CombatSnapshot>(p, 'combat.inspect');
+      if (!snap.hasPendingOffer) throw new Error('Combat: card offer, rerolls exhausted: no offer pending after reroll');
+    },
+  },
+  {
+    name: 'Combat: narrator modal',
+    sceneKey: 'CombatScene',
+    // See tools/screenshot.ts's identical combat-narrator-modal shot: a no-op today
+    // (w0 has no supportCallTicks) but cheap insurance against a future co-pending
+    // offer racing this narrator via flushPendingOffer.
+    skipFlush: true,
+    setup: async (p) => {
+      await cheat(p, 'startMission', 'w0');
+      await waitForMissionReady(p, 'w0');
+      await cheat(p, 'combat.fastForwardToNarrator', 300);
+    },
+  },
+  {
     name: 'Combat: exit-confirm modal',
     sceneKey: 'CombatScene',
     setup: async (p) => {
@@ -98,13 +160,45 @@ const STATES: AuditState[] = [
     },
   },
   {
-    // reset() wipes the save — must run last, same convention as screenshot.ts's
-    // onboarding-prompt shot (every other state above assumes unlockAll()'s state).
-    name: 'Onboarding: tutorials-or-skip prompt',
-    sceneKey: 'OnboardingScene',
+    // The 'w0-branch' TUTORIAL/EXPLORE button layout — structurally distinct from
+    // "Result scene" above (RETRY/MISSIONS/SHOP), never audited before this round.
+    // reset() wipes the save — grouped with the other reset()-based states at the end.
+    name: 'Result scene: w0-branch',
+    sceneKey: 'ResultScene',
     setup: async (p) => {
       await cheat(p, 'reset');
-      await waitForSceneActive(p, 'OnboardingScene');
+      await driveThroughOnboardingIfShown(p);
+      await cheat(p, 'startMission', 'w0');
+      await waitForMissionReady(p, 'w0');
+      await cheat(p, 'combat.fastForward', 6000); // confirmed via probe: wins ~tick 345
+      await p.waitForTimeout(1600);
+    },
+  },
+  {
+    // reset() wipes the save — must run last, same convention this file has always
+    // used for its one reset()-based state (every state above assumes unlockAll()'s
+    // baseline). The tutorials-or-skip choice moved from a separate OnboardingScene
+    // onto this exact screen (2026-07-17, playtest feedback) — this audits the new
+    // "skip tutorials" link's tap target on a genuinely fresh save, not the previous
+    // separate scene's two buttons.
+    name: 'Hub: missions map, fresh save (skip-tutorials link)',
+    sceneKey: 'HubScene',
+    setup: async (p) => {
+      await cheat(p, 'reset');
+      await driveThroughOnboardingIfShown(p);
+      await cheat(p, 'navTo', 'missions');
+    },
+  },
+  {
+    // AlphaNoticeScene's own CONTINUE/RESET PROGRESS buttons (added 2026-07-17) — a
+    // second, self-contained reset()-based state, safe to run in any order relative to
+    // the one above since both wipe the save themselves rather than depending on a
+    // prior state's baseline.
+    name: 'Alpha/dev-build notice screen',
+    sceneKey: 'AlphaNoticeScene',
+    setup: async (p) => {
+      await cheat(p, 'reset');
+      await waitForSceneActive(p, 'AlphaNoticeScene');
     },
   },
 ];
@@ -165,10 +259,28 @@ function boxesOverlap(a: HitBox, b: HitBox): boolean {
   return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 }
 
+// Set by main()'s pageerror handler via setPageError(), reset/read via takePageError()
+// before/after each state's setup — a page exception during setup (e.g. the
+// WebGL-restart crash known-issues.md documents) used to only print a console line
+// while the state was still audited (and likely reported spuriously clean, since a
+// crashed frame often has zero live interactive elements) and the run always exited 0
+// regardless. See screenshot.ts's identical pattern, including why these are functions
+// rather than a bare variable (TypeScript's control-flow narrowing persists a `!== null`
+// check through `await` points even though the pageerror listener can reassign the
+// underlying variable asynchronously in between; a function call's return type isn't
+// narrowed by the caller's prior flow analysis the same way a direct reference is).
+let lastPageError: string | null = null;
+function setPageError(message: string): void { lastPageError = message; }
+function takePageError(): string | null { const m = lastPageError; lastPageError = null; return m; }
+
 async function auditState(page: Page, state: AuditState): Promise<number> {
   if (state.setup) await state.setup(page);
   await page.waitForTimeout(SETTLE_MS);
-  await flushPendingOffer(page);
+  if (state.skipFlush !== true) await flushPendingOffer(page);
+  const errorDuringSetup = takePageError();
+  if (errorDuringSetup !== null) {
+    throw new Error(`page exception during setup: ${errorDuringSetup}`);
+  }
 
   const active = await page.evaluate((key) => {
     const g = window as unknown as { __game?: { scene: { isActive: (k: string) => boolean } } };
@@ -232,19 +344,48 @@ async function main(): Promise<void> {
   }
 
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: VIEWPORT });
-  page.on('pageerror', (err) => { console.error(`[page exception] ${err.stack ?? err.message}`); });
+  const page = await browser.newPage({ viewport: VIEWPORT, deviceScaleFactor: DEVICE_SCALE_FACTOR });
+  page.on('pageerror', (err) => {
+    const message = err.stack ?? err.message;
+    console.error(`[page exception] ${message}`);
+    setPageError(message);
+  });
   await bootToHub(page);
   await cheat(page, 'unlockAll');
+  // Coins too, not just unlockAll's stars/completions: with 0 coins every shop/dispatch
+  // level chip renders 'unaffordable' → dimmed → never setInteractive — so the chip
+  // grids were structurally invisible to this audit and their sub-44px hit areas went
+  // unflagged for the feature's whole life (B5, docs/plans/
+  // fable-review-fixes-2026-07-18.md, which found them by reading the code instead).
+  // A rich save makes the chips purchasable and therefore audited.
+  await cheat(page, 'setCoins', 999999);
 
   let totalFailures = 0;
+  let previousStateName = 'boot';
   for (const state of states) {
+    // Checked, not blindly cleared: an error landing after the PREVIOUS state's own
+    // check used to be silently discarded right here and attributed to nobody (same gap
+    // Fable's review found in screenshot.ts). Surfaced against the state it actually
+    // happened after, instead.
+    const strayError = takePageError();
+    if (strayError !== null) {
+      totalFailures += 1;
+      console.error(`✗ page exception after ${previousStateName} (before ${state.name} started): ${strayError}`);
+    }
     try {
       totalFailures += await auditState(page, state);
     } catch (err) {
       console.error(`✗ ${state.name} errored:`, err instanceof Error ? err.message : err);
       totalFailures += 1;
     }
+    previousStateName = state.name;
+  }
+  // Same check, once more after the loop — an error during the LAST state's own
+  // measurement pass would otherwise never be looked at at all.
+  const trailingError = takePageError();
+  if (trailingError !== null) {
+    totalFailures += 1;
+    console.error(`✗ page exception after ${previousStateName} (run ending): ${trailingError}`);
   }
 
   await browser.close();

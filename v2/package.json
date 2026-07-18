@@ -17,7 +17,9 @@
     "tune": "tsx tools/tune-loadouts.ts",
     "pacing": "tsx tools/pacing-report.ts",
     "screenshot": "tsx tools/screenshot.ts",
-    "audit-taps": "tsx tools/tap-target-audit.ts"
+    "screenshot:dpr2": "DPR_SCALE_FACTOR=2 tsx tools/screenshot.ts",
+    "audit-taps": "tsx tools/tap-target-audit.ts",
+    "audit-taps:dpr2": "DPR_SCALE_FACTOR=2 tsx tools/tap-target-audit.ts"
   },
   "dependencies": {
     "@capacitor/android": "^7.2.0",

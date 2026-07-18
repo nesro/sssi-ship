@@ -11,13 +11,24 @@ export const VIEWPORT = { width: 960, height: 540 }; // LOGICAL_WIDTH/HEIGHT, sr
 export const BOOT_TIMEOUT_MS = 20_000; // BootScene fetches a ~9MB music track on first load
 export const SETTLE_MS = 150; // let one real Phaser frame run after a state change before capture
 
+/** Playwright's default deviceScaleFactor is 1 — every prior run of these tools has
+ * therefore only ever exercised src/view/layout.ts's DPR=1 code path, never the
+ * dpr-sharp rendering (`zoom: 1/DPR`, `px()`/`fontPx()` device-pixel rounding) the whole
+ * canvas-sizing scheme exists to protect, and never actually exercised
+ * tap-target-audit.ts's `world-px / DPR` conversion at a real non-1 value (it's
+ * algebraically DPR-agnostic, but "algebraically correct" and "actually verified" are
+ * different claims). Set DPR_SCALE_FACTOR=2 (or any value) to run a real pass at that
+ * scale — docs/plans/comprehensive-coverage-sweep.md's Phase 0. */
+export const DEVICE_SCALE_FACTOR = Number(process.env.DPR_SCALE_FACTOR ?? '1');
+
 export interface EnemySnapshot {
   id: number; kind: string; distance: number; hp: number; maxHp: number;
   holdChargeTicks: number; blocksConveyor: boolean;
 }
 export interface CombatSnapshot {
-  missionId: string; tick: number; status: string; priorityTargetId: number | null;
+  missionId: string; tick: number; timelineTick: number; status: string; priorityTargetId: number | null;
   hasPendingOffer: boolean;
+  narratorFullyRevealed: boolean;
   ship: { hull: number; maxHull: number; shield: number; energy: number };
   enemies: EnemySnapshot[];
 }
@@ -77,9 +88,51 @@ export async function waitForMissionReady(page: Page, missionId: string, timeout
   }
 }
 
+/** Polls combat.inspect() until the bottom NarratorBar's current line has finished its
+ * typewriter reveal (NarratorBar.isFullyRevealed) — the "read state back, don't guess a
+ * fixed sleep" alternative to a hardcoded wait sized off today's longest story.ts line,
+ * which would silently under-shoot if a future line got longer or over-shoot into the
+ * bar's own 5000ms auto-hide window for a short line (docs/known-issues.md's now-
+ * resolved NarratorBar reveal-timing entry). Real-time polling is correct here — the
+ * typewriter reveal runs off wall-clock deltaMs every rendered frame
+ * (CombatScene.update's narrator.update call), unaffected by the sim's own tick pause
+ * under a pending card offer. THROWS on timeout or if the mission ends before a line
+ * ever finishes revealing (matching advanceUntil's own fail-loud precedent) — a bare
+ * cheat() rejection after the scene has gone away would be a much worse message. */
+export async function waitForNarratorFullyRevealed(page: Page, timeoutMs = 15_000): Promise<CombatSnapshot> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const snap = await cheat<CombatSnapshot>(page, 'combat.inspect');
+    if (snap.narratorFullyRevealed) return snap;
+    const context = `mission=${snap.missionId} tick=${String(snap.tick)} status=${snap.status}`;
+    if (snap.status !== 'running') {
+      throw new Error(`waitForNarratorFullyRevealed: mission ended before a narrator line finished revealing (${context})`);
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`waitForNarratorFullyRevealed: timed out after ${String(timeoutMs)}ms (${context})`);
+    }
+    await page.waitForTimeout(100);
+  }
+}
+
 /** Fast-forwards combat in small steps, re-reading state after each, until `predicate`
  * is true or `maxTicks` is exhausted — the "read state back and adapt" alternative to
- * a hardcoded tick number that may drift the moment mission data changes again. */
+ * a hardcoded tick number that may drift the moment mission data changes again.
+ *
+ * THROWS if the predicate never becomes true — added 2026-07-17/18 (polish-loop,
+ * Fable's review) after this used to silently RETURN the best-effort snapshot on both
+ * a mission ending early and a timeout, with no way for a caller to tell success from
+ * failure short of re-checking the predicate themselves. None of this file's 17 real
+ * call sites (tools/screenshot.ts) did that check — `combat-m6-boss`'s shot had been
+ * silently capturing a boss-less frame for who knows how long, reported as a clean "0
+ * failures" the whole time. The predicate is still checked FIRST, before the
+ * mission-ended guard — load-bearing for combat-low-hull-vignette's own setup, which
+ * deliberately wants a hull=0 defeat snapshot to still count as success (its own
+ * threshold, hull/maxHull < 0.15, is still true at hull=0). `timelineTick` is included
+ * because it's often the actual smoking gun (CombatSnapshot's own field, added
+ * alongside this fix) — a blocksConveyor enemy freezes it entirely while `tick` (real
+ * per-advance count) keeps climbing, so a predicate waiting on a timeline-scheduled
+ * spawn can time out on `tick` while `timelineTick` shows it never got anywhere close. */
 export async function advanceUntil(
   page: Page,
   predicate: (snap: CombatSnapshot) => boolean,
@@ -89,7 +142,16 @@ export async function advanceUntil(
   let advanced = 0;
   for (;;) {
     const snap = await cheat<CombatSnapshot>(page, 'combat.inspect');
-    if (predicate(snap) || snap.status !== 'running' || advanced >= maxTicks) return snap;
+    if (predicate(snap)) return snap;
+    const context = `mission=${snap.missionId} tick=${String(snap.tick)} timelineTick=${String(snap.timelineTick)} ` +
+      `status=${snap.status} hull=${String(snap.ship.hull)}/${String(snap.ship.maxHull)} ` +
+      `energy=${String(Math.round(snap.ship.energy))} enemies=[${snap.enemies.map((e) => e.kind).join(',')}]`;
+    if (snap.status !== 'running') {
+      throw new Error(`advanceUntil: mission ended before predicate was satisfied (${context})`);
+    }
+    if (advanced >= maxTicks) {
+      throw new Error(`advanceUntil: timed out after ${String(maxTicks)} attempted ticks without satisfying predicate (${context})`);
+    }
     await cheat(page, 'combat.fastForward', stepTicks);
     advanced += stepTicks;
   }
@@ -122,33 +184,26 @@ export function hasKind(snap: CombatSnapshot, kind: string): boolean {
   return snap.enemies.some((e) => e.kind === kind);
 }
 
+/** Drives through every screen BootScene puts in front of HubScene, so every caller can
+ * keep assuming "after this, HubScene is active with no overlay dimming everything."
+ * Two steps today: (1) `AlphaNoticeScene` (added 2026-07-17) — shown on EVERY launch,
+ * no save-flag gate, so this always has to be dismissed via `alpha.continue()` before
+ * HubScene ever becomes active at all; (2) the one-time hub button tour, dismissed via
+ * `hub.tourSkip()` (a safe no-op when no tour is active — HubScene.ts's
+ * `cheatTourSkip`) in case a fresh save's first launch triggered it. Shared by
+ * bootToHub() (first page load) and any tool that calls __cheat.reset() mid-run, which
+ * also routes through BootScene → AlphaNoticeScene again. */
+export async function driveThroughOnboardingIfShown(page: Page): Promise<void> {
+  await waitForSceneActive(page, 'AlphaNoticeScene', BOOT_TIMEOUT_MS);
+  await cheat(page, 'alpha.continue');
+  await waitForSceneActive(page, 'HubScene', BOOT_TIMEOUT_MS);
+  await cheat(page, 'hub.tourSkip');
+}
+
 /** Boots the page to HubScene, ready for cheat() calls — the common prefix every tool
- * in this harness needs before it can do anything else. A fresh Playwright browser
- * context has no localStorage, so BootScene routes it to OnboardingScene first (same as
- * a real fresh install) — this waits for either scene, then drives straight through
- * OnboardingScene via cheat() (never a real click) if that's where it landed, so every
- * caller downstream can keep assuming "after bootToHub, HubScene is active." Either
- * onboarding choice hands off to HubScene with the button tour already showing
- * (OnboardingScene.ts) — dismissed here via hub.tourSkip() so downstream tools land on
- * a clean, predictable HubScene, not an active coach-mark overlay dimming everything. */
+ * in this harness needs before it can do anything else. */
 export async function bootToHub(page: Page): Promise<void> {
   await page.goto(BASE_URL);
-  await page.waitForFunction(
-    () => {
-      const g = window as unknown as { __game?: { scene: { isActive: (k: string) => boolean } } };
-      return g.__game?.scene.isActive('HubScene') === true || g.__game?.scene.isActive('OnboardingScene') === true;
-    },
-    null,
-    { timeout: BOOT_TIMEOUT_MS },
-  );
-  const onOnboarding = await page.evaluate(() => {
-    const g = window as unknown as { __game?: { scene: { isActive: (k: string) => boolean } } };
-    return g.__game?.scene.isActive('OnboardingScene') === true;
-  });
-  if (onOnboarding) {
-    await cheat(page, 'onboarding.choose', 'tutorials');
-    await waitForSceneActive(page, 'HubScene', BOOT_TIMEOUT_MS);
-    await cheat(page, 'hub.tourSkip');
-  }
+  await driveThroughOnboardingIfShown(page);
   await page.waitForTimeout(SETTLE_MS);
 }

@@ -35,6 +35,14 @@
 // instead of leaving every toggle on for the whole mission (every strategy left energy
 // management entirely unmodeled before this flag existed — see tools/policies.ts's
 // brownoutAwareToggles). Off by default, matching every prior sim result's behavior.
+// --daily-seed <n>: generates and registers the daily mission (src/data/dailyMission.ts)
+// for the given seed and runs it in place of --mission (any --mission value is ignored
+// once this is set). This is how the daily's escalation/economy constants get tuned —
+// same "the simulator is the truth" principle as everything else, not eyeballed. Use
+// --loadout starter/mid/full to compare survival time and coin yield across gear tiers
+// (the daily always uses "own gear," so simulate.ts's existing tiered loadouts are
+// exactly the right proxy — there's no daily-specific loadout concept to add).
+// Usage: pnpm sim -- --daily-seed 1 --runs 500 --strategy greedy --loadout full
 
 import { TICKS_PER_SECOND } from '../src/core/constants';
 import { runMission } from '../src/core/replay';
@@ -43,9 +51,10 @@ import { buildMissionResult } from '../src/core/result';
 import { mulberry32 } from '../src/core/rng';
 import type { LoadoutSnapshot } from '../src/core/types';
 import { abilityPoolForLoadout } from '../src/data/cards';
-import { ALL_MISSIONS, missionById } from '../src/data/missions';
+import { DAILY_MISSION_ID, generateDailyMission } from '../src/data/dailyMission';
+import { ALL_MISSIONS, missionById, setDailyMission } from '../src/data/missions';
 import { resolveForcedLoadout, STARTER_LOADOUT } from '../src/data/loadouts';
-import { intendedLoadoutForMission, starterKindLoadoutAtLevel, timeStarT3Loadout, timeStarT4Loadout } from './loadoutPresets';
+import { intendedLoadoutForMission, starterKindLoadoutAtLevel, timeStarT2Loadout, timeStarT3Loadout, timeStarT4Loadout } from './loadoutPresets';
 import { alwaysOnToggles, brownoutAwareToggles, greedyPick, prioritizeHighValueTargets, tapFirstChargedSupply, tapSuppliesReactively } from './policies';
 
 interface CliOptions {
@@ -53,11 +62,13 @@ interface CliOptions {
   runs: number;
   baseSeed: number;
   strategy: 'random' | 'greedy' | 'skip';
-  loadout: 'starter' | 'mid' | 'full' | 'intended' | 'forced' | 't3' | 't4';
+  loadout: 'starter' | 'mid' | 'full' | 'intended' | 'forced' | 't2' | 't3' | 't4';
   percentiles: boolean;
   useSupplies: boolean;
   suppliesPolicy: 'naive' | 'reactive';
   manageToggles: boolean;
+  dailySeed: number | null;
+  maxTicks: number | null;
 }
 
 const LOADOUTS: Record<'starter' | 'mid' | 'full', LoadoutSnapshot> = {
@@ -72,6 +83,7 @@ function parseArgs(rawArgv: string[]): CliOptions {
   const options: CliOptions = {
     missionId: 'm1', runs: 1000, baseSeed: 1, strategy: 'random', loadout: 'starter',
     percentiles: false, useSupplies: false, suppliesPolicy: 'naive', manageToggles: false,
+    dailySeed: null, maxTicks: null,
   };
   let i = 0;
   while (i < argv.length) {
@@ -99,12 +111,14 @@ function parseArgs(rawArgv: string[]): CliOptions {
     else if (flag === '--runs') options.runs = parsePositiveInt(value, flag);
     else if (flag === '--seed') options.baseSeed = parsePositiveInt(value, flag);
     else if (flag === '--strategy') options.strategy = parseChoice(value, ['random', 'greedy', 'skip']);
-    else if (flag === '--loadout') options.loadout = parseChoice(value, ['starter', 'mid', 'full', 'intended', 'forced', 't3', 't4']);
+    else if (flag === '--loadout') options.loadout = parseChoice(value, ['starter', 'mid', 'full', 'intended', 'forced', 't2', 't3', 't4']);
     else if (flag === '--supplies-policy') options.suppliesPolicy = parseChoice(value, ['naive', 'reactive']);
+    else if (flag === '--daily-seed') options.dailySeed = parsePositiveInt(value, flag);
+    else if (flag === '--max-ticks') options.maxTicks = parsePositiveInt(value, flag);
     else {
       throw new Error(
         `Unknown flag "${flag}". Known: --mission --runs --seed --strategy --loadout ` +
-          `--percentiles --use-supplies --supplies-policy --manage-toggles`,
+          `--percentiles --use-supplies --supplies-policy --manage-toggles --daily-seed --max-ticks`,
       );
     }
     i += 2;
@@ -131,15 +145,21 @@ function policiesFor(options: CliOptions, seed: number, loadout: LoadoutSnapshot
   const boostPolicy = options.suppliesPolicy === 'reactive' ? tapSuppliesReactively : tapFirstChargedSupply;
   const boost = options.useSupplies ? { useBoost: boostPolicy } : {};
   const toggles = { manageToggles: options.manageToggles ? brownoutAwareToggles : alwaysOnToggles };
-  if (options.strategy === 'skip') return { abilityPool, ...boost, ...toggles };
+  // maxTicks default (replay.ts's DEFAULT_MAX_TICKS = 6000, i.e. 600s) is a simulator-
+  // only safety cap — the live game has no equivalent, it just keeps ticking. The daily
+  // mission's own tuned survival time for a strong loadout can legitimately approach or
+  // exceed it, so --max-ticks exists to raise the cap for that specific investigation
+  // rather than the tool erroring out on an otherwise-valid long run.
+  const maxTicks = options.maxTicks !== null ? { maxTicks: options.maxTicks } : {};
+  if (options.strategy === 'skip') return { abilityPool, ...boost, ...toggles, ...maxTicks };
   if (options.strategy === 'random') {
     const rng = mulberry32(seed ^ 0x5f3759df);
-    return { abilityPool, pickAbility: () => Math.floor(rng() * 3), ...boost, ...toggles };
+    return { abilityPool, pickAbility: () => Math.floor(rng() * 3), ...boost, ...toggles, ...maxTicks };
   }
   // chooseTarget mirrors balance-sweep.ts's greedyPolicies (Item 7 note there) — greedy
   // is this project's realistic-player proxy, and a realistic player acts on the
   // in-game "tap to target it" hint, not just optimizes cards.
-  return { abilityPool, pickAbility: greedyPick, chooseTarget: prioritizeHighValueTargets, ...boost, ...toggles };
+  return { abilityPool, pickAbility: greedyPick, chooseTarget: prioritizeHighValueTargets, ...boost, ...toggles, ...maxTicks };
 }
 
 function resolveLoadout(options: CliOptions, mission: ReturnType<typeof missionById>): LoadoutSnapshot {
@@ -150,6 +170,7 @@ function resolveLoadout(options: CliOptions, mission: ReturnType<typeof missionB
     return resolveForcedLoadout(mission.forcedLoadout);
   }
   if (options.loadout === 'intended') return intendedLoadoutForMission(mission.id);
+  if (options.loadout === 't2') return timeStarT2Loadout();
   if (options.loadout === 't3') return timeStarT3Loadout();
   if (options.loadout === 't4') return timeStarT4Loadout();
   return LOADOUTS[options.loadout];
@@ -157,6 +178,10 @@ function resolveLoadout(options: CliOptions, mission: ReturnType<typeof missionB
 
 function main(): void {
   const options = parseArgs(process.argv.slice(2));
+  if (options.dailySeed !== null) {
+    setDailyMission(generateDailyMission(options.dailySeed));
+    options.missionId = DAILY_MISSION_ID;
+  }
   const mission = missionById(options.missionId);
   const loadout = resolveLoadout(options, mission);
 
@@ -166,6 +191,13 @@ function main(): void {
   // Successful-run durations only — the ones already-printed avg-duration mixes in
   // defeat-truncated runs, which skews it toward "died fast" rather than "cleared fast".
   const successfulDurationsTicks: number[] = [];
+  // Coins earned — always tracked (cheap), but this is specifically the metric the
+  // daily mission is tuned against ("score" = result.coins); every other mission's
+  // reward is dominated by the flat completionCoins bonus, so this line matters far
+  // less for them, but there's no reason to gate it behind --daily-seed.
+  const coinsEarned: number[] = [];
+  let totalCollisions = 0;
+  let totalWeaponKills = 0;
   for (let i = 0; i < options.runs; i++) {
     const seed = options.baseSeed + i;
     const { state } = runMission(mission, loadout, seed, policiesFor(options, seed, loadout));
@@ -175,6 +207,9 @@ function main(): void {
       successfulDurationsTicks.push(result.durationTicks);
     }
     totalTicks += result.durationTicks;
+    coinsEarned.push(result.coins);
+    totalCollisions += result.collisions;
+    totalWeaponKills += result.weaponKills;
     for (const starId of result.earnedStarIds) {
       starCounts.set(starId, (starCounts.get(starId) ?? 0) + 1);
     }
@@ -188,11 +223,16 @@ function main(): void {
       `loadout=${options.loadout} use-supplies=${suppliesLabel} manage-toggles=${String(options.manageToggles)}`,
   );
   console.log(`clear-rate=${clearRate.toFixed(1)}%  avg-duration=${avgSeconds.toFixed(1)}s (all runs, defeats included)`);
+  const sortedCoins = [...coinsEarned].sort((a, b) => a - b);
+  const avgCoins = coinsEarned.reduce((sum, c) => sum + c, 0) / options.runs;
+  const medianCoins = sortedCoins[Math.floor(sortedCoins.length / 2)] ?? 0;
+  console.log(`avg-coins=${avgCoins.toFixed(0)}  median-coins=${String(medianCoins)}`);
+  console.log(`avg-weapon-kills=${(totalWeaponKills / options.runs).toFixed(1)}  avg-collisions=${(totalCollisions / options.runs).toFixed(1)}`);
   for (const star of mission.stars) {
     const rate = ((starCounts.get(star.id) ?? 0) / options.runs) * 100;
     console.log(`  star ${star.id.padEnd(16)} ${rate.toFixed(1)}%`);
   }
-  console.log(`missions available: ${ALL_MISSIONS.map((m) => m.id).join(', ')}`);
+  console.log(`missions available: ${ALL_MISSIONS.map((m) => m.id).join(', ')}${options.dailySeed !== null ? ', daily' : ''}`);
 
   if (options.percentiles) printTimeStarPercentiles(successfulDurationsTicks);
 }

@@ -1,13 +1,14 @@
 import Phaser from 'phaser';
+import { AlphaNoticeScene } from './AlphaNoticeScene';
 import { BootScene } from './BootScene';
 import { CombatScene } from './CombatScene';
 import { HubScene } from './HubScene';
-import { OnboardingScene } from './OnboardingScene';
 import { ResultScene } from './ResultScene';
 import { PALETTE } from './palette';
 import { DPR, SCREEN_HEIGHT, SCREEN_WIDTH } from './layout';
 import { buySupplyCharge, defaultSave, loadSave, persistSave, resetSave, switchItem, switchShip, switchRearWeapon, switchSideWeapon } from '../save/SaveManager';
-import { ALL_MISSIONS } from '../data/missions';
+import { ALL_MISSIONS, setDailyMission } from '../data/missions';
+import { DAILY_MISSION_ID, dailyDateKey, dailySeedForDate, generateDailyMission } from '../data/dailyMission';
 
 // dpr-sharp canvas (V2_HANDOFF.md §4.2): render at native resolution, zoom back to
 // logical CSS size. Never Scale.FIT on a small canvas — that was v1's blurry-text bug.
@@ -19,7 +20,7 @@ const game = new Phaser.Game({
   zoom: 1 / DPR,
   backgroundColor: PALETTE.backgroundNearBlack,
   render: { roundPixels: true },
-  scene: [BootScene, OnboardingScene, HubScene, CombatScene, ResultScene],
+  scene: [BootScene, AlphaNoticeScene, HubScene, CombatScene, ResultScene],
 });
 
 // Dev/debug handle (v1 convention): drive scenes from the browser console.
@@ -60,10 +61,26 @@ if (import.meta.env.DEV) {
       });
       goTo('HubScene');
     },
+    /**
+     * Marks exactly the given mission ids completed with zero stars earned (a "played
+     * but didn't chase benchmarks" player), leaving everything else at its current
+     * state — unlike unlockAll()'s all-or-nothing, this can produce a genuine
+     * mid-progression galaxy map (some nodes locked, some completed-but-starless, some
+     * with partial stars if called incrementally). Usage: __cheat.setProgress(['t1','m1'])
+     */
+    setProgress: (missionIds: string[]) => {
+      const save = loadSave();
+      persistSave({
+        ...save,
+        completedMissionIds: [...new Set([...save.completedMissionIds, ...missionIds])],
+        onboardingSeen: true,
+      });
+      goTo('HubScene');
+    },
     /** Reset save to factory defaults. Usage: __cheat.reset()
      * Routes through BootScene (not straight to HubScene) so a reset save exercises the
-     * same onboardingSeen check a real fresh install would — including landing on
-     * OnboardingScene, same as any other fresh save. */
+     * same first-launch check a real fresh install would (the one-time hub button tour;
+     * the tutorials-or-skip choice itself now lives on the galaxy screen, not a gate). */
     reset: () => { resetSave(); goTo('BootScene'); },
     /** Print current save to console. Usage: __cheat.inspect() */
     inspect: () => { console.log(JSON.stringify(loadSave(), null, 2)); },
@@ -134,6 +151,17 @@ if (import.meta.env.DEV) {
       }
     },
     /**
+     * Select a galaxy-map mission node without clicking — the mission info panel
+     * (name, star benchmarks, START button) only renders once a node is selected.
+     * Usage: __cheat.selectMission('m1')
+     */
+    selectMission: (id: string) => {
+      const scene = game.scene.getScene('HubScene') as unknown as Record<string, unknown> | null;
+      if (scene && typeof scene['cheatSelectMission'] === 'function') {
+        (scene['cheatSelectMission'] as (i: string) => void)(id);
+      }
+    },
+    /**
      * Jump straight into combat for any mission id, bypassing hub navigation entirely.
      * Usage: __cheat.startMission('m3b')
      */
@@ -148,40 +176,106 @@ if (import.meta.env.DEV) {
      */
     combat: {
       fastForward: (ticks: number) => callCombatCheat('cheatFastForward', ticks),
+      fastForwardToOffer: (maxTicks: number) => callCombatCheat('cheatFastForwardToOffer', maxTicks),
+      fastForwardToNarrator: (maxTicks: number) => callCombatCheat('cheatFastForwardToNarrator', maxTicks),
+      dismissNarrator: () => callCombatCheat('cheatDismissNarrator'),
+      narratorNext: () => callCombatCheat('cheatNarratorNext'),
       markTarget: (enemyId: number | null) => callCombatCheat('cheatMarkTarget', enemyId),
       setToggle: (system: string, on: boolean) => callCombatCheat('cheatSetToggle', system, on),
       inspect: (): unknown => callCombatCheat('cheatInspect'),
       showExitConfirm: () => callCombatCheat('cheatShowExitConfirm'),
+      confirmExit: () => callCombatCheat('cheatConfirmExit'),
+      pickCard: (index: number) => callCombatCheat('cheatPickCard', index),
+      rerollCard: () => callCombatCheat('cheatRerollCard'),
+      skipCard: () => callCombatCheat('cheatSkipCard'),
+      activateAbility: (slotIndex: number) => callCombatCheat('cheatActivateAbility', slotIndex),
+      fireSideWeapon: () => callCombatCheat('cheatFireSideWeapon'),
+      activateSupply: (slot: number) => callCombatCheat('cheatActivateSupply', slot),
     },
     /**
-     * OnboardingScene-only cheat — no-op (logged) if it isn't currently active.
-     * Usage: __cheat.onboarding.choose('tutorials' | 'skip')
+     * AlphaNoticeScene-only cheat — no-op (logged) if it isn't currently active. Every
+     * automated boot hits this screen (it has no save-flag gate, shows every launch),
+     * so this is how the Playwright harness ever reaches HubScene at all.
+     * Usage: __cheat.alpha.continue()
      */
-    onboarding: {
-      choose: (choice: 'tutorials' | 'skip') => {
-        if (!game.scene.isActive('OnboardingScene')) {
-          console.warn('[dev] __cheat.onboarding.choose — OnboardingScene isn\'t active right now');
-          return;
-        }
-        (game.scene.getScene('OnboardingScene') as unknown as { cheatChoose: (c: 'tutorials' | 'skip') => void }).cheatChoose(choice);
-      },
+    alpha: {
+      continue: () => { callAlphaCheat('cheatContinue'); },
     },
     /**
      * HubScene-only cheats — no-op (logged) if it isn't currently active.
-     * Usage: __cheat.hub.showTour() · __cheat.hub.tourNext() · __cheat.hub.tourSkip()
+     * Usage: __cheat.hub.showTour() · __cheat.hub.showShopTour() ·
+     *        __cheat.hub.showDispatchTour() · __cheat.hub.tourNext() ·
+     *        __cheat.hub.tourSkip() · __cheat.hub.skipTutorials()
      */
     hub: {
       showTour: () => { callHubCheat('cheatShowTour'); },
+      showShopTour: () => { callHubCheat('cheatShowShopTour'); },
+      showDispatchTour: () => { callHubCheat('cheatShowDispatchTour'); },
       tourNext: () => { callHubCheat('cheatTourNext'); },
       tourSkip: () => { callHubCheat('cheatTourSkip'); },
+      toggleAudio: (kind: 'music' | 'sfx') => { callHubCheat('cheatToggleAudio', kind); },
+      /** Headless equivalent of tapping the missions screen's "skip tutorials" link
+       * (renders only while none of t1-t4 are completed — see HubScene.ts). */
+      skipTutorials: () => { callHubCheat('cheatSkipTutorials'); },
+    },
+    /**
+     * Daily-mission-only cheats (src/data/dailyMission.ts).
+     * Usage: __cheat.daily.play() · __cheat.daily.markPlayed(500) · __cheat.daily.clear()
+     */
+    daily: {
+      /**
+       * Jump straight into today's daily, bypassing hub navigation — like
+       * startMission('daily') but self-registers the mission first, so it works even
+       * on a page that never visited HubScene this session (e.g. right after reset()),
+       * where missionById('daily') would otherwise throw "Unknown mission".
+       */
+      play: () => {
+        setDailyMission(generateDailyMission(dailySeedForDate(new Date())));
+        game.scene.getScenes(true).forEach((s) => { game.scene.stop(s.scene.key); });
+        game.scene.start('CombatScene', { missionId: DAILY_MISSION_ID });
+      },
+      /** Force today's daily to "already played" with the given best score — for
+       * testing the hub detail panel's played/reset-countdown state directly, no real
+       * mission run involved. */
+      markPlayed: (score: number) => {
+        const save = loadSave();
+        persistSave({ ...save, daily: { lastPlayedDate: dailyDateKey(new Date()), bestScore: score, paid: true } });
+        goTo('HubScene');
+      },
+      /** Clear today's daily record — available again, as if never played. */
+      clear: () => {
+        const save = loadSave();
+        const next = { ...save };
+        delete next.daily;
+        persistSave(next);
+        goTo('HubScene');
+      },
     },
   };
   console.info(
-    '[dev] __cheat available: coins(n) · setCoins(n) · richSave() · unlockAll() · reset() · ' +
-      'inspect() · equip(id) · buySupply(id) · navShop(tab) · navTo(nav) · selectSubscription(id) · startMission(id) · ' +
-      'combat.{fastForward,markTarget,setToggle,inspect,showExitConfirm} · onboarding.choose(choice) · ' +
-      'hub.{showTour,tourNext,tourSkip}',
+    '[dev] __cheat available: coins(n) · setCoins(n) · richSave() · unlockAll() · setProgress(ids) · reset() · ' +
+      'inspect() · equip(id) · buySupply(id) · navShop(tab) · navTo(nav) · selectSubscription(id) · selectMission(id) · startMission(id) · ' +
+      'combat.{fastForward,fastForwardToOffer,fastForwardToNarrator,dismissNarrator,narratorNext,markTarget,setToggle,inspect,' +
+      'showExitConfirm,confirmExit,pickCard,rerollCard,skipCard,activateAbility,fireSideWeapon,activateSupply} · ' +
+      'alpha.continue() · hub.{showTour,showShopTour,showDispatchTour,tourNext,tourSkip,toggleAudio,skipTutorials} · daily.{play,markPlayed,clear}',
   );
+}
+
+/** Looks up AlphaNoticeScene and invokes a cheatXxx method on it by name — same
+ * shared-plumbing pattern as callHubCheat/callCombatCheat below. */
+function callAlphaCheat(method: string, ...args: unknown[]): unknown {
+  const g = globalThis as Record<string, unknown>;
+  const game = g.__game as Phaser.Game | undefined;
+  if (game === undefined || !game.scene.isActive('AlphaNoticeScene')) {
+    console.warn(`[dev] __cheat.alpha.${method} — AlphaNoticeScene isn't active right now`);
+    return undefined;
+  }
+  const scene = game.scene.getScene('AlphaNoticeScene') as unknown as Record<string, unknown>;
+  if (typeof scene[method] !== 'function') {
+    console.warn(`[dev] __cheat.alpha.${method} — no such method`);
+    return undefined;
+  }
+  return (scene[method] as (...a: unknown[]) => unknown)(...args);
 }
 
 /** Looks up HubScene and invokes a cheatXxx method on it by name — same shared-plumbing

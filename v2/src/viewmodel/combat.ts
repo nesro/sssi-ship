@@ -53,7 +53,11 @@ export interface CombatHudViewModel {
   energy: BarViewModel;
   missionOrBoss: MissionOrBossBarViewModel;
   supportMarkers: SupportMarkerViewModel[]; // [] when mode === 'boss'
-  dpsLine: string; // "DPS 20.0  KILLS 5" — never blank, even with no weapon (DPS 0.0)
+  /** "DPS 20.0  KILLS 5" — or just "KILLS 5" with no weapon equipped (t1's forced
+   * loadout): a permanent "DPS 0.0" read as a broken stat through the whole tutorial
+   * (B4, docs/plans/fable-review-fixes-2026-07-18.md), while KILLS stays live even
+   * weaponless — shield-burst kills are real credited kills (conveyor.ts). */
+  dpsLine: string;
   timeLine: string; // "TIME 12.3s"
   damageRangeLine: string; // "10.0–20.0" or "" when no weapon
   critLine: string; // "CRIT 25%" or "" when no weapon
@@ -88,10 +92,15 @@ interface StatLines {
 }
 
 function computeStatLines(state: CoreState, stats: EffectiveStats): StatLines {
-  const dps = stats.weaponEquipped ? (stats.weaponDamage / stats.weaponInterval) * TICKS_PER_SECOND : 0;
-  const dpsLine = `DPS ${dps.toFixed(1)}  KILLS ${String(state.stats.kills)}`;
+  const killsPart = `KILLS ${String(state.stats.kills)}`;
   const timeLine = `TIME ${(state.tick / TICKS_PER_SECOND).toFixed(1)}s`;
-  if (!stats.weaponEquipped) return { dpsLine, timeLine, damageRangeLine: '', critLine: '' };
+  if (!stats.weaponEquipped) {
+    // No weapon (t1's forced loadout): drop the DPS stat instead of printing a
+    // permanent "DPS 0.0" that reads as a broken HUD through the whole tutorial.
+    return { dpsLine: killsPart, timeLine, damageRangeLine: '', critLine: '' };
+  }
+  const dps = (stats.weaponDamage / stats.weaponInterval) * TICKS_PER_SECOND;
+  const dpsLine = `DPS ${dps.toFixed(1)}  ${killsPart}`;
   const weapon = state.loadout.weapon;
   const critMult = stats.shipCritMultOverride ?? (weapon?.critMult ?? 2.0);
   const critPct = Math.round((weapon?.critChance ?? 0) * 100);

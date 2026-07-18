@@ -4,6 +4,7 @@ import { resolveForcedLoadout } from '../data/loadouts';
 import { createCoreState } from './state';
 import { advanceTick } from './tick';
 import { FIXTURE_MISSION } from './fixtures';
+import { HIT_ALL_TARGETS } from './constants';
 import type { LoadoutSnapshot } from './types';
 
 // Controlled loadout for exact pulse accounting — zero motor draw, zero weapon drain.
@@ -104,7 +105,7 @@ describe('pulse clamping', () => {
   });
 });
 
-// ── Nova Wave: maxTargets = Infinity, falloffPerTarget = 1.0 ─────────────────
+// ── Nova Wave: maxTargets = HIT_ALL_TARGETS, falloffPerTarget = 1.0 ──────────
 
 const NOVA_LOADOUT: LoadoutSnapshot = {
   ...PULSE_LOADOUT,
@@ -114,7 +115,7 @@ const NOVA_LOADOUT: LoadoutSnapshot = {
     damagePerShot: 10,
     ticksBetweenShots: 5,
     energyPerShot: 0,
-    maxTargets: Infinity,
+    maxTargets: HIT_ALL_TARGETS,
     falloffPerTarget: 1.0,
     critChance: 0,
     missChance: 0,
@@ -145,7 +146,7 @@ const UNKILLABLE_ENEMY = (id: number, distance: number) => ({
 });
 
 describe('Nova Wave weapon', () => {
-  it('hits ALL live enemies when maxTargets = Infinity', () => {
+  it('hits ALL live enemies when maxTargets = HIT_ALL_TARGETS', () => {
     const state = createCoreState(FIXTURE_MISSION, NOVA_LOADOUT, 1, []);
     state.autoShieldEnabled = false;
     state.ship.energy = 9999;

@@ -9,6 +9,7 @@ import type {
   WeaponKind,
   WeaponSpec,
 } from '../core/types';
+import { HIT_ALL_TARGETS } from '../core/constants';
 
 // The shop catalog. Starter items cost 0 and are owned from the first launch.
 // Prices are demo-tuned; final tuning happens via the simulator sweep.
@@ -37,11 +38,11 @@ const WEAPON_BASE: Record<WeaponKind, {
   pulse:   { displayName: 'Pulse Laser',  blurb: 'Reliable single-target fire.',            damage: 10, ticks: 5, energy: 6,  targets: 1,        falloff: 1.0 },
   ion:     { displayName: 'Ion Lance',    blurb: 'Heavy single hits. Feed it energy.',       damage: 28, ticks: 7, energy: 14, targets: 1,        falloff: 1.0 },
   scatter: { displayName: 'Scatter Beam', blurb: 'Pierces multiple enemies. Crowd killer.',  damage: 7,  ticks: 5, energy: 9,  targets: 3,        falloff: 0.7 },
-  nova:    { displayName: 'Nova Wave',    blurb: 'Hits every enemy. Swarm destroyer.',       damage: 5,  ticks: 7, energy: 6,  targets: Infinity, falloff: 1.0 },
+  nova:    { displayName: 'Nova Wave',    blurb: 'Hits every enemy. Swarm destroyer.',       damage: 5,  ticks: 7, energy: 6,  targets: HIT_ALL_TARGETS, falloff: 1.0 },
   // Secret Easter egg (hidden until campaign completion or dev mode — see
   // WEAPON_SYSTEM.isKindVisible below). Deliberately absurd, not tuned: it exists purely
   // as a nostalgia nod to the 2010 original, not as a real balance option.
-  y2010:   { displayName: '2010 ORIGINAL', blurb: "Looks terrible. Feels like 2010. Somehow still destroys everything.", damage: 500, ticks: 2, energy: 1, targets: Infinity, falloff: 1.0 },
+  y2010:   { displayName: '2010 ORIGINAL', blurb: "Looks terrible. Feels like 2010. Somehow still destroys everything.", damage: 500, ticks: 2, energy: 1, targets: HIT_ALL_TARGETS, falloff: 1.0 },
   // Rebalanced 2026-07-11 (docs/plans/nova-weapon-and-campaign-tension-review.md) — old
   // base (damage 3 / ticks 9 / energy 16) cleared 0% on m1/m2/m3/m4 at the intended
   // loadout's own level: its energy cost sat nova permanently in brownout (energy.ts's
@@ -95,7 +96,7 @@ export function weaponSpecAtLevel(kind: WeaponKind, level: number): WeaponSpec {
     damagePerShot: Math.round(base.damage * Math.pow(1.22, t) * 10) / 10,
     ticksBetweenShots: Math.max(2, Math.round(base.ticks * Math.pow(0.91, t))),
     energyPerShot: Math.round(base.energy * Math.pow(1.15, t) * 10) / 10,
-    maxTargets: kind === 'nova' ? Infinity : base.targets + maxT,
+    maxTargets: kind === 'nova' ? HIT_ALL_TARGETS : base.targets + maxT,
     falloffPerTarget: base.falloff,
     critChance: 0,
     missChance: 0,
@@ -264,7 +265,7 @@ const SIDE_WEAPON_BASE: Record<SideWeaponKind, {
   focus:     { displayName: 'Focus Beam',      blurb: 'Charged single-target burst. Reliable starter nuke.',      damage: 40, targets: 1,        falloff: 1.0,  charges: [3, 4, 5, 6, 7] },
   flechette: { displayName: 'Flechette Spread', blurb: 'Manual burst across a front cluster. Anti-swarm opener.', damage: 18, targets: 3,        falloff: 0.75, charges: [3, 4, 5, 6, 7] },
   railgun:   { displayName: 'Railgun',         blurb: 'Devastating single hit. Save it for a blocker or boss.',   damage: 90, targets: 1,        falloff: 1.0,  charges: [2, 2, 3, 3, 4] },
-  orbital:   { displayName: 'Orbital Strike',  blurb: 'Calls down damage on every enemy on screen. Rare and huge.', damage: 12, targets: Infinity, falloff: 1.0,  charges: [1, 2, 2, 3, 3] },
+  orbital:   { displayName: 'Orbital Strike',  blurb: 'Calls down damage on every enemy on screen. Rare and huge.', damage: 12, targets: HIT_ALL_TARGETS, falloff: 1.0,  charges: [1, 2, 2, 3, 3] },
 };
 
 // Redesigned 2026-07-10 — kinds are situational sidegrades, not a tier ladder; see

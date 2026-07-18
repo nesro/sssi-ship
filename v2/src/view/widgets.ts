@@ -121,3 +121,49 @@ export function addModalBackdrop(scene: Phaser.Scene, depth: number): Phaser.Gam
     .setDepth(depth)
     .setInteractive(); // swallow clicks under the modal
 }
+
+/** The point on `rect`'s boundary where a ray from its own center toward (tx, ty)
+ * exits — i.e. the edge point facing the given target. Used by drawPointerArrow to
+ * anchor a line at each rect's near edge rather than its center. */
+function pointOnRectTowards(rect: Phaser.Geom.Rectangle, tx: number, ty: number): { x: number; y: number } {
+  const dx = tx - rect.centerX;
+  const dy = ty - rect.centerY;
+  if (dx === 0 && dy === 0) return { x: rect.centerX, y: rect.centerY };
+  const halfW = rect.width / 2 || 0.001;
+  const halfH = rect.height / 2 || 0.001;
+  const scale = Math.min(
+    dx !== 0 ? halfW / Math.abs(dx) : Number.POSITIVE_INFINITY,
+    dy !== 0 ? halfH / Math.abs(dy) : Number.POSITIVE_INFINITY,
+  );
+  return { x: rect.centerX + dx * scale, y: rect.centerY + dy * scale };
+}
+
+/** Line + arrowhead connecting one rect's near edge to another's — used to visually tie
+ * an explanatory popup to the live UI element it's talking about (HubTour's highlighted
+ * nav button, the narrator modal's HUD-bar callouts). Both rects must already be in the
+ * same device-px coordinate space as everything else on screen (i.e. pre-px()'d), same
+ * as Phaser's own getBounds(). Callers own the returned Graphics' lifecycle (push it
+ * into whatever cleanup list already destroys the rest of that popup's objects). */
+export function drawPointerArrow(
+  scene: Phaser.Scene,
+  fromBounds: Phaser.Geom.Rectangle,
+  toBounds: Phaser.Geom.Rectangle,
+  color: number,
+  depth: number,
+): Phaser.GameObjects.Graphics {
+  const start = pointOnRectTowards(fromBounds, toBounds.centerX, toBounds.centerY);
+  const end = pointOnRectTowards(toBounds, fromBounds.centerX, fromBounds.centerY);
+  const g = scene.add.graphics().setDepth(depth);
+  g.lineStyle(px(2.5), color, 0.9);
+  g.lineBetween(start.x, start.y, end.x, end.y);
+  const angle = Phaser.Math.Angle.Between(start.x, start.y, end.x, end.y);
+  const headLen = px(9);
+  const spread = Math.PI / 7;
+  g.fillStyle(color, 0.9);
+  g.fillTriangle(
+    end.x, end.y,
+    end.x - headLen * Math.cos(angle - spread), end.y - headLen * Math.sin(angle - spread),
+    end.x - headLen * Math.cos(angle + spread), end.y - headLen * Math.sin(angle + spread),
+  );
+  return g;
+}

@@ -5,6 +5,7 @@ import { hashCoreState, runMission, verifyReplay } from './replay';
 import { createCoreState } from './state';
 import { advanceTick } from './tick';
 import { ALL_ABILITIES } from '../data/cards';
+import { weaponSpecAtLevel } from '../data/items';
 import type { MissionSpec, SupplyLoadout } from './types';
 
 const MISSION_WITH_CALLS: MissionSpec = {
@@ -120,6 +121,49 @@ describe('hashCoreState', () => {
     enemy.holdChargeTicks = 42;
     expect(hashCoreState(state)).not.toBe(before);
   });
+
+  // 2026-07-18 fix: hashCoreState used to omit a dozen run-evolving fields — two runs
+  // diverging ONLY on one of these previously still hashed identically. Spot-checks 3
+  // representative newly-covered fields (one per field "family": RNG/replay-input state,
+  // a plain counter, and a nested array).
+  it('changes when rerollsLeft changes', () => {
+    const { state } = runMission(FIXTURE_MISSION, FIXTURE_LOADOUT, 5);
+    const before = hashCoreState(state);
+    state.rerollsLeft -= 1;
+    expect(hashCoreState(state)).not.toBe(before);
+  });
+
+  it('changes when nextEventIndex changes', () => {
+    const { state } = runMission(FIXTURE_MISSION, FIXTURE_LOADOUT, 5);
+    const before = hashCoreState(state);
+    state.nextEventIndex += 1;
+    expect(hashCoreState(state)).not.toBe(before);
+  });
+
+  it('changes when a supply\'s chargesLeft changes', () => {
+    const { state } = runMission(FIXTURE_MISSION, {
+      ...FIXTURE_LOADOUT,
+      supplies: [{
+        spec: {
+          id: 'fix-sup-shield', name: 'SHIELD BOOST', description: 'restore shield',
+          kind: 'shield-restore', magnitude: 20, durationTicks: 0, maxCharges: 2,
+        },
+        charges: 2,
+      }],
+    }, 5);
+    const before = hashCoreState(state);
+    const supply = state.supplies[0];
+    if (supply === undefined) throw new Error('test supply not found');
+    supply.chargesLeft -= 1;
+    expect(hashCoreState(state)).not.toBe(before);
+  });
+
+  it('changes when the RNG cursor changes (same tick count, different draws consumed)', () => {
+    const { state } = runMission(FIXTURE_MISSION, FIXTURE_LOADOUT, 5);
+    const before = hashCoreState(state);
+    state.rng(); // consumes one more draw without changing any other field
+    expect(hashCoreState(state)).not.toBe(before);
+  });
 });
 
 describe('verifyReplay with priority-target taps', () => {
@@ -139,5 +183,20 @@ describe('verifyReplay with priority-target taps', () => {
     expect(replay.priorityTargetTaps.some((t) => t.tick === 25 && t.enemyId !== null)).toBe(true);
     expect(state.priorityTargetId).toBeNull(); // cleared at tick 50, never re-set after
     expect(verifyReplay(replay, FIXTURE_MISSION)).toBe(true);
+  });
+});
+
+// 2026-07-18 fix: a record's loadout used to be able to embed `maxTargets: Infinity`
+// (nova/y2010/orbital), and JSON.stringify(Infinity) === "null" — a persisted/shared
+// replay would silently lose its "hit everyone" targeting on reload. HIT_ALL_TARGETS
+// (Number.MAX_SAFE_INTEGER) must survive the exact round-trip a real persistence layer
+// would perform.
+describe('verifyReplay survives a JSON round-trip (nova\'s "hit everyone" targeting)', () => {
+  it('a JSON.parse(JSON.stringify(record)) replay still re-simulates to the same hash', () => {
+    const novaLoadout = { ...FIXTURE_LOADOUT, weapon: weaponSpecAtLevel('nova', 1) };
+    const { replay } = runMission(FIXTURE_MISSION, novaLoadout, 3);
+    const roundTripped = JSON.parse(JSON.stringify(replay)) as typeof replay;
+    expect(roundTripped.loadout.weapon?.maxTargets).toBe(novaLoadout.weapon.maxTargets);
+    expect(verifyReplay(roundTripped, FIXTURE_MISSION)).toBe(true);
   });
 });

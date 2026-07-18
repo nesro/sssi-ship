@@ -1,6 +1,6 @@
-import { HOLD_CHARGE_TIER_2_TICKS, HOLD_CHARGE_TIER_3_TICKS, OVERCHARGE_DAMAGE_MULT } from './constants';
+import { HIT_ALL_TARGETS, HOLD_CHARGE_TIER_2_TICKS, HOLD_CHARGE_TIER_3_TICKS, OVERCHARGE_DAMAGE_MULT } from './constants';
 import { brownoutFactor } from './energy';
-import { computeEffectiveStats, isInvulnerable } from './stats';
+import { activeDamageMult, activeFireRateMult, activeGeneratorMult, computeEffectiveStats, isInvulnerable } from './stats';
 import type { EffectiveStats } from './stats';
 import type { CoreState, EnemyState, RunModifiers } from './types';
 
@@ -192,13 +192,19 @@ export function fireSideWeapon(state: CoreState): void {
   state.ship.sideWeaponCharges -= 1;
   state.sideWeaponTaps.push(state.tick);
 
-  const stats = computeEffectiveStats(state.loadout, state.modifiers);
+  // Fold active timed boosts (e.g. Rage Protocol) exactly like advanceTick does
+  // (tick.ts) — a manual-fire side weapon must feel the same active damage-mult
+  // window an auto-firing weapon does (found 2026-07-18: this call used to omit the
+  // boost args entirely, so a damage boost silently never applied to side-weapon hits).
+  const stats = computeEffectiveStats(
+    state.loadout, state.modifiers, activeDamageMult(state), activeFireRateMult(state), activeGeneratorMult(state),
+  );
   const targets = [...state.enemies].sort((a, b) => a.distance - b.distance).slice(0, sideWeapon.maxTargets);
   targets.forEach((enemy, index) => {
     const falloff = Math.pow(sideWeapon.falloffPerTarget, index);
     const { damage, wasMiss } = rollShotOutcome(
       sideWeapon.missChance, sideWeapon.critChance, sideWeapon.critMult,
-      sideWeapon.damagePerShot * falloff, state.rng,
+      stats.sideWeaponDamage * falloff, state.rng,
     );
     if (wasMiss) return;
     enemy.hp -= damage;
@@ -277,6 +283,14 @@ function computeStateDmgMult(state: CoreState, stats: EffectiveStats, mods: RunM
   if (mods.shieldActiveDmgBonus > 0 && state.ship.shield > 0) {
     mult *= 1 + mods.shieldActiveDmgBonus;
   }
+  if (mods.shieldZeroDmgMult > 1 && state.ship.shield <= 0) {
+    mult *= mods.shieldZeroDmgMult;
+  }
+  // stats.shieldCapacity > 0 guard: an unequipped shield has capacity 0, which would
+  // otherwise satisfy `shield >= capacity` (0 >= 0) and falsely read as "shield full".
+  if (mods.shieldFullDmgBonus > 0 && stats.shieldCapacity > 0 && state.ship.shield >= stats.shieldCapacity) {
+    mult *= 1 + mods.shieldFullDmgBonus;
+  }
   return mult;
 }
 
@@ -309,7 +323,7 @@ function computeTargetCount(state: CoreState, stats: EffectiveStats, mods: RunMo
     count += mods.manyEnemiesExtraTargets;
   }
   if (mods.noShieldPierceAll && state.ship.shield <= 0) {
-    count = Infinity;
+    count = HIT_ALL_TARGETS;
   }
   return count;
 }
@@ -380,6 +394,10 @@ function applyEnemyDeathEffects(
     ? Math.round(baseCoins * mods.blockerCoinMult)
     : baseCoins;
   state.stats.coinsEarned += coinReward;
+  // View-facing only: lets the coin popup show real credited coins instead of the
+  // enemy's raw spec coinReward, which a collision self-death (never routed through
+  // this function) would otherwise wrongly imply was paid (found 2026-07-18).
+  state.pendingVisualEvents.push({ kind: 'enemy-killed', enemyId: enemy.id, coins: coinReward });
 
   if (mods.coinsEnergyRestore > 0) {
     state.ship.energy = Math.min(
@@ -417,7 +435,10 @@ export function bonusCallsForHoldCharge(holdChargeTicks: number): number {
   return 1;
 }
 
-function removeDeadEnemies(state: CoreState, stats: EffectiveStats): void {
+/** Exported so conveyor.ts's advanceEnemies can route shield-burst kills through the
+ * same death pipeline (kill credit, coins, blocker bonus calls, on-kill chains) instead
+ * of silently dropping them from state.enemies. */
+export function removeDeadEnemies(state: CoreState, stats: EffectiveStats): void {
   const mods = state.modifiers;
   const hadEnemies = state.enemies.length > 0;
   const survivors: EnemyState[] = [];

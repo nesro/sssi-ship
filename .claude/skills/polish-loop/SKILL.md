@@ -1,6 +1,6 @@
 ---
 name: polish-loop
-description: Run one round of Nesro Nova v2's visual/UX polish loop — hunt for text overflow and small/hard-to-tap buttons against docs/design/*.md, optionally chase a focus area the user names, verify with the Playwright audit+screenshot harness, and cycle nontrivial changes through a Fable review before and after implementing.
+description: Run one round of Nesro Nova v2's visual/UX polish loop — hunt for text overflow, small/hard-to-tap buttons, overlapping enemies, dead-time pacing gaps, and inaccurate/incomplete tutorial narration against docs/design/*.md, optionally chase a focus area the user names, verify with the Playwright audit+screenshot harness and pnpm pacing/test, and cycle nontrivial changes through a Fable review before and after implementing.
 ---
 
 # Polish loop
@@ -59,6 +59,38 @@ Two directory roots matter and are easy to mix up:
   against the code and/or a screenshot taken with a wealthier save before calling it a
   bug, the same way the side-weapon "low contrast" flag turned out to be correct
   affordability dimming, not a defect.
+- **Enemy overlap**: `missions.ts`'s `MIN_VISUAL_SPACING` table (added 2026-07-17) is a
+  per-kind floor enforced by `missions.test.ts` — `pnpm test` already fails loudly if any
+  mission event's `spacing` drops below it, so a same-kind overlap regression can't land
+  silently. That floor only guarantees two enemies of the SAME kind in one spawn event
+  won't overlap; it says nothing about different kinds spawned close together (e.g. a
+  fodder wave's tail overlapping a striker wave's start) or about how crowded a screen
+  *looks* at high concurrent counts even with zero literal sprite overlap. Spot-check the
+  densest screenshots (swarm-heavy missions like m5, multi-kind boss waves like m6) for
+  visual clutter the automated floor doesn't cover.
+- **Pacing / "nothing is happening"**: `pnpm pacing` (writes `tools/pacing-report.md`)
+  flags three things per mission — `SLOW_START` (>3s before the first shot or collision),
+  `IDLE_STRETCH` (a single stretch >17s with zero enemies on the lane), `MONOTONY` (>6
+  same-kind enemies in a row). `docs/known-issues.md` already documents t1/w0's
+  `SLOW_START` flags as an accepted, investigated residual (an intentionally readable
+  approach speed, not a bug) — don't re-litigate those two each round. Any OTHER mission
+  newly flagged, or an existing flag whose numbers got meaningfully worse, is real signal
+  worth investigating.
+- **Tutorial narration — accuracy and completeness**: for every tutorial (`t1`-`t4`,
+  `w0`)'s `narratorEvents` in `missions.ts`, re-derive each line's claim from the actual
+  mechanic it describes — don't just check that it reads plausibly. Trace it to the real
+  code: a shield-absorbs-first claim against `conveyor.ts`'s collision routing, an
+  energy-refill/brownout claim against `energy.ts`'s slope, a regen-outpaces-damage claim
+  against the actual `EnemySpec.regenPerTick` vs. weapon DPS numbers, and so on. This
+  exact class of bug — narration describing a mechanic slightly differently than the code
+  actually behaves — has slipped through before; treat every mechanic-description line as
+  a claim to verify, not prose to skim. Also check completeness: each tutorial's one core
+  teaching mechanic (from its own `blurb`) needs an actual narrator line or HUD-arrow
+  callout — a tutorial that never explains its own point is a gap even if every line it
+  *does* have is individually true. If `CombatScene.ts`'s `NARRATOR_ARROW_TARGETS` points
+  an arrow at a HUD bar for a given line index, re-check those indices still line up after
+  any edit to a tutorial's line ordering — the two are kept in sync by hand and drift
+  silently if only one side changes.
 - If the focus area touches a screen/flow the harness doesn't reach yet (e.g. a
   first-open/onboarding flow with no `__cheat` entry point), that's itself the first
   piece of work: add the `__cheat` hook and a `STATES`/`SHOTS` entry before you can

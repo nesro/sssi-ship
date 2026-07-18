@@ -46,49 +46,55 @@ panel sits at y ≤ 520 (540 − 20).
 
 ## Scenes
 
+**Rewritten 2026-07-18** — this table and the section below it described a
+`WelcomeScene`/`MenuScene`/`ShopScene`/`SettingsScene`/`CreditsScene` architecture that
+was never built this way; `docs/known-issues.md` already flagged the drift precisely.
+The real scene graph (`v2/src/view/main.ts`) is five scenes, not eight — Settings,
+Credits, the shop, and Dispatch Reinforcements are all nav panels *inside* `HubScene`,
+not separate `Phaser.Scene`s, and there is no `MenuScene`.
+
 | Scene | Purpose |
 |-------|---------|
-| `BootScene` | Preloads audio assets, then launches `WelcomeScene` (first launch) or `MenuScene` (returning) |
-| `WelcomeScene` | First-launch only: Captain Nesro portrait + choice to read developer message or go straight to story. Skipped on all subsequent launches (`save.welcomeSeen === true`). Accessible again via Credits/About from the main menu. |
-| `MenuScene` | Galaxy map; tapping a node opens a mission detail panel |
-| `ShopScene` | Full-width stacked shop with live preview panel |
-| `CombatScene` | Active mission: three-panel layout, conveyor, card overlay, narrator bar |
-| `ResultScene` | Victory/defeat: coins earned, newly awarded stars, then back to galaxy map |
-| `SettingsScene` | Left-hand toggle, mute, reset save (with confirmation) |
-| `CreditsScene` | About + music attribution + link to re-open WelcomeScene (accessible from main menu) |
+| `BootScene` | Preloads audio assets, then launches `AlphaNoticeScene` |
+| `AlphaNoticeScene` | Every launch, no save-flag gate (not first-launch-only): a standing dev/alpha-build notice with a two-tap RESET PROGRESS button. On CONTINUE, hands off to `HubScene`, forwarding a `showTour` flag on a genuinely fresh save so the hub button coach-mark still plays exactly once. |
+| `HubScene` | Galaxy map (missions nav) plus four more nav panels rendered by the same scene instance: shop (`buildShopContent`), Dispatch Reinforcements (`renderDRLeftPanel`), Settings (`buildSettingsContent`), Credits (`buildCreditsContent`) |
+| `CombatScene` | Active mission: three-panel layout, conveyor, card overlay, narrator bar/modal |
+| `ResultScene` | Victory/defeat/abandoned: coins earned, newly awarded stars, next-mission/retry/missions/shop buttons |
+
+**Left-handed mode** (info/button panel swap) is a planned setting, not yet
+implemented — no `leftHand`-style flag exists anywhere in the save model or view layer
+today; treat any reference to it elsewhere in these docs as intent, not shipped
+behavior.
 
 ## First launch & story
 
-On the very first launch the game shows **WelcomeScene** before anything else:
+**Rewritten 2026-07-18 to describe the real flow** (see `BootScene.ts`'s own comment,
+which documents this precisely — this section now mirrors it rather than the
+never-built design below). There is no separate `WelcomeScene` and no first-launch/
+returning-launch branch at the scene level:
 
-- **Captain Nesro portrait** — a drawn portrait of the in-game character (and developer's
-  alter ego). Sets a personal tone immediately.
-- **Two choices:**
-  - *"Read my message"* — a personal note written by Tomáš about the origin of the game
-    (SSSI Ship was his 2010 school maturita project). After reading, continues to the story intro.
-  - *"Skip to the game"* — goes straight to the story intro, then the galaxy map.
+1. `BootScene` preloads audio, then unconditionally starts `AlphaNoticeScene` — every
+   player sees it, every single launch, first or hundredth. It is not a first-run-only
+   prompt.
+2. `AlphaNoticeScene`'s CONTINUE hands off to `HubScene`. Only on a genuinely fresh save
+   (`!onboardingSeen`) does this also trigger the hub's one-time button coach-mark tour
+   — persisted as seen only once the player actually reaches `HubScene` this way (a
+   crash/quit on the alpha notice itself must not burn that one-time tour; see
+   `docs/known-issues.md`'s Resolved section for the bug this exact ordering fixed).
+3. **There is no tutorials-or-skip prompt scene either.** The choice lives on the
+   galaxy map itself: `HubScene`'s missions nav renders a one-time "skip tutorials" link
+   (visible only while none of t1-t4 are completed) right in the mission-info panel,
+   alongside `t1` being the one glowing, unlocked node on an otherwise-dim map.
 
-All players (both paths) see a **brief story intro** after WelcomeScene — a few lines
-establishing who Captain Nesro is and why the mission exists. Gives the player a reason to
-care before the first mission.
-
-On all subsequent launches `save.welcomeSeen === true` skips WelcomeScene entirely.
-The Credits screen lets returning players re-open it.
-
-**Developer message (from v1 — use verbatim or lightly edit):**
-
-> Hi, I am Nesro.
->
-> I created a simple game back in 2010 for my maturita (final school exam).
->
-> I always wanted to finish it as a proper mobile game — and now, 16 years later, I am
-> finally on that mission.
->
-> This game is in early stages. If you are interested in game design, level design,
-> balancing, visuals or music — please reach out. I would love to hear from you.
-
-The story intro (a few lines before the galaxy map) and Captain Nesro portrait art still
-need to be created. In-mission narrator lines exist in `v2/src/data/story.ts`.
+**Planned, blocked on content — not shipped.** A from-scratch `WelcomeScene` (Captain
+Nesro portrait + a choice to read Tomáš's developer message about the game's 2010
+maturita-project origin, or skip straight to a story intro) is still the intent — see
+`docs/known-issues.md`'s `w0`/`firstBranchChoice` entry for the full unreachability
+picture (`w0` itself has no unlock edge and no launcher today). In the meantime, the
+developer-message content already exists verbatim in `HubScene`'s Credits nav panel
+(`ABOUT_TEXT`), reachable by any player right now — it just isn't gated behind a
+first-launch moment the way the original design intended. In-mission narrator lines
+live in `v2/src/data/story.ts`.
 
 ---
 

@@ -63,6 +63,8 @@ export function defaultModifiers(): RunModifiers {
     lowHullDmgMult: 1,
     singleEnemyDmgBonus: 0,
     shieldActiveDmgBonus: 0,
+    shieldZeroDmgMult: 1,
+    shieldFullDmgBonus: 0,
     noShieldPierceAll: false,
     manyEnemiesExtraTargets: 0,
     earlyBirdDmgBonus: 0,

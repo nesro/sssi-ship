@@ -9,6 +9,15 @@ export const BROWNOUT_THRESHOLD = 0.3;
 /** Fire interval multiplier as energy approaches zero. Never infinite — the weapon never stops. */
 export const BROWNOUT_MAX_STRETCH = 2;
 
+/** "Hits every enemy on screen" sentinel for a weapon's maxTargets (nova, y2010, orbital
+ * — see items.ts). Deliberately NOT `Infinity`: `ReplayRecord` embeds the full loadout
+ * spec, and `JSON.stringify(Infinity) === "null"` — a persisted/shared replay would
+ * reload with `maxTargets: null`, and `null + extraPierce` evaluates to a real number
+ * (0 + extraPierce) instead of "all", silently breaking the weapon (found 2026-07-18).
+ * `Number.MAX_SAFE_INTEGER` behaves identically to Infinity for every real enemy count
+ * (`.slice(0, n)`, comparisons) and survives a JSON round-trip unchanged. */
+export const HIT_ALL_TARGETS = Number.MAX_SAFE_INTEGER;
+
 /** A colliding enemy deals this multiple of its normal shot damage (V2_HANDOFF.md §3.1). */
 export const COLLISION_DAMAGE_MULTIPLIER = 3;
 /** Fraction of shield-absorbed collision damage that bursts back to all remaining enemies. */
@@ -43,7 +52,7 @@ export const HOLD_CHARGE_TIER_3_TICKS = 140; // ~14s of sustained pressure → 3
 /** Boss stall-and-bombard cycle (F3, docs/known-issues.md): the boss alternates
  * APPROACH (closes distance at its normal `speed`) and STALL (speed 0 — it stops to
  * bombard instead of closing in) in a repeating cycle, tracked via `EnemyState.aliveTicks`
- * (see conveyor.ts's `bossEffectiveSpeed`). This is what stops the boss from simply
+ * (see conveyor.ts's `effectiveSpeed`). This is what stops the boss from simply
  * walking into the player and winning the mission via collision before weapon DPS ever
  * gets a real shot at it — the data-only fix (raising `shotDamage`) was tried and
  * reverted; it made collision costlier without changing collision vs. weapon-kill odds

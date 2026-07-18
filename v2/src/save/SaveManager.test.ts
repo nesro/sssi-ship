@@ -1,15 +1,20 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  DAILY_COIN_MULT,
   acceptOnboarding,
+  applyDailyResult,
   applyMissionResult,
   buildLoadout,
   buySupplyCharge,
+  dailyBestScore,
   defaultSave,
   hasCompletedCampaign,
+  isDailyAvailable,
   isMissionUnlocked,
   loadSave,
   persistSave,
+  reserveDailyAttempt,
   resetSave,
   skipTutorials,
   switchCost,
@@ -22,6 +27,7 @@ import {
 } from './SaveManager';
 import type { SaveData } from './SaveManager';
 import type { MissionResult } from '../core/result';
+import { DAILY_MISSION_ID } from '../data/dailyMission';
 
 function victoryResult(overrides: Partial<MissionResult> = {}): MissionResult {
   return {
@@ -263,7 +269,7 @@ describe('shop transactions — ships, migrations, supplies', () => {
     expect(loadout.ship.hull).toBe(80);
   });
 
-  it('migrates a v3 save to add ship = ship-interceptor-1', () => {
+  it('an old-version save (v3, pre-dates the current shape) resets to defaultSave rather than migrating', () => {
     const v3Save = {
       version: 3,
       coins: 500,
@@ -273,11 +279,11 @@ describe('shop transactions — ships, migrations, supplies', () => {
     };
     localStorage.setItem('nesro-nova-v2-save', JSON.stringify(v3Save));
     const save = loadSave();
-    expect(save.equipped.ship).toBe('ship-interceptor-1');
-    expect(save.coins).toBe(500);
+    expect(save).toEqual(defaultSave());
+    expect(save.coins).toBe(0);
   });
 
-  it('migrates a v8 save by appending level suffix to ship IDs and dropping ownedItems', () => {
+  it('an old-version save (v8, pre-dates the current shape) resets to defaultSave rather than migrating', () => {
     const v8Save = {
       version: 8,
       coins: 300,
@@ -290,7 +296,7 @@ describe('shop transactions — ships, migrations, supplies', () => {
     };
     localStorage.setItem('nesro-nova-v2-save', JSON.stringify(v8Save));
     const save = loadSave() as SaveData & { ownedItems?: string[] };
-    expect(save.equipped.ship).toBe('ship-interceptor-1');
+    expect(save).toEqual(defaultSave());
     expect(save.ownedItems).toBeUndefined();
   });
 
@@ -412,5 +418,102 @@ describe('switchSideWeapon — destructive switch, single ownership', () => {
   it('refuses to equip an unaffordable side weapon', () => {
     const save = { ...defaultSave(), coins: 100 };
     expect(() => switchSideWeapon(save, 'orbital-5')).toThrow(/Not enough coins/);
+  });
+});
+
+describe('daily mission', () => {
+  function dailyResult(overrides: Partial<MissionResult> = {}): MissionResult {
+    return {
+      missionId: DAILY_MISSION_ID,
+      status: 'defeat',
+      durationTicks: 6000,
+      earnedStarIds: [],
+      coins: 400,
+      hullFraction: 0,
+      weaponKills: 80,
+      spawned: 90,
+      collisions: 10,
+      ...overrides,
+    };
+  }
+
+  it('is available on a fresh save', () => {
+    expect(isDailyAvailable(defaultSave(), '2026-07-14')).toBe(true);
+    expect(dailyBestScore(defaultSave())).toBe(0);
+  });
+
+  describe('reserveDailyAttempt', () => {
+    it('marks today unavailable immediately, before any result is applied', () => {
+      const save = defaultSave();
+      const reserved = reserveDailyAttempt(save, '2026-07-14');
+      expect(isDailyAvailable(reserved, '2026-07-14')).toBe(false);
+      // Closes the force-quit exploit found in design review: reserving alone (no
+      // payout yet) still consumes the day — a crash mid-run costs the attempt.
+      expect(reserved.coins).toBe(save.coins);
+    });
+
+    it('carries the previous bestScore forward unchanged', () => {
+      const save = { ...defaultSave(), daily: { lastPlayedDate: '2026-07-10', bestScore: 900, paid: true } };
+      const reserved = reserveDailyAttempt(save, '2026-07-14');
+      expect(dailyBestScore(reserved)).toBe(900);
+    });
+  });
+
+  it('pays out DAILY_COIN_MULT × the run score and records the day as played', () => {
+    const save = { ...defaultSave(), coins: 1000 };
+    const reserved = reserveDailyAttempt(save, '2026-07-14');
+    const { save: next, coinsAwarded, isNewBest } = applyDailyResult(reserved, dailyResult({ coins: 400 }), '2026-07-14');
+    expect(coinsAwarded).toBe(Math.round(400 * DAILY_COIN_MULT));
+    expect(next.coins).toBe(1000 + coinsAwarded);
+    expect(isNewBest).toBe(true);
+    expect(dailyBestScore(next)).toBe(400);
+    expect(isDailyAvailable(next, '2026-07-14')).toBe(false);
+  });
+
+  it('never touches completedMissionIds or missionStars — not part of the campaign graph', () => {
+    const save = defaultSave();
+    const reserved = reserveDailyAttempt(save, '2026-07-14');
+    const { save: next } = applyDailyResult(reserved, dailyResult(), '2026-07-14');
+    expect(next.completedMissionIds).toEqual(save.completedMissionIds);
+    expect(next.missionStars).toEqual(save.missionStars);
+  });
+
+  it('is available again on a new calendar day', () => {
+    const save = defaultSave();
+    const reserved = reserveDailyAttempt(save, '2026-07-14');
+    const { save: afterDay1 } = applyDailyResult(reserved, dailyResult(), '2026-07-14');
+    expect(isDailyAvailable(afterDay1, '2026-07-15')).toBe(true);
+  });
+
+  it('refuses to double-award for the same day even if called again (defense in depth)', () => {
+    const save = defaultSave();
+    const reserved = reserveDailyAttempt(save, '2026-07-14');
+    const { save: afterFirst } = applyDailyResult(reserved, dailyResult({ coins: 400 }), '2026-07-14');
+    const { save: afterSecond, coinsAwarded, isNewBest } = applyDailyResult(afterFirst, dailyResult({ coins: 900 }), '2026-07-14');
+    expect(coinsAwarded).toBe(0);
+    expect(isNewBest).toBe(false);
+    expect(afterSecond.coins).toBe(afterFirst.coins);
+    expect(dailyBestScore(afterSecond)).toBe(400);
+  });
+
+  it('refuses to pay out for a day that was never reserved (no result without a reservation)', () => {
+    const save = defaultSave();
+    const { save: next, coinsAwarded } = applyDailyResult(save, dailyResult({ coins: 400 }), '2026-07-14');
+    expect(coinsAwarded).toBe(0);
+    expect(next.coins).toBe(save.coins);
+  });
+
+  it('bestScore tracks the raw run score, never decreasing', () => {
+    const save = defaultSave();
+    const reservedDay1 = reserveDailyAttempt(save, '2026-07-14');
+    const { save: afterHigh } = applyDailyResult(reservedDay1, dailyResult({ coins: 900 }), '2026-07-14');
+    const reservedDay2 = reserveDailyAttempt(afterHigh, '2026-07-15');
+    const { save: afterLow } = applyDailyResult(reservedDay2, dailyResult({ coins: 100 }), '2026-07-15');
+    expect(dailyBestScore(afterLow)).toBe(900);
+  });
+
+  it('throws if given a non-daily result', () => {
+    const save = reserveDailyAttempt(defaultSave(), '2026-07-14');
+    expect(() => applyDailyResult(save, victoryResult({ missionId: 'm1' }), '2026-07-14')).toThrow(/non-daily/);
   });
 });

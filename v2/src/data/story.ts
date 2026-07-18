@@ -1,5 +1,7 @@
 // Narrator lines (V2_HANDOFF.md §3.10): typewriter text bar, ~20 scripted lines.
-// Triggers fire in CombatScene and MenuScene. No branching, no portraits.
+// Triggers fire in CombatScene only (corrected 2026-07-18 — MenuScene never existed in
+// this codebase's actual scene graph; see docs/design/04-screens-and-layout.md). No
+// branching, no portraits.
 
 export type NarratorTrigger =
   | 'mission-start'
@@ -14,44 +16,30 @@ interface NarratorLine {
 
 /** Lines keyed by mission id. A mission may have lines for multiple triggers. */
 const STORY_LINES: Record<string, NarratorLine[]> = {
-  t1: [
-    {
-      trigger: 'mission-start',
-      text: 'NOVAK COMMAND: Systems nominal. Your generator powers weapons and shields — watch that energy bar.',
-    },
-    {
-      trigger: 'first-support-call',
-      text: "NOVAK COMMAND: Support flight inbound. Pick a card — effects last this mission only.",
-    },
-  ],
+  // t1-t4's 'mission-start' lines (corrected 2026-07-17, then REMOVED the same day) —
+  // moved from this passive bottom-bar system to the blocking modal (missions.ts's
+  // T1-T4_NARRATOR_EVENTS) per playtest feedback: "I would prefer the game pause and a
+  // popup window show up rather than the bottom screen." Showing both would be
+  // duplicate, conflicting UI, so the bottom-bar 'mission-start' entries are gone —
+  // each tutorial's opening line lives in exactly one place now. 'first-support-call'
+  // stays here (that beat is a non-blocking aside while the card overlay is already the
+  // main focus, not a "here's what's about to happen" moment that needs a full pause).
   t2: [
     {
-      trigger: 'mission-start',
-      text: 'NOVAK COMMAND: Anomaly detected. Hull integrity confirmed. Wait for our support window.',
-    },
-    {
       trigger: 'first-support-call',
-      text: "NOVAK COMMAND: Fire support available. That thing's regenerating faster than your baseline DPS — pick a damage boost.",
+      text: 'NOVAK COMMAND: Support window open. A rate or damage card clears a wall faster — your call.',
     },
   ],
   t3: [
     {
-      trigger: 'mission-start',
-      text: 'NOVAK COMMAND: Wall formation incoming. Single-target weapons will be buried. Check the OUTFITTER for pierce options.',
-    },
-    {
       trigger: 'first-support-call',
-      text: 'NOVAK COMMAND: Support call live. Pierce cards hit every enemy in the column — worth picking.',
+      text: 'NOVAK COMMAND: Support window open. A damage boost is what breaks its regen — take it.',
     },
   ],
   t4: [
     {
-      trigger: 'mission-start',
-      text: 'NOVAK COMMAND: Heavy traffic on all lanes. If your generator falls behind, weapons slow down. Watch the budget.',
-    },
-    {
       trigger: 'first-support-call',
-      text: 'NOVAK COMMAND: Power support inbound. A generator card will stabilise your energy margin — take it.',
+      text: "NOVAK COMMAND: Support window open. Pick whatever helps — and don't forget those reserves are sitting ready too.",
     },
   ],
   m3b: [

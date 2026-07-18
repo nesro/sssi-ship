@@ -40,6 +40,22 @@ const ROW_LABELS = [
   { label: 'PROG', color: PALETTE.weaponCyan },
 ] as const;
 
+// Row indices into ROW_LABELS/hudRowScreenBounds — named so callers pointing an arrow
+// at a specific bar (e.g. CombatScene's narrator-modal HUD callouts) don't hardcode a
+// bare number matching this array's order by accident.
+export const HUD_ROW_HULL = 0;
+export const HUD_ROW_SHLD = 1;
+export const HUD_ROW_ENRG = 2;
+export const HUD_ROW_PROG = 3;
+
+/** Device-px bounds of a HUD row's label+bar area, for pointing an arrow at it from
+ * elsewhere in the scene (drawPointerArrow, widgets.ts) — kept here so callers never
+ * duplicate ROW_TOP/ROW_GAP/BAR_LABEL_X/BAR_END_X as their own magic numbers. */
+export function hudRowScreenBounds(rowIndex: number): Phaser.Geom.Rectangle {
+  const cy = ROW_TOP + rowIndex * ROW_GAP;
+  return new Phaser.Geom.Rectangle(px(BAR_LABEL_X), px(cy - 10), px(BAR_END_X - BAR_LABEL_X), px(20));
+}
+
 /** Left control panel: 4 compact horizontal stat bars + stat lines. Reads a computeCombatHudViewModel() every frame — no game logic here. */
 export class CombatHud {
   private readonly bgGfx: Phaser.GameObjects.Graphics;

@@ -27,7 +27,7 @@ import type { AbilityOffer, CoreState, LoadoutSnapshot } from '../src/core/types
 import { abilityById, abilityPoolForLoadout } from '../src/data/cards';
 import { ALL_MISSIONS } from '../src/data/missions';
 import { STARTER_LOADOUT } from '../src/data/loadouts';
-import { intendedLoadoutForMission, starterKindLoadoutAtLevel, timeStarT3Loadout, timeStarT4Loadout, weaponAtKindIndex } from './loadoutPresets';
+import { intendedLoadoutForMission, starterKindLoadoutAtLevel, timeStarT2Loadout, timeStarT3Loadout, timeStarT4Loadout, weaponAtKindIndex } from './loadoutPresets';
 import { prioritizeHighValueTargets } from './policies';
 
 // ── Flag thresholds ──────────────────────────────────────────────────────────
@@ -95,17 +95,19 @@ const LOADOUTS: Record<string, LoadoutSnapshot> = {
   // Branched into the second weapon kind — represents having upgraded off the starter.
   full: { ...starterKindLoadoutAtLevel(3), weapon: weaponAtKindIndex(1, 4) },
 };
-// t3/t4 are the fixed reference loadouts for the T3/T4 time-star tiers (F4,
-// docs/known-issues.md) — swept so their own stars can be checked for reachability
-// against the loadout they're actually designed for, not against `intended` (which
-// measured 0% for every T3/T4 star once those tiers stopped being a synthetic ±1s
-// spread on the intended loadout and started requiring genuinely better gear).
-const LOADOUT_KEYS = [...Object.keys(LOADOUTS), 'intended', 't3', 't4'];
+// t2/t3/t4 are the fixed reference loadouts for the T2/T3/T4 time-star tiers (F4
+// 2026-07-15 for t3/t4; B1 2026-07-18 for t2) — swept so their own stars can be
+// checked for reachability against the loadout they're actually designed for, not
+// against `intended` (which measured 0% for every T3/T4 star once those tiers stopped
+// being a synthetic ±1s spread on the intended loadout and started requiring genuinely
+// better gear).
+const LOADOUT_KEYS = [...Object.keys(LOADOUTS), 'intended', 't2', 't3', 't4'];
 
-/** `intended`/`t3`/`t4` resolve per-mission or fixed (loadoutPresets.ts); the rest are
- * the static LOADOUTS above. */
+/** `intended`/`t2`/`t3`/`t4` resolve per-mission or fixed (loadoutPresets.ts); the rest
+ * are the static LOADOUTS above. */
 function resolveLoadout(missionId: string, loadoutKey: string): LoadoutSnapshot {
   if (loadoutKey === 'intended') return intendedLoadoutForMission(missionId);
+  if (loadoutKey === 't2') return timeStarT2Loadout();
   if (loadoutKey === 't3') return timeStarT3Loadout();
   if (loadoutKey === 't4') return timeStarT4Loadout();
   const loadout = LOADOUTS[loadoutKey];
@@ -113,10 +115,14 @@ function resolveLoadout(missionId: string, loadoutKey: string): LoadoutSnapshot 
   return loadout;
 }
 
-/** Which swept loadout a given star's reachability should be measured against — T3/T4
- * time-stars need the matching reference loadout, everything else uses `intended`
- * (the mission's own §13 target gear, per the existing convention). */
+/** Which swept loadout a given star's reachability should be measured against — T2/T3/
+ * T4 time-stars need the matching reference loadout, everything else uses `intended`
+ * (the mission's own §13 target gear, per the existing convention). m6's boss-time
+ * family (`-boss-t2` etc.) deliberately does NOT match here: its thresholds are
+ * percentiles of the intended loadout's own boss-kill-tick distribution (see m6's
+ * stars comment in missions.ts), so `intended` is its correct baseline. */
 function baselineLoadoutKeyForStar(starId: string): string {
+  if (starId.endsWith('-time-t2')) return 't2';
   if (starId.endsWith('-time-t3')) return 't3';
   if (starId.endsWith('-time-t4')) return 't4';
   return 'intended';

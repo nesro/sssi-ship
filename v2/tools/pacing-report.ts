@@ -60,6 +60,25 @@ const LONGEST_IDLE_STRETCH_THRESHOLD_SECONDS = 17;
 // hull. mission-fun-review.md F3 measured today's m6 at ~30% — well under half.
 const ANTICLIMAX_WEAPON_KILL_SHARE_THRESHOLD = 0.5;
 
+// First tick (state.tick, the real per-advance counter — not timelineTick, which can
+// freeze behind a blocksConveyor enemy) at which the player's ship has done SOMETHING
+// to or with an enemy — fired a shot or taken a collision — "how long until something
+// actually happens." 30 ticks = 3s, the upper bound of the "2-3 seconds" rule from
+// direct playtest feedback (2026-07-17: "If nothing is happening for more than 2-3
+// seconds, it's bad"), the same feedback that drove t1's guardian-speed fix
+// (missions.ts's GUARDIAN_SLOW).
+//
+// Deliberately shotsFired, not kills: an early draft used kills+collisions and
+// falsely flagged t3 at 36s — t3's guardian is a stationary blocksConveyor enemy the
+// player's weapon starts firing at almost immediately, but by design (the regen
+// mechanic) doesn't actually DIE until well after the damage card lands. The player
+// is watching an active fight the whole time; "no kill yet" isn't "nothing is
+// happening." shotsFired catches the moment engagement starts, which is what the
+// playtest complaint was actually about (t1's true problem: zero enemies, zero fire,
+// zero anything for ~15-19s). Runs with no shot or collision at all don't count
+// toward the average — see the sample loop below.
+const SLOW_START_THRESHOLD_TICKS = 30;
+
 type Tier = 'stationary' | 'patient' | 'escalating' | 'aggressive';
 
 export function timeToImpactSeconds(speed: number): number {
@@ -127,6 +146,11 @@ interface DynamicProfile {
   bossVictories: number;
   bossWeaponKills: number; // subset of bossVictories where bossKillTick !== null
   hasBoss: boolean;
+  // Runs with zero kills AND zero collisions (a clean, hitless clear) never fire a
+  // first event and are excluded from the average — same "only average what actually
+  // happened" approach as bossWeaponKillShare above.
+  runsWithFirstEvent: number;
+  avgFirstEventSeconds: number;
 }
 
 /** Tutorials use their own forced gear (the mission's whole point); every other
@@ -145,12 +169,18 @@ function computeDynamicProfile(mission: MissionSpec, runs: number, baseSeed: num
   let peakConcurrencySum = 0;
   let bossVictories = 0;
   let bossWeaponKills = 0;
+  let runsWithFirstEvent = 0;
+  let firstEventTickSum = 0;
 
   for (let i = 0; i < runs; i++) {
     const seed = baseSeed + i;
     let currentIdleStretch = 0;
     let longestIdleStretch = 0;
     let peak = 0;
+    // A property, not a bare `let`, so TS/eslint's closure control-flow analysis
+    // doesn't narrow it to the literal `null` it starts at — the object holds the
+    // union type stably across the sampleTick closure and the runMission call.
+    const firstEvent: { tick: number | null } = { tick: null };
     const sampleTick = (state: CoreState): void => {
       if (state.enemies.length === 0) {
         currentIdleStretch += 1;
@@ -158,6 +188,9 @@ function computeDynamicProfile(mission: MissionSpec, runs: number, baseSeed: num
       } else {
         currentIdleStretch = 0;
         if (state.enemies.length > peak) peak = state.enemies.length;
+      }
+      if (firstEvent.tick === null && state.stats.shotsFired + state.stats.collisions > 0) {
+        firstEvent.tick = state.tick;
       }
     };
     const { state } = runMission(mission, loadout, seed, { pickAbility: greedyPick, sampleTick });
@@ -169,6 +202,10 @@ function computeDynamicProfile(mission: MissionSpec, runs: number, baseSeed: num
       bossVictories += 1;
       if (state.bossKillTick !== null) bossWeaponKills += 1;
     }
+    if (firstEvent.tick !== null) {
+      runsWithFirstEvent += 1;
+      firstEventTickSum += firstEvent.tick;
+    }
   }
 
   return {
@@ -178,12 +215,16 @@ function computeDynamicProfile(mission: MissionSpec, runs: number, baseSeed: num
     bossVictories,
     bossWeaponKills,
     hasBoss,
+    runsWithFirstEvent,
+    avgFirstEventSeconds: runsWithFirstEvent > 0
+      ? (firstEventTickSum / runsWithFirstEvent) / TICKS_PER_SECOND
+      : 0,
   };
 }
 
 // ── Flags ─────────────────────────────────────────────────────────────────────
 
-type MissionFlag = 'MONOTONY' | 'IDLE_STRETCH' | 'ANTICLIMAX';
+type MissionFlag = 'MONOTONY' | 'IDLE_STRETCH' | 'ANTICLIMAX' | 'SLOW_START';
 
 function flagsFor(staticProfile: StaticProfile, dynamicProfile: DynamicProfile): MissionFlag[] {
   const flags: MissionFlag[] = [];
@@ -193,6 +234,12 @@ function flagsFor(staticProfile: StaticProfile, dynamicProfile: DynamicProfile):
     const share = dynamicProfile.bossWeaponKills / dynamicProfile.bossVictories;
     if (share < ANTICLIMAX_WEAPON_KILL_SHARE_THRESHOLD) flags.push('ANTICLIMAX');
   }
+  if (
+    dynamicProfile.runsWithFirstEvent > 0
+    && dynamicProfile.avgFirstEventSeconds > SLOW_START_THRESHOLD_TICKS / TICKS_PER_SECOND
+  ) {
+    flags.push('SLOW_START');
+  }
   return flags;
 }
 
@@ -200,6 +247,7 @@ const FLAG_LABEL: Record<MissionFlag, string> = {
   MONOTONY: '⚠️ MONOTONY',
   IDLE_STRETCH: '⚠️ IDLE_STRETCH',
   ANTICLIMAX: '⚠️ ANTICLIMAX',
+  SLOW_START: '⚠️ SLOW_START',
 };
 
 // ── Report ────────────────────────────────────────────────────────────────────
@@ -220,18 +268,19 @@ function formatReport(results: MissionPacingResult[]): string {
       '(no simulation); dynamic columns are measured from real runs at the mission\'s ' +
       'intended/forced loadout with the `greedy` card strategy.',
     '',
-    `| Mission | Longest same-kind streak | Longest idle stretch | Peak concurrency | Boss weapon-kill share | Flags |`,
-    `|---|---|---|---|---|---|`,
+    `| Mission | Longest same-kind streak | Longest idle stretch | Peak concurrency | First event | Boss weapon-kill share | Flags |`,
+    `|---|---|---|---|---|---|---|`,
   ];
   for (const r of results) {
     const streak = `${r.static.longestSameKindStreak.kind || '—'} ×${String(r.static.longestSameKindStreak.streak)}`;
     const idleStretch = `${r.dynamic.avgLongestIdleStretchSeconds.toFixed(1)}s`;
     const peak = r.dynamic.avgPeakConcurrency.toFixed(1);
+    const firstEvent = r.dynamic.runsWithFirstEvent > 0 ? `${r.dynamic.avgFirstEventSeconds.toFixed(1)}s` : '—';
     const bossShare = r.dynamic.hasBoss && r.dynamic.bossVictories > 0
       ? `${((r.dynamic.bossWeaponKills / r.dynamic.bossVictories) * 100).toFixed(0)}%`
       : '—';
     const flagLabels = r.flags.map((f) => FLAG_LABEL[f]).join(' ') || '';
-    lines.push(`| ${r.missionId} | ${streak} | ${idleStretch} | ${peak} | ${bossShare} | ${flagLabels} |`);
+    lines.push(`| ${r.missionId} | ${streak} | ${idleStretch} | ${peak} | ${firstEvent} | ${bossShare} | ${flagLabels} |`);
   }
   lines.push('');
   for (const r of results) {
@@ -252,6 +301,7 @@ interface JsonReport {
     kindVarietyByThird: StaticProfile['kindVarietyByThird'];
     avgLongestIdleStretchSeconds: number;
     avgPeakConcurrency: number;
+    avgFirstEventSeconds: number | null;
     bossWeaponKillShare: number | null;
     flags: MissionFlag[];
   }[];
@@ -265,6 +315,7 @@ function buildJsonReport(results: MissionPacingResult[]): JsonReport {
     kindVarietyByThird: r.static.kindVarietyByThird,
     avgLongestIdleStretchSeconds: r.dynamic.avgLongestIdleStretchSeconds,
     avgPeakConcurrency: r.dynamic.avgPeakConcurrency,
+    avgFirstEventSeconds: r.dynamic.runsWithFirstEvent > 0 ? r.dynamic.avgFirstEventSeconds : null,
     bossWeaponKillShare: r.dynamic.hasBoss && r.dynamic.bossVictories > 0
       ? r.dynamic.bossWeaponKills / r.dynamic.bossVictories
       : null,

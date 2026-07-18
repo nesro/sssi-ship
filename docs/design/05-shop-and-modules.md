@@ -4,9 +4,14 @@
 
 ## Shop rule: 100% sell-back, always
 
-Every module — including subscriptions — can be sold for exactly what the player paid: coins
-and stars both refunded in full. No depreciation, no exceptions. The player is always free to
-try something new.
+Every module — including subscriptions — can be sold for exactly what the player paid in
+coins: switching applies the previous item's price toward the new one at 100% (the
+switch-cost trade-in model, `SaveManager.ts`'s `switchCost`/`switchItem`), with no
+depreciation and no exceptions. **Corrected 2026-07-18:** stars are never part of this —
+`starsRequired` is a lifetime-earned threshold gate, not something the shop ever spends
+or refunds (this line previously said "coins and stars both refunded in full," which
+described a mechanic the shop code never had). The player is always free to try
+something new.
 
 ## Kinds are situational sidegrades, not tiers
 
@@ -71,6 +76,20 @@ Four kinds, five levels each:
 All four kinds share one price/star ladder — leveling up nova costs exactly what leveling up
 pulse costs. Prices and exact stats: see `v2/src/data/items.ts`. Shop unlock: by mission
 completion (TBD mapping).
+
+**"2010 ORIGINAL" secret weapon + dev mode (added 2026-07-18 to this doc — shipped,
+previously undocumented).** A 5th front-weapon kind, `y2010` — a deliberately absurd,
+un-tuned nostalgia nod to the 2010 original game (500 damage every 2 ticks, hits every
+enemy on the lane, flat 2010-coin price at every level, 0 stars required at every level:
+`items.ts`'s `WEAPON_BASE.y2010`). Hidden from the shop entirely until the campaign is
+beaten, or **dev mode** is on (`isKindVisible`, `viewmodel/shopSystems.ts`) — once
+visible, it needs no further star gate, since finishing the campaign is itself the
+"earned" condition. **Dev mode** (`save.devMode`, defaults to on) is a Settings toggle
+that reveals this weapon plus a DEV TOOLS section (add coins, unlock all stars, reset
+save) for testing without a full playthrough. `docs/known-issues.md` flags a real,
+undecided interaction between this weapon and the Daily Mission (a full clear with it
+equipped can pay out an unusually large one-day sum) — an open, owner-gated design
+question, not a bug.
 
 ## Rear weapon
 

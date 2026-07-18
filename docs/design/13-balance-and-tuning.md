@@ -161,6 +161,51 @@ the **10th, 25th, 50th, and 75th percentile** completion times as T4–T1 respec
 ensures the fastest quarter of players earn all four time-stars on a good run, while the
 median player earns T2/T3. Recalibrate whenever mission timeline changes.
 
+## Daily Mission tuning (2026-07-17)
+
+`pnpm sim -- --daily-seed <n> --runs <N> --strategy greedy --loadout <tier> [--max-ticks <n>]`
+generates and runs the daily like any other mission — `--max-ticks` exists because a
+well-tuned strong-gear run can legitimately approach `runMission`'s default 6000-tick (600s)
+simulator safety cap, which is a tooling limit, not a live-game one.
+
+**A real inversion was found and fixed before any numeric tuning.** The first version scaled
+every enemy — including the plain flowing waves — by round index and scheduled everything via
+motor-scaled `atTimelineTick`. Measured result: stronger loadouts (which bundle a faster
+motor, e.g. `MOTOR_BASE.rush.mults = [1.0, 2.0, 3.0, 4.2, 5.8]`) blew through the schedule
+faster in real time than their extra DPS could compensate for — survival time and coins earned
+came out flat or *inverted* across gear tiers, directly violating "a stronger loadout earns a
+real multiple more." Root cause: `timeline.ts`'s `advanceTimeline()` freezes the mission
+timeline entirely while any `blocksConveyor` enemy is alive, regardless of motor speed — the
+first version barely used that mechanic. Fix: moved the escalation wall onto a periodic
+`blocksConveyor` "gate" enemy (`v2/src/data/dailyMission.ts`'s `GATE_*` constants) whose
+real-time cost is `HP ÷ DPS`, motor-independent, and made gate kills the dominant coin source.
+This is a structural fix, not a constants tweak — see the file's own "Gates, not a motor-timed
+clock" doc comment.
+
+**Measured after the fix** (raw run score, before `DAILY_COIN_MULT`; `tools/loadoutPresets.ts`
+tiers):
+
+| Loadout | Avg duration | Avg raw score |
+|---------|-------------|---------------|
+| starter (rush-1) | ~4.0 min | ~175 |
+| mid (rush-2) | ~2.4 min | ~199 |
+| full (rush-3) | ~3.7 min | ~842 |
+| t3-reference (weapon4/shield3/gen5/motor2) | ~9.1 min | ~1993 |
+| t4-reference (weapon5/shield4/gen5/motor3) | ~7.1 min | ~2903 |
+
+Coins scale ~16.6× from starter to t4-reference — the "real multiple" requirement. Duration
+isn't perfectly monotonic through the middle tiers (mid dips below both starter and full,
+since `starterKindLoadoutAtLevel` couples motor speed to weapon/shield/generator level — a
+motor-heavy, DPS-light loadout is genuinely worse at this mode, which is an acceptable, even
+interesting, consequence rather than a bug), but recovers cleanly once weapon/shield/generator
+catch up: the two well-rounded high-tier references land at 7-9 minutes, inside the confirmed
+8-15 minute target for a strong build. Clear-rate is 0.0% at every tier, confirming the run
+always ends in defeat as designed (never a premature victory). `DAILY_COIN_MULT` itself (4.0)
+is documented in [Coins & Economy](10-economy.md).
+
+Re-run this sweep after any change to `GATE_*`/`HP_GROWTH_PER_ROUND`/`roundPeriodTicks` in
+`dailyMission.ts`, same convention as every other balance-affecting change in this file.
+
 ---
 
 Next: [Status — What's Built vs What's Planned](14-status.md)

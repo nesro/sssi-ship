@@ -17,7 +17,7 @@
 | **Card / Run modifier** | A one-run effect picked from a support call offer. Expires when the mission ends. |
 | **Side weapon** | A manual-fire, limited-ammo weapon tapped by the player during combat. |
 | **Reserve supply** | A persistent active boost purchased in the shop. Charges auto-refill every mission; player taps mid-combat to use. |
-| **Star** | Earned by completing mission benchmarks. Pays a coin bonus on first earn. Also the **hard currency cap** — some shop items cost stars in addition to coins, meaning even infinite coins can't buy everything. Stars are always fully refunded when selling an item. |
+| **Star** | Earned by completing mission benchmarks. Pays a coin bonus on first earn. Also an **earned-total threshold gate** — some shop items require having earned N stars lifetime, meaning even infinite coins can't buy everything immediately. Stars are never spent and never lost — nothing in the shop deducts or refunds them (corrected 2026-07-18; this row previously described stars as a spendable currency, which the shop code never implemented). |
 
 ---
 

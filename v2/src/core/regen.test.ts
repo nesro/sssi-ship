@@ -7,6 +7,7 @@ import { FIXTURE_LOADOUT, FIXTURE_MISSION, makeFixtureEnemy } from './fixtures';
 import { resolveForcedLoadout } from '../data/loadouts';
 import { createCoreState } from './state';
 import { advanceTick } from './tick';
+import { resolveNarrator } from './narrator';
 
 // ---------- Enemy regen unit tests ----------
 
@@ -141,6 +142,9 @@ describe('tutorial missions run to completion', () => {
       const loadout = resolveForcedLoadout(mission.forcedLoadout);
       const state = createCoreState(mission, loadout, 77 + TUTORIAL_IDS.indexOf(id), ALL_ABILITIES);
       for (let tick = 0; tick < 2000; tick++) {
+        // All four tutorials now show a blocking narrator popup at mission-start
+        // (2026-07-17) — resolve it same as a card offer, or advanceTick pauses forever.
+        if (state.pendingNarrator !== null) resolveNarrator(state);
         if (state.pendingOffer !== null) resolveAbilityAction(state, 0); // always pick first ability
         advanceTick(state);
         if (state.status !== 'running') break;

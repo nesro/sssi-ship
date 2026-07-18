@@ -15,9 +15,12 @@ tier ladder** — each kind costs the same coins and stars to reach a given leve
 another. The player is expected to switch kinds between missions to match the challenge. No
 module is universally best.
 
-**Experiment freely.** Everything in the shop can be sold for exactly 100% of what was paid —
-coins and stars both. No depreciation, no penalty. The player is never punished for trying
-something new.
+**Experiment freely.** Switching any equipped item is a trade-in: the coins paid for the
+previous item apply toward the new one at exactly 100% (see [Shop & Modules](05-shop-and-
+modules.md)'s switch-cost model). No depreciation, no penalty. **Corrected 2026-07-18:**
+stars are never part of this exchange — they're an earned-total threshold gate, never
+spent, so there's nothing to refund. The player is never punished for trying something
+new.
 
 **Allocate, don't accumulate.** The generator is a literal power budget. The best weapon on a
 weak generator performs worse than a mid weapon on a healthy power margin. Manual toggles

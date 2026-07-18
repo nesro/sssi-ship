@@ -126,6 +126,37 @@ export function timeStarT3Loadout(): LoadoutSnapshot {
   };
 }
 
+/**
+ * Fixed, mission-independent reference loadout for the T2 time-star tier (2026-07-18
+ * fix, docs/plans/fable-review-fixes-2026-07-18.md's B1). Before this, T1 and T2 were
+ * BOTH the 75th/50th percentile of the SAME `intendedLoadoutForMission` run — since a
+ * greedy-strategy clear at one fixed loadout has almost no run-to-run duration
+ * variance, T1 and T2 collapsed to the same number (or, on m6's boss-time family,
+ * T1/T2/T3 all collapsed together) on every main mission, so two of the four time-stars
+ * were never actually distinguishable. Mirrors the same fixed-tier pattern that already
+ * fixed T3/T4 (F4, 2026-07-15): weapon3/shield3/gen4/motor2 — one weapon and one
+ * generator level below `timeStarT3Loadout`, same motor tier. Sim-verified (2000
+ * runs/mission, greedy) at 100% clear with a median duration strictly between each
+ * mission's own T1 and T3 thresholds on m1/m2/m3/m3b/m4 — the five missions whose T2
+ * this anchors. NOT used by m5 (its intended loadout already runs motor-2, so this
+ * tier's duration ties T1 exactly — m5's T2 is a T1↔T3 midpoint instead) or m6 (its
+ * boss-time family measures bossKillTick, not duration — see m6's stars comment in
+ * missions.ts). Both exceptions are documented at their own star blocks.
+ */
+export function timeStarT2Loadout(): LoadoutSnapshot {
+  return {
+    ship: shipById(DEFAULT_SHIP_ID),
+    weapon: weaponSpecAtLevel(kindAt(WEAPON_KINDS, 0), 3),
+    rearWeapon: null,
+    sideWeapon: null,
+    shield: shieldSpecAtLevel(kindAt(SHIELD_KINDS, 0), 3),
+    generator: generatorSpecAtLevel(kindAt(GENERATOR_KINDS, 0), 4),
+    motor: motorSpecAtLevel(kindAt(MOTOR_KINDS, 0), 2),
+    supplies: [],
+    subscriptionCardIds: DEFAULT_SUBSCRIPTION_CARD_IDS,
+  };
+}
+
 export function timeStarT4Loadout(): LoadoutSnapshot {
   return {
     ship: shipById(DEFAULT_SHIP_ID),

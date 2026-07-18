@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createCoreState } from './state';
 import { fireSideWeapon } from './combat';
+import { HIT_ALL_TARGETS } from './constants';
 import { hashCoreState } from './replay';
 import { buildLoadout, defaultSave, loadSave, persistSave, resetSave, switchSideWeapon } from '../save/SaveManager';
 import {
@@ -28,7 +29,7 @@ const MULTI_SIDE_WEAPON: NonNullable<LoadoutSnapshot['sideWeapon']> = {
 const AOE_SIDE_WEAPON: NonNullable<LoadoutSnapshot['sideWeapon']> = {
   ...FIXTURE_SIDE_WEAPON,
   id: 'fix-side-aoe',
-  maxTargets: Infinity,
+  maxTargets: HIT_ALL_TARGETS,
   falloffPerTarget: 1,
 };
 
@@ -77,6 +78,35 @@ describe('fireSideWeapon targets front-most enemies', () => {
     state.enemies.forEach((e, i) => {
       expect(e.hp).toBeLessThan(hpsBefore[i] ?? Infinity);
     });
+  });
+});
+
+// ── fireSideWeapon: active timed boosts (2026-07-18 fix) ────────────────────────
+// This call used to compute stats with no boost args at all (defaulting to 1×) and
+// read raw `sideWeapon.damagePerShot` instead of the boosted `stats.sideWeaponDamage`
+// — a Rage-Protocol-style damage-mult effect silently never applied to a side-weapon
+// shot even though it does apply to the auto-firing front/rear weapons.
+
+describe('fireSideWeapon applies active damage-mult boosts', () => {
+  it('multiplies damage by a live damage-mult effect', () => {
+    const state = createCoreState(FIXTURE_MISSION, SIDE_LOADOUT, 1);
+    state.enemies = makeEnemies(1);
+    state.activeEffects = [{ kind: 'damage-mult', multiplier: 2, expiresAtTick: state.tick + 10 }];
+
+    fireSideWeapon(state);
+
+    expect(state.stats.damageDealt).toBeCloseTo(FIXTURE_SIDE_WEAPON.damagePerShot * 2);
+  });
+
+  it('deals unboosted damage once the effect has expired', () => {
+    const state = createCoreState(FIXTURE_MISSION, SIDE_LOADOUT, 1);
+    state.enemies = makeEnemies(1);
+    state.tick = 20;
+    state.activeEffects = [{ kind: 'damage-mult', multiplier: 2, expiresAtTick: 10 }];
+
+    fireSideWeapon(state);
+
+    expect(state.stats.damageDealt).toBeCloseTo(FIXTURE_SIDE_WEAPON.damagePerShot);
   });
 });
 
@@ -168,14 +198,14 @@ describe('hashCoreState changes after a side weapon shot', () => {
   });
 });
 
-// ── Save migration v11 → v12 ──────────────────────────────────────────────────────
+// ── Save version handling — no migration, old versions reset ─────────────────────
 
-describe('SaveManager migration v11 → v12', () => {
+describe('SaveManager: pre-v13 saves reset to defaultSave (no migration)', () => {
   beforeEach(() => {
     resetSave();
   });
 
-  it('adds sideWeapon: null when migrating from v11', () => {
+  it('a v11 save (side weapons did not exist yet) resets to defaultSave rather than migrating', () => {
     const v11: Record<string, unknown> = {
       version: 11,
       coins: 42,
@@ -186,9 +216,10 @@ describe('SaveManager migration v11 → v12', () => {
     };
     localStorage.setItem('nesro-nova-v2-save', JSON.stringify(v11));
 
-    const migrated = loadSave();
-    expect(migrated.version).toBe(13);
-    expect(migrated.equipped.sideWeapon).toBeNull();
+    const reset = loadSave();
+    expect(reset).toEqual(defaultSave());
+    expect(reset.coins).toBe(0);
+    expect(reset.equipped.sideWeapon).toBeNull();
   });
 });
 

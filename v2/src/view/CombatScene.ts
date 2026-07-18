@@ -2,23 +2,24 @@ import Phaser from 'phaser';
 import { resolveAbilityAction } from '../core/cards';
 import { activateAbility, fireSideWeapon, nearestEnemyAhead, setPriorityTarget, toggleAutoFire, toggleAutoShield, toggleRearWeapon } from '../core/combat';
 import { resolveNarrator } from '../core/narrator';
-import { HOLD_CHARGE_TIER_2_TICKS, HOLD_CHARGE_TIER_3_TICKS, LANE_LENGTH, MS_PER_TICK } from '../core/constants';
+import { CARD_ACTION_REROLL, CARD_ACTION_SKIP, HOLD_CHARGE_TIER_2_TICKS, HOLD_CHARGE_TIER_3_TICKS, LANE_LENGTH, MS_PER_TICK } from '../core/constants';
 import { buildMissionResult } from '../core/result';
 import { createCoreState } from '../core/state';
 import { applyBoost } from '../core/supplies';
-import { advanceTick } from '../core/tick';
+import { abandonRun, advanceTick } from '../core/tick';
 import type { CoreState, EnemyState } from '../core/types';
 import { abilityById, abilityPoolForLoadout } from '../data/cards';
 import { missionById } from '../data/missions';
+import { DAILY_MISSION_ID, dailyDateKey } from '../data/dailyMission';
 import { getStoryLine } from '../data/story';
 import { resolveForcedLoadout } from '../data/loadouts';
 import { computeSideWeaponButtonViewModel } from '../viewmodel/combat';
 import { ABILITY_COMPANY_COLORS } from '../viewmodel/companyColors';
-import { applyMissionResult, buildLoadout, loadSave } from '../save/SaveManager';
+import { applyDailyResult, applyMissionResult, buildLoadout, isDailyAvailable, loadSave, reserveDailyAttempt } from '../save/SaveManager';
 import type { SaveData } from '../save/SaveManager';
 import { Sound } from '../audio/SoundManager';
 import { CardOverlay } from './CardOverlay';
-import { CombatHud } from './CombatHud';
+import { CombatHud, HUD_ROW_ENRG, HUD_ROW_SHLD, hudRowScreenBounds } from './CombatHud';
 import { NarratorBar } from './NarratorBar';
 import { SupplyButtons } from './SupplyButtons';
 import { cssColor, PALETTE } from './palette';
@@ -27,12 +28,31 @@ import { buildGameTextures, laserTextureForWeaponId, rearBoltTextureKey, sideBol
 import { iconTextureForSideWeaponId, motorKindColorFromId, motorLevelFromId, splitWeaponId, textureForShipId } from './textureKeys';
 import { drawGeneratorCore, drawRearWeaponIndicator, drawShieldRings, drawSideWeaponIndicator, renderGunIndicator, renderThrusterAssembly, tickLaserBolts, tickMuzzleFlashes } from './shipRenderers';
 import type { LaserBolt, MuzzleFlash } from './shipRenderers';
-import { addModalBackdrop, addTextButton, drawDevBorder, ensureMinTapTarget, UI_FONT } from './widgets';
+import { addModalBackdrop, addTextButton, drawDevBorder, drawPointerArrow, ensureMinTapTarget, UI_FONT } from './widgets';
 
 // Ship sits at the bottom-centre of the game field; enemies stream from the top.
 const SHIP_CENTER_X = GAME_X + Math.floor(GAME_WIDTH / 2); // 480 logical
 const SHIP_Y = LOGICAL_HEIGHT - 80;                         // 460 logical
 const GAME_TOP_Y = 30;                                      // top margin for progress bar
+// Boss-only floor for the overhead HP bar/label's Y position (2026-07-17/18,
+// polish-loop) — every enemy's sy equals exactly GAME_TOP_Y at spawn (laneToY(100,...)
+// reduces to topY for any kind), and the bar/label sit `sy - offset` above that. For
+// ordinary enemies (offset 34) that's a ~4px overshoot, gone within a tick of normal
+// movement — imperceptible. For the boss specifically (offset 58, speed 0.25, plus its
+// own deliberate APPROACH/STALL cycle — conveyor.ts's F3 anticlimax fix, not touched
+// here) it's a real, multi-second window where the bar/label render with a NEGATIVE Y,
+// clipped off-canvas entirely — confirmed via a live probe (computed label Y ~= -29 at
+// boss spawn) and a screenshot showing the boss sprite clearly on screen with no bar or
+// label above it. Deliberately boss-only, not a floor shared by every enemy: a shared
+// floor would pin ANY two closely-spawned regular enemies to the exact same Y for their
+// first ~50px of travel (single-lane game, sprite.x is always SHIP_CENTER_X), rendering
+// two overprinting, conflicting HP labels — a real regression the fix must not
+// introduce (caught in review, not shipped). +16 keeps the boss overlay clear of the
+// mission-title text's own row for probe/cheat/screenshot spawns and the daily
+// mission's early mini-boss — in real play the title's already faded (2.5s) well before
+// m6's own boss spawns at seconds(254), so this mostly matters for tooling, not
+// something a real player would otherwise see overlap.
+const MIN_BOSS_HP_OVERLAY_TOP_Y = GAME_TOP_Y + 16;
 // Half of the ship's baked 52px-tall texture (textures.ts's buildShipTextures) — used by
 // laneToY so a collision (core distance=0) reads as the enemy's edge touching the ship's
 // edge, not the two sprites' centers overlapping.
@@ -109,6 +129,17 @@ const BOOSTER_BUFF_GREEN = 0x22ee44;
 // Regen ticks every 100ms; throttle the floating-number feedback to something readable.
 const HEAL_FLOAT_INTERVAL_MS = 700;
 
+// Which HUD row (if any) a tutorial's narrator line should point a live arrow at while
+// it's shown (2026-07-17, playtest feedback: "I want to explain the player how the
+// energy bar works... and how the shield absorbs"). Keyed by missionId, then line
+// index — a view-only presentation choice, deliberately NOT part of core's
+// NarratorEvent (src/core/types.ts stays plain text data). Keep in sync by hand with
+// T1_NARRATOR_EVENTS/T2_NARRATOR_EVENTS's line order (missions.ts).
+const NARRATOR_ARROW_TARGETS: Record<string, Record<number, number>> = {
+  t1: { 2: HUD_ROW_SHLD, 3: HUD_ROW_SHLD, 4: HUD_ROW_SHLD },
+  t2: { 0: HUD_ROW_ENRG, 1: HUD_ROW_ENRG, 2: HUD_ROW_ENRG },
+};
+
 interface BurstParticle {
   x: number; y: number; vx: number; vy: number;
   color: number; life: number; maxLife: number;
@@ -145,6 +176,12 @@ export class CombatScene extends Phaser.Scene {
   private motorKindColor: number = 0xff44cc;
   private thrusterPhase = 0;
   private enemySprites = new Map<number, Phaser.GameObjects.Image>();
+  /** Current/max HP text over each enemy's bar (2026-07-17, playtest feedback: "I want
+   * to see number of max hp and current hp in the healthbar of each enemy"). A separate
+   * Text-object Map, not drawn on hpBarGfx — Graphics can't render text, and unlike the
+   * bar fill (redrawn from scratch every frame) these persist and reposition, same
+   * lifecycle as enemySprites. */
+  private hpLabels = new Map<number, Phaser.GameObjects.Text>();
   private targetMarkerGfx!: Phaser.GameObjects.Graphics;
   private targetMarkerPhase = 0;
   private boosterBuffGfx!: Phaser.GameObjects.Graphics;
@@ -166,6 +203,21 @@ export class CombatScene extends Phaser.Scene {
   private shieldGfx!: Phaser.GameObjects.Graphics;
   private accumulatorMs = 0;
   private finished = false;
+  /** Set only by confirmAbandon() for the daily mission's voluntary quit path — lets
+   * maybeFinish() tell "player chose to leave with a live ship" apart from a real
+   * hull-zero defeat, the only OTHER source of core status 'defeat' (resolveOutcome,
+   * core/tick.ts — timeline exhaustion always resolves to 'victory', never 'defeat').
+   * abandonRun's own doc comment explains why it reuses 'defeat' rather than adding a
+   * third core status just for this. Must be reset alongside `finished` below — Phaser
+   * reuses this scene instance across scene.start() calls, so a stale `true` here would
+   * mislabel a LATER real defeat (e.g. abandon the daily, then later die for real on a
+   * campaign mission in the same session) as an abandon. */
+  private wasAbandoned = false;
+  /** For the daily mission only: the date key captured once at reservation time
+   * (CombatScene.create) and reused at payout (maybeFinish) — never recomputed from a
+   * fresh `new Date()`, which would risk paying out against the WRONG day on a run long
+   * enough to cross local midnight. Null for every non-daily mission. */
+  private dailyTodayStr: string | null = null;
   private narratorSupportCallShown = false;
   private narratorBossShown = false;
   private narratorBoosterShown = false;
@@ -208,7 +260,21 @@ export class CombatScene extends Phaser.Scene {
   private exitConfirmObjects: Phaser.GameObjects.GameObject[] = [];
   private narratorModalObjects: Phaser.GameObjects.GameObject[] = [];
   private narratorLineIdx = 0;
-  /** Coin reward per enemy id — stored at spawn, consumed on death. */
+  /** Reference to whichever narratorEvents.lines array is currently on screen — tick.ts
+   * assigns a fresh array (`[...event.lines]`) each time a new event fires, so `!==`
+   * reliably distinguishes "a new event replaced the one still showing" from "the same
+   * event, still mid-pagination." Needed because narratorModalObjects.length alone
+   * can't tell those apart: it stays > 0 across an instant resolve-then-refire (a real,
+   * reproducible bug — cheat-driven testing hit it directly, confirmed via
+   * combat.inspect()-equivalent state dumps showing pendingNarrator correctly advanced
+   * to event 2 while the view kept rendering event 1 forever). */
+  private displayedNarratorLines: string[] | null = null;
+  /** Credited coins per enemy id — set only when the core actually emits an
+   * 'enemy-killed' visual event (detectHits(), every tick), consumed on death
+   * (onEnemyDeath()). Deliberately NOT pre-populated from the enemy's raw spec
+   * coinReward at spawn: a collision self-death never credits coins
+   * (applyEnemyDeathEffects, core/combat.ts) and must show no coin popup at all,
+   * not the enemy's nominal reward (found + fixed 2026-07-18). */
   private enemyCoinRewards = new Map<number, number>();
   /** HP snapshot from before the last tick — used to detect mid-tick hits for the hit burst. */
   private previousHps = new Map<number, number>();
@@ -226,6 +292,24 @@ export class CombatScene extends Phaser.Scene {
   create(data: CombatSceneData): void {
     const mission = missionById(data.missionId);
     this.save = loadSave();
+    if (mission.id === DAILY_MISSION_ID) {
+      const todayStr = dailyDateKey(new Date());
+      // Defense in depth, same pattern as HubScene's canStart gating — the hub's own
+      // PLAY button already disappears once today's daily is played, so this path is
+      // normally only reachable via a stale tab or calling __cheat.startMission('daily')
+      // twice. Redirect instead of letting a second attempt build a result at all.
+      if (!isDailyAvailable(this.save, todayStr)) {
+        this.scene.start('HubScene');
+        return;
+      }
+      // Reserve the attempt NOW, before a single tick runs — not at payout (maybeFinish).
+      // Paying out only at the end (the first version of this) left save.daily untouched
+      // if the app was force-quit or the tab closed mid-run, letting a player retry
+      // indefinitely with a fresh seed until a good roll (found in design review). This
+      // closes that: a crash now costs the day's attempt, same as the real thing.
+      this.save = reserveDailyAttempt(this.save, todayStr);
+      this.dailyTodayStr = todayStr;
+    }
     const seed = randomSeed();
     const loadout = mission.forcedLoadout !== undefined
       ? resolveForcedLoadout(mission.forcedLoadout)
@@ -288,14 +372,18 @@ export class CombatScene extends Phaser.Scene {
     // real bottom edge measured 10px from the screen edge (tools/tap-target-audit.ts).
     const exitX = px(BTN_X + BTN_PANEL_W / 2);
     const exitY = px(LOGICAL_HEIGHT - PANEL_BOTTOM_MARGIN - ROW_PITCH / 2);
+    // Brightened 2026-07-17 (playtest feedback: "looks disabled/buggy") — this button was
+    // always fully functional, just styled dark enough with no hover/press feedback of
+    // its own that it read as inert. Kept visually secondary to the toggles above it
+    // (still the dimmest interactive element in the panel), just no longer illegible.
     const exitBg = this.add
-      .rectangle(exitX, exitY, px(BTN_PANEL_W - 40), px(EXIT_VISUAL_H), 0x110a14, 0.9)
-      .setStrokeStyle(px(1), 0x443355)
+      .rectangle(exitX, exitY, px(BTN_PANEL_W - 40), px(EXIT_VISUAL_H), 0x1a1020, 0.9)
+      .setStrokeStyle(px(1), 0x6644aa)
       .setDepth(10);
     ensureMinTapTarget(exitBg);
     exitBg.on('pointerdown', () => { this.showExitConfirm(); });
     this.add.text(exitX, exitY, 'EXIT', {
-      fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: '#665577',
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: '#aa88cc',
     }).setOrigin(0.5).setDepth(11);
 
     this.thrusterGfx   = this.add.graphics().setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
@@ -342,6 +430,7 @@ export class CombatScene extends Phaser.Scene {
    * texture). abilitySlots hit exactly this before it was added here. */
   private resetPerRunState(): void {
     this.enemySprites.clear();
+    this.hpLabels.clear();
     this.previousDistances.clear();
     this.previousHps.clear();
     this.enemyCoinRewards.clear();
@@ -364,10 +453,12 @@ export class CombatScene extends Phaser.Scene {
     this.targetMarkerPhase = 0;
     this.accumulatorMs = 0;
     this.finished = false;
+    this.wasAbandoned = false;
     this.narratorSupportCallShown = false;
     this.narratorBossShown = false;
     this.narratorBoosterShown = false;
     this.narratorModalObjects = [];
+    this.displayedNarratorLines = null;
     this.narratorLineIdx = 0;
   }
 
@@ -500,6 +591,24 @@ export class CombatScene extends Phaser.Scene {
       fontFamily: UI_FONT,
       fontSize: `${String(fontPx(8))}px`,
       color: '#44ff88',
+    }).setDepth(8).setOrigin(0.5);
+    this.floatingTexts.push({ text: txt, vy: -px(50), life: 700, maxLife: 700 });
+  }
+
+  /** Fires for ANY hp drop detectHits() sees, weapon fire or the collision shield-burst
+   * alike (2026-07-17, playtest feedback: "when a damage is done (by a missile or
+   * shield contact) I want to see numbers too") — detectHits() itself is already
+   * source-agnostic (a plain hp-before/after comparison), so no separate tracking of
+   * "who caused this" is needed; conveyor.ts's advanceEnemies applies the shield-burst
+   * to survivors' `.hp` the same way core/combat.ts's weapon-fire path does. */
+  private spawnDamageFloat(x: number, y: number, amount: number): void {
+    if (amount < 0.5) return;
+    const txt = this.add.text(x, y - px(8), `-${amount.toFixed(0)}`, {
+      fontFamily: UI_FONT,
+      fontSize: `${String(fontPx(8))}px`,
+      color: cssColor(PALETTE.enemyRed),
+      stroke: cssColor(PALETTE.backgroundNearBlack),
+      strokeThickness: px(1.2),
     }).setDepth(8).setOrigin(0.5);
     this.floatingTexts.push({ text: txt, vy: -px(50), life: 700, maxLife: 700 });
   }
@@ -812,6 +921,15 @@ export class CombatScene extends Phaser.Scene {
     const slotH = px(ABILITY_SLOT_H);
     let cursor = startY;
 
+    // Every other section in this panel (BOOST, the toggle rows) names itself even when
+    // empty — this bar didn't, which is exactly why it read as broken on t1 specifically
+    // (zero support calls there, so all 3 slots stay in this empty state for the whole
+    // mission, not just the first few seconds). Same size/position/alpha pattern as
+    // SupplyButtons.ts's "BOOST" label, just above the slot stack instead of the buttons.
+    this.add.text(cx, px(startY + 8), 'ABILITIES', {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: cssColor(PALETTE.weaponCyan),
+    }).setOrigin(0.5, 1).setDepth(12).setAlpha(0.6);
+
     for (let i = 0; i < 3; i++) {
       const y = px(cursor + ROW_PITCH / 2); cursor += ROW_PITCH;
       const bg = this.add.rectangle(cx, y, slotW, slotH, ABILITY_SLOT_EMPTY_FILL)
@@ -906,11 +1024,13 @@ export class CombatScene extends Phaser.Scene {
 
   private syncNarratorModal(): void {
     const lines = this.core.pendingNarrator;
-    if (lines !== null && this.narratorModalObjects.length === 0) {
+    if (lines !== null && lines !== this.displayedNarratorLines) {
       this.narratorLineIdx = 0;
+      this.displayedNarratorLines = lines;
       this.showNarratorLine(lines, 0);
     }
     if (lines === null && this.narratorModalObjects.length > 0) {
+      this.displayedNarratorLines = null;
       this.hideNarratorModal();
     }
   }
@@ -954,6 +1074,11 @@ export class CombatScene extends Phaser.Scene {
         },
       }).setDepth(depth + 2),
     );
+    const arrowRow = NARRATOR_ARROW_TARGETS[this.core.mission.id]?.[idx];
+    if (arrowRow !== undefined) {
+      const boxBounds = new Phaser.Geom.Rectangle(px(cx - panelW / 2), px(cy - panelH / 2), px(panelW), px(panelH));
+      this.narratorModalObjects.push(drawPointerArrow(this, boxBounds, hudRowScreenBounds(arrowRow), 0x00ffee, depth + 2));
+    }
   }
 
   private hideNarratorModal(): void {
@@ -1190,6 +1315,15 @@ export class CombatScene extends Phaser.Scene {
   }
 
   private detectHits(): void {
+    // Called once per tick (inside the fixed-timestep loop), not once per rendered
+    // frame — pendingVisualEvents is reset at the top of the NEXT advanceTick, so this
+    // is the only place that can see every tick's kills, even when several ticks run
+    // in one frame (fast-forward / a lagged frame).
+    for (const event of this.core.pendingVisualEvents) {
+      if (event.kind === 'enemy-killed' && event.enemyId !== undefined) {
+        this.enemyCoinRewards.set(event.enemyId, event.coins ?? 0);
+      }
+    }
     for (const enemy of this.core.enemies) {
       const hpBefore = this.previousHps.get(enemy.id);
       if (hpBefore === undefined) continue;
@@ -1197,6 +1331,7 @@ export class CombatScene extends Phaser.Scene {
       if (sprite === undefined) continue;
       if (enemy.hp < hpBefore - 0.5) {
         this.spawnHitBurst(sprite.x, sprite.y);
+        this.spawnDamageFloat(sprite.x, sprite.y, hpBefore - enemy.hp);
       } else if (enemy.hp > hpBefore + 0.5) {
         // regenerateEnemies (guardian self-heal, or a booster feeding the enemy ahead of
         // it) ticks every 100ms and was otherwise silent — accumulate and flush to one
@@ -1247,13 +1382,13 @@ export class CombatScene extends Phaser.Scene {
         });
         this.enemySprites.set(enemy.id, sprite);
         this.addEnemyAnimTween(sprite, enemy);
-        this.enemyCoinRewards.set(enemy.id, enemy.coinReward);
       }
       const previous = this.previousDistances.get(enemy.id) ?? enemy.distance;
       const distance = previous + (enemy.distance - previous) * alpha;
       sprite.setY(this.laneToY(distance, enemy.kind));
       sprite.setAlpha(0.4 + 0.6 * (enemy.hp / enemy.maxHp));
       this.drawEnemyHpBar(sprite.x, sprite.y, enemy.hp / enemy.maxHp, enemy.isBoss);
+      this.updateEnemyHpLabel(enemy, sprite.x, sprite.y);
       if (enemy.blocksConveyor && enemy.holdChargeTicks > 0) {
         this.drawHoldChargeRing(sprite.x, sprite.y, enemy.kind, enemy.holdChargeTicks, this.core.enemies.length > 1);
       }
@@ -1264,6 +1399,8 @@ export class CombatScene extends Phaser.Scene {
         this.onEnemyDeath(sprite.x, sprite.y, id);
         sprite.destroy();
         this.enemySprites.delete(id);
+        this.hpLabels.get(id)?.destroy();
+        this.hpLabels.delete(id);
       }
     }
     this.renderTargetMarker();
@@ -1325,13 +1462,21 @@ export class CombatScene extends Phaser.Scene {
     }
   }
 
+  /** Shared by drawEnemyHpBar/updateEnemyHpLabel so their bar-top math can never drift
+   * apart (it used to be copy-pasted in both) — including the boss-only off-canvas
+   * clamp (MIN_BOSS_HP_OVERLAY_TOP_Y's own comment has the full reasoning). */
+  private hpOverlayBarTop(sy: number, isBoss: boolean): number {
+    const raw = sy - px(isBoss ? 58 : 34);
+    return isBoss ? Math.max(raw, px(MIN_BOSS_HP_OVERLAY_TOP_Y)) : raw;
+  }
+
   /** A boss reusing a regular enemy's 32×3px overhead bar reads as an afterthought next to
    * its much larger sprite (ENEMY_VISUAL_RADIUS.boss = 48 vs. 24-32 for everything else) —
    * scale the bar with the sprite so a final boss actually looks like one at a glance,
    * without relying solely on the separate BOSS bar in the left info panel. */
   private drawEnemyHpBar(sx: number, sy: number, frac: number, isBoss = false): void {
     const bw = px(isBoss ? 64 : 32); const bh = px(isBoss ? 5 : 3);
-    const bx = sx - bw / 2; const by = sy - px(isBoss ? 58 : 34);
+    const bx = sx - bw / 2; const by = this.hpOverlayBarTop(sy, isBoss);
     this.hpBarGfx.fillStyle(0x111122, 0.8);
     this.hpBarGfx.fillRect(bx, by, bw, bh);
     const col = frac > 0.55 ? 0x22ee44 : frac > 0.25 ? 0xffaa00 : 0xff2200;
@@ -1341,6 +1486,33 @@ export class CombatScene extends Phaser.Scene {
       this.hpBarGfx.lineStyle(px(1), 0x662211, 0.6);
       this.hpBarGfx.strokeRect(bx, by, bw, bh);
     }
+  }
+
+  /** Persistent current/max HP text just above each enemy's bar (2026-07-17, playtest
+   * feedback: "I want to see number of max hp and current hp in the healthbar of each
+   * enemy. I want the player to see exact number"). Reuses drawEnemyHpBar's own bar-top
+   * offset and color-tier thresholds so the number always sits directly over its bar and
+   * matches its color, regardless of boss scaling. Current HP rounds up (ceil), not down
+   * — an enemy on a fractional sliver of hp (e.g. mid-regen) should never flash "0" while
+   * still alive. */
+  private updateEnemyHpLabel(enemy: EnemyState, sx: number, sy: number): void {
+    const barTop = this.hpOverlayBarTop(sy, enemy.isBoss);
+    const frac = enemy.hp / enemy.maxHp;
+    const col = frac > 0.55 ? 0x22ee44 : frac > 0.25 ? 0xffaa00 : 0xff2200;
+    let label = this.hpLabels.get(enemy.id);
+    if (label === undefined) {
+      label = this.add.text(sx, barTop, '', {
+        fontFamily: UI_FONT,
+        fontSize: `${String(fontPx(enemy.isBoss ? 9 : 7))}px`,
+        color: cssColor(col),
+        stroke: cssColor(PALETTE.backgroundNearBlack),
+        strokeThickness: px(1.2),
+      }).setOrigin(0.5, 1).setDepth(8);
+      this.hpLabels.set(enemy.id, label);
+    }
+    label.setPosition(sx, barTop - px(1));
+    label.setColor(cssColor(col));
+    label.setText(`${String(Math.ceil(enemy.hp))}/${String(Math.round(enemy.maxHp))}`);
   }
 
   /** Fable-fun-review-followup.md Item 6: the UI signal for "you're holding a blocker and
@@ -1427,13 +1599,44 @@ export class CombatScene extends Phaser.Scene {
     if (this.core.status === 'running' || this.finished) return;
     this.finished = true;
     const result = buildMissionResult(this.core);
-    const { save, newStarIds } = applyMissionResult(this.save, result);
+
+    let save: SaveData;
+    let newStarIds: string[];
+    let dailyBonus: { coinsAwarded: number; isNewBest: boolean } | undefined;
+    if (this.core.mission.id === DAILY_MISSION_ID) {
+      // Not applyMissionResult — the daily never touches completedMissionIds/
+      // missionStars (see applyDailyResult's own doc comment). Also reached when the
+      // player abandons mid-run (confirmAbandon calls abandonRun() then this method) —
+      // buildMissionResult above already has a settled, non-'running' status either way.
+      // Reuses the SAME date key captured at reservation time (create()) — recomputing
+      // `new Date()` here would risk paying out against the wrong day on a run long
+      // enough to cross local midnight (found in design review).
+      if (this.dailyTodayStr === null) throw new Error('daily mission finished without a reserved dailyTodayStr');
+      const applied = applyDailyResult(this.save, result, this.dailyTodayStr);
+      save = applied.save;
+      newStarIds = [];
+      dailyBonus = { coinsAwarded: applied.coinsAwarded, isNewBest: applied.isNewBest };
+    } else {
+      const applied = applyMissionResult(this.save, result);
+      save = applied.save;
+      newStarIds = applied.newStarIds;
+    }
+
+    const sceneData = {
+      result, newStarIds, save,
+      ...(dailyBonus !== undefined ? { dailyBonus } : {}),
+      ...(this.wasAbandoned ? { wasAbandoned: true } : {}),
+    };
     if (this.core.status === 'victory') {
       Sound.victory();
-      this.time.delayedCall(600, () => { this.scene.start('ResultScene', { result, newStarIds, save }); });
+      this.time.delayedCall(600, () => { this.scene.start('ResultScene', sceneData); });
+    } else if (this.wasAbandoned) {
+      // The player quit voluntarily with a live ship — no death flash/shake/explosion,
+      // that visual means "you were destroyed" and this player wasn't.
+      this.time.delayedCall(600, () => { this.scene.start('ResultScene', sceneData); });
     } else {
       this.playDeathAnimation();
-      this.time.delayedCall(1400, () => { this.scene.start('ResultScene', { result, newStarIds, save }); });
+      this.time.delayedCall(1400, () => { this.scene.start('ResultScene', sceneData); });
     }
   }
 
@@ -1441,24 +1644,59 @@ export class CombatScene extends Phaser.Scene {
     if (this.exitConfirmObjects.length > 0) return;
     const cx = px(LOGICAL_WIDTH / 2);
     const cy = px(LOGICAL_HEIGHT / 2);
+    const isDaily = this.core.mission.id === DAILY_MISSION_ID;
     const backdrop = addModalBackdrop(this, 40);
     const title = this.add.text(cx, cy - px(35), 'ABANDON MISSION?', {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(20))}px`, color: '#ddeeff',
     }).setOrigin(0.5).setDepth(41);
+    // Daily-only subtitle: abandoning it still banks whatever's been earned so far and
+    // ends today's one attempt (via confirmAbandon -> abandonRun + maybeFinish, the same
+    // path a real defeat takes) — closing the "quit and try again for a better score"
+    // loophole a silent, resultless exit (the campaign's own abandon behavior) would
+    // otherwise leave wide open on a once-per-day mode.
+    const subtitle = isDaily
+      ? this.add.text(cx, cy - px(12), "Banks coins earned so far. Ends today's attempt.", {
+          fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: '#8899aa',
+        }).setOrigin(0.5).setDepth(41)
+      : null;
     const confirmBtn = addTextButton(this, {
       x: cx - px(60), y: cy + px(20), label: 'ABANDON', color: 0xff4444, size: 13,
-      onClick: () => { this.exitConfirmObjects = []; this.scene.start('HubScene'); },
+      onClick: () => { this.confirmAbandon(); },
     }).setDepth(41);
     const cancelBtn = addTextButton(this, {
       x: cx + px(60), y: cy + px(20), label: 'CANCEL', color: 0xffaa22, size: 13,
       onClick: () => { this.hideExitConfirm(); },
     }).setDepth(41);
-    this.exitConfirmObjects = [backdrop, title, confirmBtn, cancelBtn];
+    this.exitConfirmObjects = subtitle !== null
+      ? [backdrop, title, subtitle, confirmBtn, cancelBtn]
+      : [backdrop, title, confirmBtn, cancelBtn];
   }
 
   private hideExitConfirm(): void {
     this.exitConfirmObjects.forEach((obj) => { obj.removeInteractive(); obj.destroy(); });
     this.exitConfirmObjects = [];
+  }
+
+  /** The real ABANDON button's decision, also called directly by cheatConfirmExit() so
+   * the cheat exercises the exact same path a real tap does (same reasoning as
+   * handleCardAction/cheatPickCard elsewhere in this class). Campaign missions keep
+   * their existing behavior — abandon forfeits all progress, no result is ever built.
+   * The daily banks its partial run instead (see showExitConfirm's subtitle above). */
+  private confirmAbandon(): void {
+    // hideExitConfirm() (destroys + clears), not a bare array clear — the daily branch
+    // below stays in this scene for maybeFinish()'s 600ms delayedCall before cutting to
+    // ResultScene (unlike the campaign branch's immediate scene.start), so a bare clear
+    // left the backdrop/buttons fully rendered AND interactive for that whole window:
+    // CANCEL became a silent no-op (Fable's review caught this — screenshots never saw
+    // it, since the shot's own settle wait outlasts the 600ms).
+    this.hideExitConfirm();
+    if (this.core.mission.id === DAILY_MISSION_ID) {
+      this.wasAbandoned = true;
+      abandonRun(this.core);
+      this.maybeFinish();
+    } else {
+      this.scene.start('HubScene');
+    }
   }
 
   private playDeathAnimation(): void {
@@ -1524,6 +1762,54 @@ export class CombatScene extends Phaser.Scene {
     }
   }
 
+  /** __cheat.combat.fastForwardToOffer(maxTicks) — like cheatFastForward, but stops the
+   * instant a support-call card offer opens instead of auto-resolving it, so the
+   * Playwright harness can actually reach and verify CardOverlay's own hit areas/text
+   * (every other tool deliberately fast-forwards *past* offers via flushPendingOffer).
+   * Narrator popups still auto-resolve — they're not what this is for.
+   * Returns immediately without advancing at all if an offer is ALREADY pending when
+   * called — this finds the next *fresh* offer, it doesn't wait one out. To inspect one
+   * offer then move to the next, resolve the current one first (fastForward(1)
+   * auto-picks card 0 and moves past it — there's no separate dismiss-offer cheat, since
+   * only the narrator modal needed one to reach its later scripted events one at a time,
+   * see cheatDismissNarrator). */
+  // fallow-ignore-next-line unused-class-member
+  cheatFastForwardToOffer(maxTicks: number): void {
+    let advanced = 0;
+    let guard = 0;
+    const guardLimit = maxTicks * 20 + 1000;
+    while (advanced < maxTicks && this.core.status === 'running' && guard < guardLimit) {
+      guard += 1;
+      if (this.core.pendingOffer !== null) return;
+      if (this.core.pendingNarrator !== null) { resolveNarrator(this.core); continue; }
+      advanceTick(this.core);
+      advanced += 1;
+    }
+  }
+
+  /** __cheat.combat.fastForwardToNarrator(maxTicks) — the narrator-modal mirror of
+   * cheatFastForwardToOffer: stops the instant a MissionSpec.narratorEvents popup opens
+   * (the blocking modal with its own CONTINUE/NEXT button — not the passive bottom
+   * NarratorBar strip, which never pauses the sim and needs no cheat to see) instead of
+   * auto-resolving it. Also returns immediately without advancing if a narrator is
+   * ALREADY pending — call cheatDismissNarrator first to reach the next scripted event.
+   * Currently only w0 defines narratorEvents, and w0 has no galaxy-map node
+   * (docs/known-issues.md) — reachable here only via startMission('w0'), which bypasses
+   * hub navigation same as any other mission id. */
+  // fallow-ignore-next-line unused-class-member
+  cheatFastForwardToNarrator(maxTicks: number): void {
+    let advanced = 0;
+    let guard = 0;
+    const guardLimit = maxTicks * 20 + 1000;
+    while (advanced < maxTicks && this.core.status === 'running' && guard < guardLimit) {
+      guard += 1;
+      if (this.core.pendingNarrator !== null) return;
+      if (this.core.pendingOffer !== null) { resolveAbilityAction(this.core, 0); continue; }
+      advanceTick(this.core);
+      advanced += 1;
+    }
+  }
+
   /** __cheat.combat.markTarget(enemyId) — sets/clears the front weapon's priority
    * target without a real pointer click on the (possibly still-animating) sprite. */
   // fallow-ignore-next-line unused-class-member
@@ -1548,6 +1834,83 @@ export class CombatScene extends Phaser.Scene {
     this.showExitConfirm();
   }
 
+  /** __cheat.combat.confirmExit() — headless equivalent of tapping ABANDON on the exit-
+   * confirm modal (opens it first if not already showing), for verifying the mid-
+   * mission-abandon-to-hub transition doesn't regress the WebGL-restart crash class
+   * (docs/known-issues.md, "CombatScene crashed... on any mission restart"). */
+  // fallow-ignore-next-line unused-class-member
+  cheatConfirmExit(): void {
+    if (this.exitConfirmObjects.length === 0) this.showExitConfirm();
+    this.confirmAbandon();
+  }
+
+  /** __cheat.combat.dismissNarrator() — resolves the current narrator-modal event in
+   * one shot (same core call the real CONTINUE button makes on its last line), so a
+   * multi-event test (fastForwardToNarrator → dismissNarrator → fastForwardToNarrator)
+   * can inspect each scripted narrator popup in a mission without pagination through
+   * every line by hand. */
+  // fallow-ignore-next-line unused-class-member
+  cheatDismissNarrator(): void {
+    if (this.core.pendingNarrator !== null) resolveNarrator(this.core);
+  }
+
+  /** __cheat.combat.narratorNext() — headless equivalent of tapping NEXT → on the
+   * narrator modal: advances to the next line WITHOUT resolving the whole popup (unlike
+   * cheatDismissNarrator). Line pagination lives entirely in the view (narratorLineIdx),
+   * not core state, so this is the only way to reach a multi-line event's 2nd+ line
+   * headlessly — e.g. to screenshot t1/t2's HUD-bar-callout lines specifically. Calling
+   * it on the last line resolves the popup, same as a real tap on CONTINUE. */
+  // fallow-ignore-next-line unused-class-member
+  cheatNarratorNext(): void {
+    const lines = this.core.pendingNarrator;
+    if (lines === null) return;
+    if (this.narratorLineIdx >= lines.length - 1) { resolveNarrator(this.core); return; }
+    this.narratorLineIdx += 1;
+    this.showNarratorLine(lines, this.narratorLineIdx);
+  }
+
+  /** __cheat.combat.pickCard(index) / rerollCard() / skipCard() — headless equivalents
+   * of tapping a card in the offer overlay. Routes through the same handleCardAction()
+   * the real click handler uses (not resolveAbilityAction directly), so the picked-
+   * ability sidebar and overlay hide/show stay in sync exactly like a real pick would —
+   * calling the core function directly here would silently desync the view the same way
+   * cheatFastForward's auto-pick-0 already does (docs/plans/comprehensive-coverage-sweep.md). */
+  // fallow-ignore-next-line unused-class-member
+  cheatPickCard(index: number): void {
+    this.handleCardAction(index);
+  }
+
+  // fallow-ignore-next-line unused-class-member
+  cheatRerollCard(): void {
+    this.handleCardAction(CARD_ACTION_REROLL);
+  }
+
+  // fallow-ignore-next-line unused-class-member
+  cheatSkipCard(): void {
+    this.handleCardAction(CARD_ACTION_SKIP);
+  }
+
+  /** __cheat.combat.activateAbility(slotIndex) — headless equivalent of tapping an
+   * equipped ability's slot in the right panel. */
+  // fallow-ignore-next-line unused-class-member
+  cheatActivateAbility(slotIndex: number): void {
+    activateAbility(this.core, slotIndex);
+  }
+
+  /** __cheat.combat.fireSideWeapon() — headless equivalent of tapping the side-weapon
+   * button. No-op (matching the real tap handler) if the weapon can't currently fire. */
+  // fallow-ignore-next-line unused-class-member
+  cheatFireSideWeapon(): void {
+    this.handleSideWeaponTap();
+  }
+
+  /** __cheat.combat.activateSupply(slot) — headless equivalent of tapping a BOOST
+   * button. No-op (matching the real tap handler) if that slot has no charges left. */
+  // fallow-ignore-next-line unused-class-member
+  cheatActivateSupply(slot: number): void {
+    this.handleBoostTap(slot);
+  }
+
   /** __cheat.combat.inspect() — a JSON-safe snapshot of ship/enemy state for a
    * screenshot harness to read back and decide what to do next (e.g. which enemy id
    * to pass to markTarget). */
@@ -1556,9 +1919,22 @@ export class CombatScene extends Phaser.Scene {
     return {
       missionId: this.core.mission.id,
       tick: this.core.tick,
+      // Added 2026-07-17/18 (polish-loop, Fable's review of the advanceUntil silent-
+      // timeout fix) — `tick` alone can't distinguish "genuinely still early in the
+      // mission" from "stuck behind a blocksConveyor freeze": timelineTick.ts's
+      // advanceTimeline stalls timelineTick entirely while any blocker/turret/boss/
+      // booster is alive, so `tick` (the real per-advance counter) keeps climbing while
+      // `timelineTick` (what wave-spawn schedules are checked against) doesn't move at
+      // all — exactly the gap that made combat-m6-boss's advanceUntil predicate never
+      // fire within its tick budget. Surfaced in advanceUntil's timeout error message.
+      timelineTick: this.core.timelineTick,
       status: this.core.status,
       priorityTargetId: this.core.priorityTargetId,
       hasPendingOffer: this.core.pendingOffer !== null,
+      // Lets the screenshot harness poll for "the bottom NarratorBar's current line has
+      // finished its typewriter reveal" instead of sleeping a fixed duration — see
+      // NarratorBar.isFullyRevealed's own doc comment.
+      narratorFullyRevealed: this.narrator.isFullyRevealed(),
       ship: {
         hull: this.core.ship.hull, maxHull: this.core.ship.maxHull,
         shield: this.core.ship.shield, energy: this.core.ship.energy,

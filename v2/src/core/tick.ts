@@ -80,6 +80,21 @@ function maybeTriggerBonusCall(state: CoreState): void {
   state.pendingOffer = createAbilityOffer(state);
 }
 
+/**
+ * Force-ends a still-running mission as a defeat — the player quit mid-run, not a real
+ * hull-zero/timeline-exhausted outcome. Used by the daily mission's "abandon consumes
+ * the attempt" design (CombatScene.ts): buildMissionResult (result.ts) throws on a
+ * 'running' status, so a partial daily run needs its status settled before it can be
+ * scored and its earned-so-far coins banked. Campaign missions never call this —
+ * abandoning them intentionally forfeits all progress (CombatScene never builds a
+ * result for them at all), unchanged by this addition. A no-op if the mission has
+ * already ended on its own.
+ */
+export function abandonRun(state: CoreState): void {
+  if (state.status !== 'running') return;
+  state.status = 'defeat';
+}
+
 function resolveOutcome(state: CoreState): void {
   if (state.ship.hull <= 0) {
     state.ship.hull = 0;

@@ -14,7 +14,7 @@ All enemies have `hp`, `speed`, `shotDamage`, `ticksBetweenShots`, `blocksConvey
 | **blocker** | Pauses the wave timeline while alive | DPS check; killing grants bonus support call |
 | **turret** | Stationary, high fire rate | Blocks timeline; tap-to-target it to stop chip damage early instead of waiting for normal front-most rotation |
 | **kamikaze** | Fast, primary threat is collision not shots | Shield burst-return mechanic trigger |
-| **booster** | Slow, behind other enemies | Continuously buffs the enemy directly ahead of it (regen-buff variant shipped; damage-buff variant documented, not built yet — see [Shop & Modules](05-shop-and-modules.md) equivalent note in the Combat doc); tap-to-target it to shut the buff off early |
+| **booster** | Slow, behind other enemies | Continuously feeds its own `regenPerTick` to whichever alive enemy is currently nearest-ahead of it, recomputed every tick — not a fixed spawn-order pairing, since enemies move at independent speeds and can overtake each other (`core/combat.ts`'s `regenerateEnemies`; fixed 2026-07-18, this row previously pointed to a nonexistent cross-reference in "05-shop-and-modules.md's equivalent note in the Combat doc"). If the nearest-ahead enemy is itself another booster, the buff chains rather than two boosters ever double-feeding the same target directly. A damage-buff variant was discussed but never built — only the regen-buff variant is shipped. Tap-to-target it to shut the buff off early. |
 | **boss** | Very high HP, blocks timeline | `isBoss: true`; boss-time stars |
 | **guardian** | Tutorial only | Some have `regenPerTick`; teaches shield and collision mechanics |
 

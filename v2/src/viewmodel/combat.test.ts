@@ -69,13 +69,24 @@ describe('computeCombatHudViewModel', () => {
     expect(vm.supportMarkers).toHaveLength(2);
   });
 
-  it('dpsLine is never blank — it reads "DPS 0.0" with no weapon equipped', () => {
+  // B4 (docs/plans/fable-review-fixes-2026-07-18.md): with no weapon (t1's forced
+  // loadout) the HUD used to print a permanent "DPS 0.0" — a broken-reading stat
+  // through the entire tutorial. KILLS stays: shield-burst kills are real credited
+  // kills (conveyor.ts), so the counter is live even weaponless.
+  it('dpsLine drops the DPS stat but keeps KILLS with no weapon equipped', () => {
     const loadoutNoWeapon = { ...FIXTURE_LOADOUT, weapon: null };
     const state = createCoreState(FIXTURE_MISSION, loadoutNoWeapon, 1, []);
+    state.stats.kills = 2;
     const vm = computeCombatHudViewModel(state, null, 0, []);
-    expect(vm.dpsLine).toBe('DPS 0.0  KILLS 0');
+    expect(vm.dpsLine).toBe('KILLS 2');
     expect(vm.damageRangeLine).toBe('');
     expect(vm.critLine).toBe('');
+  });
+
+  it('dpsLine shows both DPS and KILLS with a weapon equipped', () => {
+    const state = createCoreState(FIXTURE_MISSION, FIXTURE_LOADOUT, 1, []);
+    const vm = computeCombatHudViewModel(state, null, 0, []);
+    expect(vm.dpsLine).toMatch(/^DPS \d+(\.\d+)? {2}KILLS 0$/);
   });
 
   it('damageRangeLine and critLine are populated when a weapon is equipped', () => {

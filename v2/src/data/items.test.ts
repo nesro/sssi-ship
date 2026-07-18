@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { MOTOR_KINDS, generatorSpecAtLevel, motorSpecAtLevel } from './items';
+import {
+  MAX_REAR_WEAPON_LEVEL,
+  MAX_SIDE_WEAPON_LEVEL,
+  MAX_WEAPON_LEVEL,
+  MOTOR_KINDS,
+  REAR_WEAPON_KINDS,
+  SIDE_WEAPON_KINDS,
+  WEAPON_KINDS,
+  generatorSpecAtLevel,
+  motorSpecAtLevel,
+  rearWeaponSpecAtLevel,
+  sideWeaponSpecAtLevel,
+  weaponSpecAtLevel,
+} from './items';
 
 // docs/plans/overdrive-and-reserve-trap-fixes.md — regression tests for the
 // 2026-07-11 overdrive trap fix: Overdrive Lv1 used to draw more energy than any
@@ -26,5 +39,43 @@ describe('motor kinds — no free-tap trap (items.test.ts)', () => {
         expect(motor.powerDrawPerTick).toBeLessThan(torrent.outputPerTick);
       }
     }
+  });
+});
+
+// 2026-07-18 fix: `ReplayRecord` embeds the full loadout spec and gets JSON-serialized;
+// JSON.stringify(Infinity) === "null", which would silently break an "all targets"
+// weapon (nova, y2010, orbital) the moment a replay round-trips through storage. Every
+// catalog spec's maxTargets must be a real finite number (HIT_ALL_TARGETS, not
+// Infinity) — swept across every kind/level, not just the three known "hits everyone"
+// kinds, so a future kind can't reintroduce this trap unnoticed.
+describe('weapon catalog specs are JSON-safe (no Infinity, 2026-07-18 fix)', () => {
+  it('every front weapon kind/level has a finite maxTargets', () => {
+    for (const kind of WEAPON_KINDS) {
+      for (let level = 1; level <= MAX_WEAPON_LEVEL; level++) {
+        expect(Number.isFinite(weaponSpecAtLevel(kind, level).maxTargets)).toBe(true);
+      }
+    }
+  });
+
+  it('every rear weapon kind/level has a finite maxTargets', () => {
+    for (const kind of REAR_WEAPON_KINDS) {
+      for (let level = 1; level <= MAX_REAR_WEAPON_LEVEL; level++) {
+        expect(Number.isFinite(rearWeaponSpecAtLevel(kind, level).maxTargets)).toBe(true);
+      }
+    }
+  });
+
+  it('every side weapon kind/level has a finite maxTargets', () => {
+    for (const kind of SIDE_WEAPON_KINDS) {
+      for (let level = 1; level <= MAX_SIDE_WEAPON_LEVEL; level++) {
+        expect(Number.isFinite(sideWeaponSpecAtLevel(kind, level).maxTargets)).toBe(true);
+      }
+    }
+  });
+
+  it('a finite maxTargets survives a JSON round-trip unchanged', () => {
+    const nova = weaponSpecAtLevel('nova', 1);
+    const roundTripped = JSON.parse(JSON.stringify(nova)) as typeof nova;
+    expect(roundTripped.maxTargets).toBe(nova.maxTargets);
   });
 });

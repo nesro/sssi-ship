@@ -85,13 +85,17 @@ describe('runOneCampaign', () => {
   // (e.g. ion clears m5 at ~0.7%) — this is the concrete regression test for that risk,
   // confirming `average`'s free-starter-kind choice (pulse/wall/torrent/rush) never
   // triggers it, matching §3's "never stuck" invariant.
+  // 20s, not vitest's 5s default: each of these runs 30 FULL campaigns (~10-15
+  // missions × retries each) — ~3-4s alone, but over 5s whenever the suite shares the
+  // machine with a dev server or a Playwright batch (measured 6.3s, 2026-07-18), which
+  // made exactly this pair the suite's only load-flaky tests.
   it('average (starter-kind, never switches) always completes the campaign — never stuck', () => {
     const N = 30;
     for (let seed = 1; seed <= N; seed++) {
       const record = runOneCampaign('average', seed);
       expect(record.stuckAt).toBeNull();
     }
-  });
+  }, 20_000);
 
   it('expert also always completes the campaign', () => {
     const N = 30;
@@ -99,7 +103,7 @@ describe('runOneCampaign', () => {
       const record = runOneCampaign('expert', seed);
       expect(record.stuckAt).toBeNull();
     }
-  });
+  }, 20_000);
 });
 
 describe('applyPurchasePolicy', () => {

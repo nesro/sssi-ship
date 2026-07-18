@@ -18,7 +18,7 @@ import {
   sideWeaponKindDisplayName, sideWeaponSpecAtLevel, WEAPON_KINDS, weaponKindDisplayName, weaponSpecAtLevel,
 } from '../data/items';
 import type { GeneratorKind, MotorKind, ShieldKind, ShipKind } from '../data/items';
-import { TICKS_PER_SECOND } from '../core/constants';
+import { HIT_ALL_TARGETS, TICKS_PER_SECOND } from '../core/constants';
 import type { RearWeaponKind, ShipPassiveKind, SideWeaponKind, WeaponKind } from '../core/types';
 import type { SaveData } from '../save/SaveManager';
 import { hasCompletedCampaign } from '../save/SaveManager';
@@ -98,7 +98,12 @@ function standardIconScale(displayLevel: number): number {
 /** "1 target" / "3 targets" / "∞ targets" — the raw count alone read as a grammar bug
  * on single-target weapons. */
 function targetsLabel(maxTargets: number): string {
-  if (maxTargets === Infinity) return '∞ targets';
+  // >=, not === : HIT_ALL_TARGETS (core/constants.ts) is Number.MAX_SAFE_INTEGER, not
+  // Infinity (JSON-safety fix, 2026-07-18) — a pierce card's extraPierce still adds on
+  // top of it (computeWeaponStats), which floating-point rounding can nudge away from
+  // exact equality. Infinity itself saturated under addition; a finite sentinel needs
+  // a range check instead.
+  if (maxTargets >= HIT_ALL_TARGETS) return '∞ targets';
   return `${String(maxTargets)} target${maxTargets === 1 ? '' : 's'}`;
 }
 

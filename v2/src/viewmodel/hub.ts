@@ -7,11 +7,12 @@
 import { TICKS_PER_SECOND } from '../core/constants';
 import type { MissionSpec, StarFamily, StarSpec } from '../core/types';
 import { abilityById } from '../data/cards';
+import { DAILY_MISSION_ID } from '../data/dailyMission';
 import { itemById, REAR_WEAPON_ITEMS, shipById, SIDE_WEAPON_ITEMS, SUPPLIES } from '../data/items';
 import { ALL_MISSIONS, MISSION_UNLOCK_EDGES } from '../data/missions';
 import { SUBSCRIPTIONS } from '../data/subscriptions';
 import type { SubscriptionSpec } from '../data/subscriptions';
-import { isMissionUnlocked, switchCost } from '../save/SaveManager';
+import { isMissionUnlocked, switchCost, TUTORIAL_MISSION_IDS } from '../save/SaveManager';
 import type { SaveData } from '../save/SaveManager';
 import { ABILITY_COMPANY_COLORS } from './companyColors';
 import { shopSystemFor, type ShopSystemConfig, type ShopTab } from './shopSystems';
@@ -100,6 +101,9 @@ export interface GalaxyMissionViewModel {
   label: string; // name, or "???" if locked
   unlocked: boolean;
   isTutorial: boolean;
+  /** The daily mission (src/data/dailyMission.ts) — not part of the campaign graph, so
+   * it's never locked by MISSION_UNLOCK_EDGES; rendered with its own distinct marker. */
+  isDaily: boolean;
   isSelected: boolean;
   starsEarned: number;
   starsTotal: number;
@@ -115,6 +119,10 @@ export interface GalaxyConnectionViewModel {
 export interface GalaxyMapViewModel {
   missions: GalaxyMissionViewModel[];
   connections: GalaxyConnectionViewModel[];
+  /** True while none of t1-t4 have been completed (by playing OR by skipping) — the
+   * galaxy screen's "skip tutorials" link renders only then. All-or-nothing, same as
+   * skipTutorials() itself: there's no partial-skip state. */
+  showSkipTutorialsHint: boolean;
 }
 
 // ── Mission detail ─────────────────────────────────────────────────────────
@@ -125,6 +133,21 @@ export interface MissionDetailViewModel {
   isTutorial: boolean;
   stars: Array<{ id: string; description: string; earned: boolean }>; // [] for tutorials
   canStart: boolean;
+  /** Present only for the daily mission — HubScene branches on this before the generic
+   * locked/unlocked rendering, since "already played today" needs its own copy (best
+   * score + reset countdown), not the campaign's bare "LOCKED" message. */
+  daily?: { available: boolean; bestScore: number; resetInLabel: string };
+}
+
+/** What HubScene already knows about today's daily mission (registered via
+ * setDailyMission + computed from the save) before calling into this viewmodel — the
+ * same "side-effect input threaded in explicitly" convention as mutedAudio below, kept
+ * out of the viewmodel itself so this file never needs to read the clock or Date. */
+export interface DailyPanelInput {
+  spec: MissionSpec;
+  available: boolean;
+  bestScore: number;
+  resetInLabel: string;
 }
 
 // ── Dispatch reinforcements (subscription-centric) ──────────────────────────
@@ -133,10 +156,10 @@ export interface SubscriptionRowViewModel {
   id: string;
   name: string;
   color: number;
-  ownedLevel: number; // 0 = not subscribed
+  ownedLevel: number; // 0 = not deployed
   maxLevel: number;
   dots: string; // "●●○" — deterministic function of (ownedLevel, maxLevel)
-  statusText: string; // "Lv2 / 3" or "not subscribed"
+  statusText: string; // "Lv2 / 3" or "not deployed"
   isSelected: boolean;
 }
 
@@ -191,7 +214,7 @@ export interface SettingsViewModel {
 
 // ── Top-level Hub ──────────────────────────────────────────────────────────
 
-export type HubNav = 'missions' | 'shop' | 'dispatch-reinforcements' | 'settings' | null;
+export type HubNav = 'missions' | 'shop' | 'dispatch-reinforcements' | 'settings' | 'credits' | null;
 
 // ── UI state (ephemeral, not persisted to SaveData) ─────────────────────────
 
@@ -465,6 +488,10 @@ const GALAXY_NODES: Record<string, { x: number; y: number }> = {
   t1: { x: 62, y: 130 }, t2: { x: 133, y: 200 }, t3: { x: 87, y: 285 }, t4: { x: 172, y: 330 },
   m1: { x: 253, y: 100 }, m2: { x: 315, y: 185 }, m3: { x: 369, y: 115 },
   m3b: { x: 398, y: 172 }, m4: { x: 408, y: 240 }, m5: { x: 450, y: 315 }, m6: { x: 494, y: 185 },
+  // Deliberately off to the side, not on the m1-m6 chain — it has no MISSION_UNLOCK_EDGES
+  // entry (see computeGalaxyMap), so no connecting line is ever drawn to/from it; the
+  // isolation reads as "its own mode," not a missing campaign step.
+  daily: { x: 610, y: 75 },
 };
 
 const MISSION_DURATION: Record<string, string> = {
@@ -473,17 +500,48 @@ const MISSION_DURATION: Record<string, string> = {
   m5: '~12min', m6: '~15min',
 };
 
-export function computeGalaxyMap(save: SaveData, selectedMissionId: string | null): GalaxyMapViewModel {
+/** The daily's galaxy-node gate: cleared m1 = seen a real campaign mission end-to-end.
+ * Shared by computeGalaxyMap (node lock) and computeMissionDetail (panel lock) so the
+ * two can never disagree. */
+function isDailyGalaxyNodeUnlocked(save: SaveData): boolean {
+  return save.completedMissionIds.includes('m1');
+}
+
+export function computeGalaxyMap(save: SaveData, selectedMissionId: string | null, daily: DailyPanelInput | null): GalaxyMapViewModel {
   const missions: GalaxyMissionViewModel[] = [];
   for (const mission of ALL_MISSIONS) {
     const pos = GALAXY_NODES[mission.id];
     if (pos === undefined) continue;
     missions.push(computeGalaxyMission(save, mission, pos, selectedMissionId));
   }
+  // The daily isn't in ALL_MISSIONS (it's generated fresh per calendar day, not
+  // authored — see dailyMission.ts), so it's added here from the explicit `daily`
+  // input rather than falling out of the loop above. Locked until m1 is completed
+  // (2026-07-18, B2 of docs/plans/fable-review-fixes-2026-07-18.md): on a fresh save
+  // the always-unlocked daily marker was the brightest, most salient node on the whole
+  // map — more prominent than t1, the actual starting point — and a curious new player
+  // tapping the shiniest node burns the one-attempt-per-day on a mode that ends in
+  // guaranteed defeat. Presentation gate only: isDailyAvailable/save.daily are
+  // untouched, and "already played today" stays a separate gate the detail panel
+  // surfaces once this one is passed.
+  if (daily !== null) {
+    const pos = GALAXY_NODES[DAILY_MISSION_ID];
+    if (pos !== undefined) {
+      const unlocked = isDailyGalaxyNodeUnlocked(save);
+      missions.push({
+        id: daily.spec.id, x: pos.x, y: pos.y,
+        label: unlocked ? daily.spec.name : '???',
+        unlocked, isTutorial: false, isDaily: true,
+        isSelected: daily.spec.id === selectedMissionId,
+        starsEarned: 0, starsTotal: 0, showStarCount: false,
+      });
+    }
+  }
   const connections = MISSION_UNLOCK_EDGES
     .filter(([a, b]) => GALAXY_NODES[a] !== undefined && GALAXY_NODES[b] !== undefined)
     .map(([fromId, toId]) => ({ fromId, toId, bothUnlocked: isMissionUnlocked(save, fromId) && isMissionUnlocked(save, toId) }));
-  return { missions, connections };
+  const showSkipTutorialsHint = !TUTORIAL_MISSION_IDS.some((id) => save.completedMissionIds.includes(id));
+  return { missions, connections, showSkipTutorialsHint };
 }
 
 function computeGalaxyMission(
@@ -495,7 +553,7 @@ function computeGalaxyMission(
   return {
     id: mission.id, x: pos.x, y: pos.y,
     label: unlocked ? mission.name : '???',
-    unlocked, isTutorial,
+    unlocked, isTutorial, isDaily: false,
     isSelected: mission.id === selectedMissionId,
     starsEarned: earned, starsTotal: mission.stars.length,
     showStarCount: !isTutorial && unlocked && mission.stars.length > 0,
@@ -504,8 +562,29 @@ function computeGalaxyMission(
 
 // ── Mission detail ─────────────────────────────────────────────────────────
 
-export function computeMissionDetail(save: SaveData, selectedMissionId: string | null): MissionDetailViewModel | null {
+export function computeMissionDetail(
+  save: SaveData, selectedMissionId: string | null, daily: DailyPanelInput | null,
+): MissionDetailViewModel | null {
   if (selectedMissionId === null) return null;
+  if (selectedMissionId === DAILY_MISSION_ID) {
+    if (daily === null) return null;
+    // Defense-in-depth mirror of the galaxy-node gate above (real taps can't select a
+    // locked node, but __cheat.selectMission can — same reasoning as the campaign
+    // missions' own LOCKED-panel fix, docs/known-issues.md): while m1-locked, omit the
+    // `daily` field so HubScene falls through to its generic LOCKED panel instead of
+    // rendering the daily panel with best-score copy and a live START.
+    if (!isDailyGalaxyNodeUnlocked(save)) {
+      return { name: '???', duration: '', isTutorial: false, stars: [], canStart: false };
+    }
+    return {
+      name: daily.spec.name,
+      duration: 'Endless',
+      isTutorial: false,
+      stars: [],
+      canStart: daily.available,
+      daily: { available: daily.available, bestScore: daily.bestScore, resetInLabel: daily.resetInLabel },
+    };
+  }
   const mission = ALL_MISSIONS.find((m) => m.id === selectedMissionId);
   if (mission === undefined) return null;
   const isTutorial = mission.forcedLoadout !== undefined;
@@ -563,7 +642,7 @@ function computeSubscriptionRow(save: SaveData, sub: SubscriptionSpec, selectedI
   const dots = Array.from({ length: sub.levels.length }, (_, j) => (j < ownedLevel ? '●' : '○')).join('');
   return {
     id: sub.id, name: sub.name, color: sub.color, ownedLevel, maxLevel: sub.levels.length, dots,
-    statusText: ownedLevel > 0 ? `Lv${String(ownedLevel)} / ${String(sub.levels.length)}` : 'not subscribed',
+    statusText: ownedLevel > 0 ? `Lv${String(ownedLevel)} / ${String(sub.levels.length)}` : 'not deployed',
     isSelected: sub.id === selectedId,
   };
 }

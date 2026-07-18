@@ -40,6 +40,15 @@ describe('advanceEnemies', () => {
     expect(state.stats.coinsEarned).toBe(0);
   });
 
+  // Regression for the 2026-07-18 A4 fix: the view's coin popup must never show for a
+  // collision self-death, since no coins are actually credited for it.
+  it('a collision self-death never emits an enemy-killed visual event', () => {
+    const state = freshState();
+    state.enemies = [makeFixtureEnemy({ id: 3, distance: 1, speed: 2, coinReward: 50 })];
+    advanceEnemies(state, statsOf(state));
+    expect(state.pendingVisualEvents.some((e) => e.kind === 'enemy-killed')).toBe(false);
+  });
+
   it('shield absorbs collision damage first', () => {
     const state = freshState();
     state.ship.shield = 30;
@@ -66,6 +75,55 @@ describe('advanceEnemies', () => {
     state.enemies = [makeFixtureEnemy({ distance: 1, speed: 2, shotDamage })];
     advanceEnemies(state, computeEffectiveStats(loadout, state.modifiers));
     expect(state.ship.hull).toBe(state.ship.maxHull - shotDamage * COLLISION_DAMAGE_MULTIPLIER * 0.5);
+  });
+});
+
+describe('advanceEnemies: shield-burst kills a survivor (2026-07-18 fix)', () => {
+  // Shield 20, collision damage 4*3=12 (fully absorbed) -> shield 8, burst = (20-8)*0.6 = 7.2.
+  it('a burst-killed survivor is removed the same tick and counted as a real kill (coins paid, collision itself still not a kill)', () => {
+    const state = freshState();
+    state.ship.shield = 20;
+    state.enemies = [
+      makeFixtureEnemy({ id: 1, distance: 1, speed: 2, shotDamage: 4, coinReward: 999 }),
+      makeFixtureEnemy({ id: 2, distance: 50, hp: 5, maxHp: 100, coinReward: 50 }),
+    ];
+    advanceEnemies(state, statsOf(state));
+    expect(state.enemies).toHaveLength(0);
+    expect(state.stats.kills).toBe(1); // only enemy 2 (burst-killed), not the collision itself
+    expect(state.stats.coinsEarned).toBe(50); // enemy 2's reward only, not enemy 1's
+    // A4: the burst-killed enemy (routed through removeDeadEnemies) must show a real
+    // coin popup; the collision itself (enemy 1) must not.
+    expect(state.pendingVisualEvents).toContainEqual({ kind: 'enemy-killed', enemyId: 2, coins: 50 });
+    expect(state.pendingVisualEvents.some((e) => e.kind === 'enemy-killed' && e.enemyId === 1)).toBe(false);
+  });
+
+  it('a burst-killed blocker still grants its bonus support call', () => {
+    const state = freshState();
+    state.ship.shield = 20;
+    state.enemies = [
+      makeFixtureEnemy({ id: 1, distance: 1, speed: 2, shotDamage: 4 }),
+      makeFixtureEnemy({
+        id: 2, kind: 'blocker', distance: 50, hp: 5, maxHp: 100, blocksConveyor: true, holdChargeTicks: 0,
+      }),
+    ];
+    advanceEnemies(state, statsOf(state));
+    expect(state.enemies).toHaveLength(0);
+    expect(state.bonusCallsPending).toBe(1);
+  });
+
+  it('a non-lethal burst damages a survivor but leaves it on the lane, uncredited', () => {
+    const state = freshState();
+    state.ship.shield = 20;
+    state.enemies = [
+      makeFixtureEnemy({ id: 1, distance: 1, speed: 2, shotDamage: 4 }),
+      makeFixtureEnemy({ id: 2, distance: 50, hp: 100, maxHp: 100, coinReward: 50 }),
+    ];
+    advanceEnemies(state, statsOf(state));
+    expect(state.enemies).toHaveLength(1);
+    expect(state.enemies[0]?.id).toBe(2);
+    expect(state.enemies[0]?.hp).toBeCloseTo(100 - 7.2);
+    expect(state.stats.kills).toBe(0);
+    expect(state.stats.coinsEarned).toBe(0);
   });
 });
 

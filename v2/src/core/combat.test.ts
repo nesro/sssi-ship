@@ -293,6 +293,39 @@ describe('fireShipWeapon state-based damage bonuses', () => {
     expect(boosted).toBeCloseTo(base * 1.5);
     expect(same).toBeCloseTo(base);
   });
+
+  // ZERO BARRIER's real modifier — regression for the 2026-07-18 fix (card used to
+  // wire into lowHullDmgMult, so it silently fired on low hull instead of zero shield).
+  it('shieldZeroDmgMult: bonus at shield <= 0, none while any shield remains', () => {
+    const base = oneShotDmg({}, (s) => { s.ship.shield = 1; });
+    const boosted = oneShotDmg({ shieldZeroDmgMult: 1.4 }, (s) => { s.ship.shield = 0; });
+    const same = oneShotDmg({ shieldZeroDmgMult: 1.4 }, (s) => { s.ship.shield = 1; });
+    expect(boosted).toBeCloseTo(base * 1.4);
+    expect(same).toBeCloseTo(base);
+  });
+
+  // PEAK CONDITION's real modifier — regression for the 2026-07-18 fix (card used to
+  // wire into shieldActiveDmgBonus, so it silently fired at ANY nonzero shield, not
+  // only a full one).
+  it('shieldFullDmgBonus: bonus only at shield >= capacity, not merely shield > 0', () => {
+    const capacity = FIXTURE_LOADOUT.shield?.capacity ?? 0;
+    const base = oneShotDmg({}, (s) => { s.ship.shield = capacity - 1; });
+    const boosted = oneShotDmg({ shieldFullDmgBonus: 0.35 }, (s) => { s.ship.shield = capacity; });
+    const partial = oneShotDmg({ shieldFullDmgBonus: 0.35 }, (s) => { s.ship.shield = capacity - 1; });
+    expect(boosted).toBeCloseTo(base * 1.35);
+    expect(partial).toBeCloseTo(base);
+  });
+
+  it('shieldFullDmgBonus: never applies with no shield equipped (capacity 0 must not read as "full")', () => {
+    const state = freshState();
+    state.loadout = { ...FIXTURE_LOADOUT, shield: null };
+    state.modifiers = { ...state.modifiers, shieldFullDmgBonus: 0.35 };
+    state.enemies = [makeFixtureEnemy({ hp: 9999, coinReward: 0, distance: 50 })];
+    state.ship.fireTimer = 1;
+    state.ship.shield = 0;
+    fireShipWeapon(state, statsOf(state));
+    expect(state.stats.damageDealt).toBeCloseTo(FIXTURE_WEAPON.damagePerShot);
+  });
 });
 
 describe('fireShipWeapon situational and targeting modifiers', () => {
@@ -685,6 +718,19 @@ describe('fireShipWeapon coin and energy on-kill modifiers', () => {
     state.ship.fireTimer = 1;
     fireShipWeapon(state, statsOf(state));
     expect(state.stats.damageDealt).toBeCloseTo(FIXTURE_WEAPON.damagePerShot * 2);
+  });
+
+  // Regression for the 2026-07-18 fix: the view's coin popup used to read an enemy's
+  // raw spec coinReward on ANY death, including collision self-deaths that never
+  // credit coins. It now reads this event instead.
+  it('a real weapon kill emits an enemy-killed visual event carrying the actual credited coins', () => {
+    const state = freshState();
+    state.modifiers = { ...state.modifiers, blockerCoinMult: 2 };
+    state.enemies = [makeFixtureEnemy({ id: 7, hp: 5, blocksConveyor: true, coinReward: 10 })];
+    state.ship.fireTimer = 1;
+    fireShipWeapon(state, statsOf(state));
+    const event = state.pendingVisualEvents.find((e) => e.kind === 'enemy-killed');
+    expect(event).toEqual({ kind: 'enemy-killed', enemyId: 7, coins: 20 }); // 10 × blockerCoinMult 2
   });
 });
 

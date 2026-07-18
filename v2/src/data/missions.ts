@@ -113,9 +113,16 @@ const W0_NARRATOR_EVENTS: NarratorEvent[] = [
     ],
   },
   {
+    // "Three paths" -> "Two paths" (polish-loop, 2026-07-17/18, tutorial-accuracy
+    // round) — the line only ever described two (tutorials, or skip to the sector),
+    // matching ResultScene.ts's actual two-button w0-branch (TUTORIAL/EXPLORE). A plain
+    // internal miscount, not a mismatch introduced by a later code change. Low real
+    // impact today — w0 is currently unreachable by real players (no launcher exists;
+    // see known-issues.md's "w0 (Calibration Run) is unreachable" entry) — but worth
+    // fixing now so it's correct whenever WelcomeScene ships and reconciles the two.
     atTimelineTick: seconds(17),
     lines: [
-      'Three paths open from this station.',
+      'Two paths open from this station.',
       'Tutorial missions will walk you through each system step by step.',
       'Or skip straight into the sector and figure things out the hard way.',
     ],
@@ -166,10 +173,12 @@ const TUTORIAL_LOADOUT_BASE: Omit<ForcedLoadout, 'weaponId'> = {
 // Speed fixed 2026-07-11 — original 0.15 meant the very first collision (the event that
 // starts the burst mechanic) didn't happen until ~67s in, and pnpm sim confirmed the
 // whole mission averaged 121s versus t2/t3/t4's 31-51s (GAME_DESIGN.md §13 targets
-// ~45s/tutorial). 0.55 lands t1 at ~51s, in line with its siblings, without changing
-// hp/shotDamage/missChance or the mechanic being taught.
+// ~45s/tutorial). Landed on 0.55 (t1 ~51s) at the time, in line with its siblings.
+// Raised again 0.55->2.2, 2026-07-17 (playtest feedback: ~19s to first collision still
+// "feels terrible" even at 51s total mission length) — see the spawn-tick comment on
+// t1's own MissionSpec below for the full reasoning and the resulting timing math.
 const GUARDIAN_SLOW: EnemySpec = {
-  kind: 'guardian', hp: 25, speed: 0.55, shotDamage: 3,
+  kind: 'guardian', hp: 25, speed: 2.2, shotDamage: 3,
   ticksBetweenShots: seconds(3), blocksConveyor: false, coinReward: 15,
   regenPerTick: 0, critChance: 0, missChance: 0.9, critMult: 2.0,
 };
@@ -187,6 +196,127 @@ const GUARDIAN_REGEN: EnemySpec = {
   regenPerTick: 2.2, critChance: 0, missChance: 0, critMult: 2.0,
 };
 
+/**
+ * The minimum `SpawnEvent.spacing` (distance units, same scale as `LANE_LENGTH=100`)
+ * that keeps two same-kind enemies from visually overlapping on screen. Added
+ * 2026-07-17 (playtest feedback: "some enemies are too close to each other and it
+ * doesn't look good") — a real, systemic gap: 106 of the game's 166 wave events had a
+ * `spacing` value tighter than this floor for their kind, most in the back half of
+ * every non-tutorial mission's escalating waves.
+ *
+ * Derived from CombatScene.ts's `ENEMY_VISUAL_RADIUS` (view-layer, not importable
+ * here — Phaser can't be pulled into src/data) and `laneToY`'s linear distance→screen-Y
+ * mapping: `scale(kind) = (430 - (26 + radius(kind))) / 100` logical px per spacing
+ * unit (26 = SHIP_VISUAL_RADIUS, 430/100 = (SHIP_Y − GAME_TOP_Y)/LANE_LENGTH), so
+ * `minSpacing(kind) = ceil((2·radius(kind) + 4) / scale(kind))` — the +4 is a small
+ * fixed visual buffer beyond exact sprite-edge contact, not a percentage margin (a
+ * percentage margin at these magnitudes flattens far more of the escalation curve than
+ * a few px of buffer does). Every event's authored `spacing` was raised (never
+ * lowered) to at least this value where it fell short — density escalation across a
+ * mission's waves still reads through enemy COUNT even where same-kind spacing
+ * plateaus at the floor (missions.test.ts's own regression test enforces this floor
+ * going forward; keep this table in sync by hand if `ENEMY_VISUAL_RADIUS` ever
+ * changes).
+ */
+export const MIN_VISUAL_SPACING: Partial<Record<string, number>> = {
+  fodder: 14, striker: 15, tank: 16, swarm: 9, blocker: 19,
+  guardian: 15, turret: 18, kamikaze: 12, boss: 29, booster: 15,
+};
+
+// ---------- Tutorial narrator events ----------
+// Added 2026-07-17 (playtest feedback: "I would prefer the game pause and a popup
+// window show up rather than the bottom screen"). The blocking modal system already
+// existed — only `w0` used it (see W0_NARRATOR_EVENTS above) — and is fully generic
+// (checkNarratorEvents/pendingNarrator in core/tick.ts, the modal renderer in
+// CombatScene.ts): giving a tutorial a `narratorEvents` entry needed zero view/core
+// changes, just this data. Replaces each tutorial's passive-bottom-bar 'mission-start'
+// line (removed from story.ts — showing both would be duplicate, conflicting UI); each
+// tutorial's 'first-support-call' bottom-bar line stays, since that beat is still a
+// non-blocking aside while the card overlay is already the main focus. `atTimelineTick:
+// 0` is the same pattern w0's own first event already uses — proven safe.
+// t1/t2 gained an extra line each 2026-07-17 (playtest feedback: "make it more
+// detailed... I want to explain the player how the energy bar works and is filled and
+// how the shield absorbs"). CombatScene.ts's NARRATOR_ARROW_TARGETS points a live arrow
+// from the modal at the SHLD/ENRG bar for the specific line indices that discuss it —
+// a view-only concern (this array stays plain text), kept in sync by hand: if you
+// reorder or add lines here, update that lookup's indices too.
+//
+// A further round the same day (playtest feedback: "in tutorial #2, we need the
+// narrator to tell about the card picking" + "for each of these things the narrator
+// tells about, we need explanation that the ship have modules that impact this") added
+// a card-picking explanation to t2 (t2 is the FIRST tutorial whose support call actually
+// opens the card overlay — t1 has none) and one shop-module tie-in line per tutorial,
+// each naming the actual shop tab (SHIELD/GENERATOR/FRONT WEAPON/SUPPLIES — SHOP_TABS
+// below) that upgrades the mechanic just explained, plus t2's card-picking line ties to
+// DISPATCH REINFORCEMENTS (the actual source of which cards get offered, cards.ts/
+// dispatch viewmodel) rather than the shop.
+//
+// t2's GENERATOR and DISPATCH REINFORCEMENTS lines corrected 2026-07-17/18
+// (polish-loop, "tutorial accuracy" round — every mechanic-description line traced to
+// the actual code, not trusted on read-through alone): the original GENERATOR line
+// claimed a better module "raises that capacity and refill rate" — true for refill
+// rate (weaponSpecAtLevel-equivalent scaling is universal), but FALSE for capacity on
+// two of four generator kinds, including torrent — the exact kind
+// TUTORIAL_LOADOUT_BASE gives every tutorial player (items.ts's GENERATOR_BASE: caps
+// [50,45,40,38,35], DECREASING with level, its own "high output, small buffer"
+// identity). Reworded to only claim what's universally true. Separately, the original
+// DISPATCH REINFORCEMENTS line claimed "which cards show up depends on your...
+// choice," said while the player is about to see t2's OWN support call — which is
+// scripted via `firstOfferIds` below, completely bypassing the subscription-derived
+// pool (`createAbilityOffer`, core/cards.ts, checks `supportCallsDone === 1` first and
+// returns the scripted ids unconditionally). Reworded to say "on real missions" rather
+// than "after it" (Fable's review caught that "after it" still overclaims — EVERY
+// tutorial's `resolveForcedLoadout` deliberately sets `subscriptionCardIds: []`,
+// loadouts.ts, so even a later, non-scripted tutorial call falls back to the full card
+// catalog, never the player's real subscription; the claim is only ever literally true
+// on real, non-forced missions), preserving the intended teaching value without
+// overclaiming about any call within a tutorial itself.
+const T1_NARRATOR_EVENTS: NarratorEvent[] = [
+  {
+    atTimelineTick: 0,
+    lines: [
+      'No weapon loaded, Commander.',
+      'Your shield is the only defense here — let them close in.',
+      'Watch the SHLD bar — every collision drains it before your hull takes any damage.',
+      'The shield absorbs the hit, and the impact bleeds back onto the others.',
+      "A stronger SHIELD module absorbs more before it breaks — check the shop's SHIELD tab when you're back at base.",
+    ],
+  },
+];
+const T2_NARRATOR_EVENTS: NarratorEvent[] = [
+  {
+    atTimelineTick: 0,
+    lines: [
+      'Your laser draws energy on every shot — watch that bar.',
+      'It refills on its own between shots. Run it too low and your fire rate slows — but it never stops.',
+      "A better GENERATOR module refills that bar faster — check the shop's GENERATOR tab for the tradeoffs between kinds.",
+      "When support calls in, you'll be offered a card — pick one to boost your gear for the rest of this fight.",
+      "This first offer is scripted to get you started — on real missions, which cards show up depends on your DISPATCH REINFORCEMENTS choice back at base.",
+      "A dense wall's inbound. Single-target fire will bog down against it.",
+    ],
+  },
+];
+const T3_NARRATOR_EVENTS: NarratorEvent[] = [
+  {
+    atTimelineTick: 0,
+    lines: [
+      'That guardian regenerates faster than your base damage.',
+      'You will not out-shoot it alone. Wait for support.',
+      "A stronger FRONT WEAPON module raises your base damage permanently — worth checking after this fight.",
+    ],
+  },
+];
+const T4_NARRATOR_EVENTS: NarratorEvent[] = [
+  {
+    atTimelineTick: 0,
+    lines: [
+      'Two reserve supplies are preloaded on your right panel.',
+      'Tap them when you need a burst of shield or damage — this fight is built for testing them.',
+      "More charges, and new supply kinds, are yours in the shop's SUPPLIES tab — stock up before your next run.",
+    ],
+  },
+];
+
 // ---------- Tutorial missions ----------
 
 const TUTORIAL_MISSIONS: MissionSpec[] = [
@@ -198,8 +328,19 @@ const TUTORIAL_MISSIONS: MissionSpec[] = [
     id: 't1', name: 'Shield Basics', completionCoins: 30,
     blurb: 'No weapon. Your shield is the only weapon. Let them reach you.',
     enemyKinds: { guardian: GUARDIAN_SLOW },
+    // Spawn seconds(3)->seconds(1) and GUARDIAN_SLOW's own speed 0.55->2.2, 2026-07-17
+    // (playtest feedback: "~15-19s until the first enemy hits the ship... feels
+    // terrible"). Confirmed via a live tick-by-tick probe (hull/shield/enemy-distance),
+    // not assumed — first collision landed at ~19s, well past the modal popup's own
+    // read time. 100-unit lane / 2.2 speed ≈ 4.5s travel; combined with the 1s spawn
+    // delay, first collision now lands ~5.5s after the popup is dismissed. Not literally
+    // the requested 2-3s — that would require a speed faster than every other enemy in
+    // the game (kamikaze, the current fastest, is 2.8), reading as an unreadable blink
+    // rather than "the shield absorbs a hit" — treated as a concrete, tunable starting
+    // point; `pnpm pacing`'s new SLOW_START flag (tools/pacing-report.ts) tracks this
+    // going forward instead of relying on someone noticing again by feel.
     events: [
-      { atTimelineTick: seconds(3), kind: 'guardian', count: 3, spacing: 24 },
+      { atTimelineTick: seconds(1), kind: 'guardian', count: 3, spacing: 24 },
     ],
     supportCallTicks: [],
     stars: [
@@ -208,6 +349,7 @@ const TUTORIAL_MISSIONS: MissionSpec[] = [
     ],
     forcedLoadout: { ...TUTORIAL_LOADOUT_BASE, weaponId: null },
     completesOnDefeat: true,
+    narratorEvents: T1_NARRATOR_EVENTS,
   },
   {
     id: 't2', name: 'Weapon Systems', completionCoins: 50,
@@ -215,26 +357,42 @@ const TUTORIAL_MISSIONS: MissionSpec[] = [
     enemyKinds: { fodder: FODDER },
     events: [
       { atTimelineTick: seconds(3), kind: 'fodder', count: 3, spacing: 14 },
-      { atTimelineTick: seconds(9), kind: 'fodder', count: 8, spacing: 9 },
+      { atTimelineTick: seconds(9), kind: 'fodder', count: 8, spacing: 14 },
     ],
     supportCallTicks: [seconds(9)],
     firstOfferIds: ['w-dmg-30', 'w-rate-20', 'w-cost-25'],
     stars: standardStars('t2'),
     forcedLoadout: { ...TUTORIAL_LOADOUT_BASE, weaponId: 'pulse-1' },
     completesOnDefeat: true,
+    narratorEvents: T2_NARRATOR_EVENTS,
   },
   {
     id: 't3', name: 'Support Cards', completionCoins: 60,
     blurb: 'It heals faster than you shoot. You need the right card to break through.',
     // Trimmed to one guardian 2026-07-15 (docs/plans/mission-fun-review.md F5) — the
     // problem and the solution now land on the same enemy (watch it out-heal you, the
-    // card arrives at second 6, break it) instead of a redundant second confirmation;
-    // dropped the dead `fodder` kind (no event ever spawned it).
+    // card breaks it) instead of a redundant second confirmation; dropped the dead
+    // `fodder` kind (no event ever spawned it).
+    //
+    // supportCallTicks moved seconds(6)->seconds(2), 2026-07-17 — found via a live
+    // playtest ("is the narration/timing okay?") and confirmed empirically (fastForward
+    // + inspect(): pendingOffer stayed false for the entire mission). Root cause: the
+    // guardian's own `blocksConveyor: true` freezes `state.timelineTick` ENTIRELY the
+    // instant it spawns (timeline.ts's advanceTimeline — this is the same mechanic that
+    // makes a blocker a DPS check), and it can't be killed without the card the call was
+    // supposed to offer. A call scheduled for any tick after the guardian's own spawn
+    // tick (seconds(3)) is therefore unreachable — seconds(6) never fired, not once, so
+    // the mission's entire "the card arrives, break through" premise was silently dead.
+    // seconds(2) fires one tick before the freeze takes effect (the guardian spawns and
+    // maybeTriggerSupportCall both run inside the same advanceTimeline call at the
+    // guardian's spawn tick, using timelineTick's value from earlier that same tick —
+    // any call scheduled at or before the spawn tick still gets checked before the
+    // freeze applies). Re-verified live: the offer now opens correctly.
     enemyKinds: { guardian: GUARDIAN_REGEN },
     events: [
       { atTimelineTick: seconds(3), kind: 'guardian', count: 1, spacing: 0 },
     ],
-    supportCallTicks: [seconds(6)],
+    supportCallTicks: [seconds(2)],
     firstOfferIds: ['w-dmg-30', 's-cap-20', 'g-out-08'],
     stars: [
       { id: 't3-hull-50', family: 'hull-above', threshold: 0.5 },
@@ -243,14 +401,15 @@ const TUTORIAL_MISSIONS: MissionSpec[] = [
     ],
     forcedLoadout: { ...TUTORIAL_LOADOUT_BASE, weaponId: 'pulse-1' },
     completesOnDefeat: true,
+    narratorEvents: T3_NARRATOR_EVENTS,
   },
   {
     id: 't4', name: 'Battle Supplies', completionCoins: 70,
     blurb: 'Two supplies are preloaded. Use them — they are built for moments like this.',
     enemyKinds: { fodder: FODDER, striker: STRIKER },
     events: [
-      { atTimelineTick: seconds(3), kind: 'fodder', count: 5, spacing: 9 },
-      { atTimelineTick: seconds(11), kind: 'striker', count: 3, spacing: 13 },
+      { atTimelineTick: seconds(3), kind: 'fodder', count: 5, spacing: 14 },
+      { atTimelineTick: seconds(11), kind: 'striker', count: 3, spacing: 15 },
     ],
     supportCallTicks: [seconds(9)],
     stars: standardStars('t4'),
@@ -260,6 +419,7 @@ const TUTORIAL_MISSIONS: MissionSpec[] = [
       suppliesGifted: { 'sup-damage': 1, 'sup-shield': 1 },
     },
     completesOnDefeat: true,
+    narratorEvents: T4_NARRATOR_EVENTS,
   },
 ];
 
@@ -281,24 +441,30 @@ export const ALL_MISSIONS: MissionSpec[] = [
   // stretch (72-112s, five waves repeating count 6-7) collapses to three more
   // differentiated ones — a dense-tight wave, a sparse-fast breather, a dense-tight
   // wave — so the lane visibly breathes instead of maintaining constant throughput.
-  // `pnpm pacing`'s longest-same-kind-streak flag confirms the shape fix (14 → 7);
-  // the doc's suggested counts were re-tuned against `pnpm sim` after measuring the
-  // straightforward version landed at 90.2% — right on the ceiling (>90% is "too
-  // easy", §13) — and this region turned out to be a real difficulty cliff (count 9→10
-  // on the dense waves alone swung clear-rate from 90% to 77.5%, well under the ≥85%
-  // floor). Landed on count 9/spacing 7 for both dense-tight waves (unchanged from the
-  // straightforward version) and count 6/spacing 18 for the breather (up from an
-  // initial 5), measuring 87.6-88.1% at 2000-5000 runs — comfortably inside [85%, 90%].
+  // `pnpm pacing`'s longest-same-kind-streak flag confirms the shape fix (14 → 7); that
+  // 7-streak still trips `pnpm pacing`'s MONOTONY threshold (6) on its own — see
+  // docs/known-issues.md's "reviewed, not a bug" entry, since going lower re-opens the
+  // difficulty cliff below. The doc's suggested counts were re-tuned against `pnpm sim`
+  // after measuring the straightforward version landed at 90.2% — right on the ceiling
+  // (>90% is "too easy", §13) — and this region turned out to be a real difficulty cliff
+  // (count 9→10 on the dense waves alone swung clear-rate from 90% to 77.5%, well under
+  // the ≥85% floor). Landed on count 9/spacing 7 for both dense-tight waves (unchanged
+  // from the straightforward version) and count 6/spacing 18 for the breather (up from
+  // an initial 5), measuring 87.6-88.1% at 2000-5000 runs — comfortably inside [85%,
+  // 90%]. Spacing 7 was later raised to 14 by the 2026-07-17 `MIN_VISUAL_SPACING`
+  // no-overlap floor (see known-issues.md) — re-verified 2026-07-18 at spacing 14:
+  // `pnpm sim --mission m1 --runs 2000 --strategy greedy --loadout intended` still
+  // measures 88.0%, so the spacing bump didn't move this mission out of band.
   {
     id: 'm1', name: 'First Contact', completionCoins: 120,
     blurb: 'Loose fodder drifting in. Warm up the laser.',
     enemyKinds: { fodder: FODDER, striker: STRIKER },
     events: [
       { atTimelineTick: seconds(2),   kind: 'fodder',  count: 3,  spacing: 14 },
-      { atTimelineTick: seconds(12),  kind: 'fodder',  count: 4,  spacing: 13 },
-      { atTimelineTick: seconds(22),  kind: 'fodder',  count: 5,  spacing: 12 },
-      { atTimelineTick: seconds(32),  kind: 'fodder',  count: 5,  spacing: 11 },
-      { atTimelineTick: seconds(42),  kind: 'fodder',  count: 6,  spacing: 11 },
+      { atTimelineTick: seconds(12),  kind: 'fodder',  count: 4,  spacing: 14 },
+      { atTimelineTick: seconds(22),  kind: 'fodder',  count: 5,  spacing: 14 },
+      { atTimelineTick: seconds(32),  kind: 'fodder',  count: 5,  spacing: 14 },
+      { atTimelineTick: seconds(42),  kind: 'fodder',  count: 6,  spacing: 14 },
       // Scout — a visibly faster, differently-colored enemy previewing the finale.
       // Spacing loosened 2026-07-15 (docs/known-issues.md, m1-shield UNREACHABLE flag):
       // this scout + the two dense fodder waves right after it (52-72s) were where
@@ -309,18 +475,18 @@ export const ALL_MISSIONS: MissionSpec[] = [
       // 6.7%), with clear-rate barely moving (86.8%→87.8%, still well within the
       // 85-90% band).
       { atTimelineTick: seconds(50),  kind: 'striker', count: 1,  spacing: 0  },
-      { atTimelineTick: seconds(52),  kind: 'fodder',  count: 7,  spacing: 12 },
-      { atTimelineTick: seconds(64),  kind: 'fodder',  count: 7,  spacing: 11 },
+      { atTimelineTick: seconds(52),  kind: 'fodder',  count: 7,  spacing: 14 },
+      { atTimelineTick: seconds(64),  kind: 'fodder',  count: 7,  spacing: 14 },
       // Collapsed 72-112s stretch: dense-tight → sparse-fast breather → dense-tight.
-      { atTimelineTick: seconds(76),  kind: 'fodder',  count: 9,  spacing: 9  },
+      { atTimelineTick: seconds(76),  kind: 'fodder',  count: 9,  spacing: 14  },
       { atTimelineTick: seconds(90),  kind: 'fodder',  count: 6,  spacing: 18 },
-      { atTimelineTick: seconds(108), kind: 'fodder',  count: 9,  spacing: 7  },
-      { atTimelineTick: seconds(122), kind: 'fodder',  count: 7,  spacing: 8  },
-      { atTimelineTick: seconds(132), kind: 'fodder',  count: 8,  spacing: 8  },
+      { atTimelineTick: seconds(108), kind: 'fodder',  count: 9,  spacing: 14  },
+      { atTimelineTick: seconds(122), kind: 'fodder',  count: 7,  spacing: 14  },
+      { atTimelineTick: seconds(132), kind: 'fodder',  count: 8,  spacing: 14  },
       // Final push — strikers introduced, with one support call to prep for them
       { atTimelineTick: seconds(148), kind: 'striker', count: 3,  spacing: 16 },
       { atTimelineTick: seconds(164), kind: 'striker', count: 3,  spacing: 15 },
-      { atTimelineTick: seconds(180), kind: 'striker', count: 3,  spacing: 13 },
+      { atTimelineTick: seconds(180), kind: 'striker', count: 3,  spacing: 15 },
     ],
     supportCallTicks: [
       seconds(20), seconds(44), seconds(68), seconds(92),
@@ -329,17 +495,25 @@ export const ALL_MISSIONS: MissionSpec[] = [
     // Re-anchored 2026-07-15 (F4, docs/known-issues.md) — the old T1-T4 were a
     // synthetic ±1-2s tie-break around one real value (see git history), not four
     // meaningfully different skill bars: percentiles of the SAME (intended) loadout's
-    // run duration barely vary when card choice is this constrained. Real fix: T1/T2
-    // stay pinned to the intended loadout's own percentiles (75th/50th — still flat
-    // here, 185.5s at every percentile), but T3/T4 now measure an objectively *faster*
-    // clear on the fixed T3/T4 reference loadouts (`timeStarT3Loadout`/
-    // `timeStarT4Loadout` in loadoutPresets.ts — weapon4/shield3/gen5/motor2 and
-    // weapon5/shield4/gen5/motor3, each verified ≥98%/100% clear across every main
-    // mission), whose 2x/3x timeline compression makes a genuinely tighter number, not
-    // a guessed one. `pnpm sim --mission m1 --loadout t3/t4 --percentiles`, 2000 runs.
+    // run duration barely vary when card choice is this constrained. Real fix: T1
+    // stays pinned to the intended loadout's own 75th percentile (185.5s), but T3/T4
+    // now measure an objectively *faster* clear on the fixed T3/T4 reference loadouts
+    // (`timeStarT3Loadout`/`timeStarT4Loadout` in loadoutPresets.ts —
+    // weapon4/shield3/gen5/motor2 and weapon5/shield4/gen5/motor3, each verified
+    // ≥98%/100% clear across every main mission), whose 2x/3x timeline compression
+    // makes a genuinely tighter number, not a guessed one.
+    // T2 re-anchored 2026-07-18 (B1, docs/plans/fable-review-fixes-2026-07-18.md) — T1
+    // and T2 were BOTH the intended loadout's own 75th/50th percentile, which collapse
+    // to the same value for the same reason F4 already fixed for T3/T4: near-zero
+    // run-to-run duration variance at one fixed loadout under greedy play. Introduced a
+    // third fixed reference tier, `timeStarT2Loadout` (weapon3/shield3/gen4/motor2 —
+    // one weapon level below T3, same motor), verified 100% clear at 2000 runs and
+    // strictly between T1 and T3 on every mission that uses it (m1/m2/m3/m3b/m4 — see
+    // that function's own comment for why m5/m6 needed a different approach).
+    // `pnpm sim --mission m1 --loadout t2/t3/t4 --percentiles`, 2000 runs.
     stars: [
       { id: 'm1-time-t1', family: 'finish-time', threshold: seconds(185.5) },
-      { id: 'm1-time-t2', family: 'finish-time', threshold: seconds(185.5) },
+      { id: 'm1-time-t2', family: 'finish-time', threshold: seconds(93.2) },
       { id: 'm1-time-t3', family: 'finish-time', threshold: seconds(92.0) },
       { id: 'm1-time-t4', family: 'finish-time', threshold: seconds(61.5) },
       { id: 'm1-hull-50', family: 'hull-above', threshold: 0.5 },
@@ -356,42 +530,43 @@ export const ALL_MISSIONS: MissionSpec[] = [
     blurb: 'Strikers hit harder and close in fast.',
     enemyKinds: { fodder: FODDER, striker: STRIKER, blocker: BLOCKER, tank: TANK },
     events: [
-      { atTimelineTick: seconds(2),   kind: 'fodder',  count: 4,  spacing: 13 },
-      { atTimelineTick: seconds(15),  kind: 'fodder',  count: 4,  spacing: 12 },
+      { atTimelineTick: seconds(2),   kind: 'fodder',  count: 4,  spacing: 14 },
+      { atTimelineTick: seconds(15),  kind: 'fodder',  count: 4,  spacing: 14 },
       { atTimelineTick: seconds(28),  kind: 'striker', count: 2,  spacing: 18 },
-      { atTimelineTick: seconds(42),  kind: 'fodder',  count: 5,  spacing: 11 },
+      { atTimelineTick: seconds(42),  kind: 'fodder',  count: 5,  spacing: 14 },
       { atTimelineTick: seconds(56),  kind: 'striker', count: 3,  spacing: 17 },
-      { atTimelineTick: seconds(70),  kind: 'fodder',  count: 6,  spacing: 11 },
+      { atTimelineTick: seconds(70),  kind: 'fodder',  count: 6,  spacing: 14 },
       { atTimelineTick: seconds(84),  kind: 'striker', count: 3,  spacing: 16 },
-      { atTimelineTick: seconds(98),  kind: 'fodder',  count: 6,  spacing: 10 },
+      { atTimelineTick: seconds(98),  kind: 'fodder',  count: 6,  spacing: 14 },
       { atTimelineTick: seconds(110), kind: 'blocker', count: 1,  spacing: 0  },
       { atTimelineTick: seconds(124), kind: 'striker', count: 4,  spacing: 15 },
-      { atTimelineTick: seconds(138), kind: 'fodder',  count: 7,  spacing: 9  },
-      { atTimelineTick: seconds(152), kind: 'striker', count: 4,  spacing: 14 },
-      { atTimelineTick: seconds(166), kind: 'fodder',  count: 7,  spacing: 8  },
-      { atTimelineTick: seconds(180), kind: 'striker', count: 5,  spacing: 13 },
-      { atTimelineTick: seconds(196), kind: 'fodder',  count: 8,  spacing: 8  },
+      { atTimelineTick: seconds(138), kind: 'fodder',  count: 7,  spacing: 14  },
+      { atTimelineTick: seconds(152), kind: 'striker', count: 4,  spacing: 15 },
+      { atTimelineTick: seconds(166), kind: 'fodder',  count: 7,  spacing: 14  },
+      { atTimelineTick: seconds(180), kind: 'striker', count: 5,  spacing: 15 },
+      { atTimelineTick: seconds(196), kind: 'fodder',  count: 8,  spacing: 14  },
       // Striker count bumped 2026-07-10 (gradual-tension pass, decision 2 in
       // docs/plans/game-identity-and-design-review-followup.md) — matches this
       // mission's own "strikers hit harder" identity better than a tank bump did
       // (tanks turned out to have the same kind of density cliff as blockers: a +1
       // bump across all three tank waves collapsed the clear rate from 87.3% to 7.3%
       // in testing, so that lever was reverted in favor of this one).
-      { atTimelineTick: seconds(210), kind: 'striker', count: 4,  spacing: 13 },
-      { atTimelineTick: seconds(220), kind: 'fodder',  count: 5,  spacing: 9  },
+      { atTimelineTick: seconds(210), kind: 'striker', count: 4,  spacing: 15 },
+      { atTimelineTick: seconds(220), kind: 'fodder',  count: 5,  spacing: 14  },
       // Final push — tanks introduced, unchanged from the mission's original tuning.
       { atTimelineTick: seconds(232), kind: 'tank',    count: 2,  spacing: 20 },
       { atTimelineTick: seconds(252), kind: 'tank',    count: 3,  spacing: 17 },
-      { atTimelineTick: seconds(268), kind: 'tank',    count: 4,  spacing: 15 },
+      { atTimelineTick: seconds(268), kind: 'tank',    count: 4,  spacing: 16 },
     ],
     supportCallTicks: [
       seconds(22), seconds(52), seconds(82), seconds(116),
       seconds(148), seconds(188), seconds(218),
     ],
-    // Re-anchored 2026-07-15 (F4) — see m1's comment above for method.
+    // Re-anchored 2026-07-15 (F4) — see m1's comment above for method. T2 re-anchored
+    // 2026-07-18 (B1) — see m1's comment above; `timeStarT2Loadout`, 2000 runs.
     stars: [
       { id: 'm2-time-t1', family: 'finish-time', threshold: seconds(292.0) },
-      { id: 'm2-time-t2', family: 'finish-time', threshold: seconds(292.0) },
+      { id: 'm2-time-t2', family: 'finish-time', threshold: seconds(148.8) },
       { id: 'm2-time-t3', family: 'finish-time', threshold: seconds(144.4) },
       { id: 'm2-time-t4', family: 'finish-time', threshold: seconds(96.9) },
       { id: 'm2-hull-50', family: 'hull-above', threshold: 0.5 },
@@ -408,27 +583,27 @@ export const ALL_MISSIONS: MissionSpec[] = [
     blurb: 'Dense fodder walls, then the swarm starts moving faster. Single-target lasers will drown.',
     enemyKinds: { fodder: FODDER, striker: STRIKER, tank: TANK, blocker: BLOCKER },
     events: [
-      { atTimelineTick: seconds(2),   kind: 'fodder',  count: 6,  spacing: 9  },
-      { atTimelineTick: seconds(14),  kind: 'fodder',  count: 7,  spacing: 9  },
+      { atTimelineTick: seconds(2),   kind: 'fodder',  count: 6,  spacing: 14  },
+      { atTimelineTick: seconds(14),  kind: 'fodder',  count: 7,  spacing: 14  },
       { atTimelineTick: seconds(26),  kind: 'tank',    count: 1,  spacing: 0  },
-      { atTimelineTick: seconds(40),  kind: 'fodder',  count: 7,  spacing: 9  },
-      { atTimelineTick: seconds(54),  kind: 'fodder',  count: 8,  spacing: 8  },
+      { atTimelineTick: seconds(40),  kind: 'fodder',  count: 7,  spacing: 14  },
+      { atTimelineTick: seconds(54),  kind: 'fodder',  count: 8,  spacing: 14  },
       { atTimelineTick: seconds(68),  kind: 'blocker', count: 1,  spacing: 0  },
-      { atTimelineTick: seconds(82),  kind: 'fodder',  count: 8,  spacing: 7  },
+      { atTimelineTick: seconds(82),  kind: 'fodder',  count: 8,  spacing: 14  },
       { atTimelineTick: seconds(96),  kind: 'tank',    count: 2,  spacing: 22 },
       // Escalating tier introduced here — m3 is mission 3-of-6, first striker exposure.
       // Striker counts bumped 2026-07-10 (gradual-tension pass, decision 2 in
       // docs/plans/game-identity-and-design-review-followup.md) — deliberately not
       // touching blocker counts, which sit on a known 2-vs-3-per-wave difficulty cliff.
-      { atTimelineTick: seconds(110), kind: 'striker', count: 5,  spacing: 13 },
-      { atTimelineTick: seconds(124), kind: 'fodder',  count: 9,  spacing: 6  },
+      { atTimelineTick: seconds(110), kind: 'striker', count: 5,  spacing: 15 },
+      { atTimelineTick: seconds(124), kind: 'fodder',  count: 9,  spacing: 14  },
       { atTimelineTick: seconds(138), kind: 'blocker', count: 1,  spacing: 0  },
-      { atTimelineTick: seconds(154), kind: 'striker', count: 5,  spacing: 13 },
+      { atTimelineTick: seconds(154), kind: 'striker', count: 5,  spacing: 15 },
       { atTimelineTick: seconds(168), kind: 'tank',    count: 2,  spacing: 20 },
-      { atTimelineTick: seconds(182), kind: 'fodder',  count: 10, spacing: 5  },
-      { atTimelineTick: seconds(196), kind: 'striker', count: 5,  spacing: 11 },
+      { atTimelineTick: seconds(182), kind: 'fodder',  count: 10, spacing: 14  },
+      { atTimelineTick: seconds(196), kind: 'striker', count: 5,  spacing: 15 },
       { atTimelineTick: seconds(208), kind: 'tank',    count: 2,  spacing: 20 },
-      { atTimelineTick: seconds(218), kind: 'fodder',  count: 8,  spacing: 6  },
+      { atTimelineTick: seconds(218), kind: 'fodder',  count: 8,  spacing: 14  },
       // Final push — blocker pressure escalates beyond mid-mission checks. Gaps
       // tightened 20s→15s 2026-07-15 (docs/known-issues.md idle-stretch investigation):
       // `blocksConveyor` freezes the timeline for the enemy's *entire* lifetime, so a
@@ -445,9 +620,9 @@ export const ALL_MISSIONS: MissionSpec[] = [
       // time between fights, a real (if secondary) difficulty lever. 15s recovers to
       // 68.4%, comfortably back above floor, while still clearing the 17s idle-stretch
       // threshold with margin.
-      { atTimelineTick: seconds(230), kind: 'blocker', count: 2,  spacing: 15 },
-      { atTimelineTick: seconds(245), kind: 'blocker', count: 3,  spacing: 15 },
-      { atTimelineTick: seconds(260), kind: 'blocker', count: 3,  spacing: 15 },
+      { atTimelineTick: seconds(230), kind: 'blocker', count: 2,  spacing: 19 },
+      { atTimelineTick: seconds(245), kind: 'blocker', count: 3,  spacing: 19 },
+      { atTimelineTick: seconds(260), kind: 'blocker', count: 3,  spacing: 19 },
     ],
     supportCallTicks: [
       seconds(20), seconds(50), seconds(80), seconds(115),
@@ -456,6 +631,7 @@ export const ALL_MISSIONS: MissionSpec[] = [
     // Re-anchored 2026-07-15 (F4) — see m1's comment above for method; T3/T4 measured
     // fresh after this mission's own idle-stretch timing fix (above) shifted its
     // intended-loadout duration slightly (320.1s→309.9s avg, T1/T2 below reflect that).
+    // T2 re-anchored 2026-07-18 (B1) — see m1's comment above; `timeStarT2Loadout`, 2000 runs.
     // Still omits hull-90/shield (unlike the standard 8-star set most missions use) —
     // this mission is a deliberate attritional DPS check (its own floor, 65%, is the
     // toughest of m1-m5),
@@ -467,7 +643,7 @@ export const ALL_MISSIONS: MissionSpec[] = [
     // boss-DPS-check mission) of dropping these same two stars for the same reason.
     stars: [
       { id: 'm3-time-t1', family: 'finish-time', threshold: seconds(317.5) },
-      { id: 'm3-time-t2', family: 'finish-time', threshold: seconds(317.5) },
+      { id: 'm3-time-t2', family: 'finish-time', threshold: seconds(170.2) },
       { id: 'm3-time-t3', family: 'finish-time', threshold: seconds(160.6) },
       { id: 'm3-time-t4', family: 'finish-time', threshold: seconds(106.2) },
       { id: 'm3-hull-50', family: 'hull-above', threshold: 0.5 },
@@ -507,33 +683,33 @@ export const ALL_MISSIONS: MissionSpec[] = [
     // mission" bar didn't survive contact with real density. Other missions keep
     // all-kills because their spawn density doesn't share this specific conflict.
     events: [
-      { atTimelineTick: seconds(2),   kind: 'fodder',  count: 8,  spacing: 7  },
-      { atTimelineTick: seconds(16),  kind: 'fodder',  count: 8,  spacing: 6  },
-      { atTimelineTick: seconds(28),  kind: 'striker', count: 7,  spacing: 8  },
+      { atTimelineTick: seconds(2),   kind: 'fodder',  count: 8,  spacing: 14  },
+      { atTimelineTick: seconds(16),  kind: 'fodder',  count: 8,  spacing: 14  },
+      { atTimelineTick: seconds(28),  kind: 'striker', count: 7,  spacing: 15  },
       { atTimelineTick: seconds(44),  kind: 'tank',    count: 1,  spacing: 0  },
       { atTimelineTick: seconds(46),  kind: 'booster', count: 1,  spacing: 0  },
-      { atTimelineTick: seconds(48),  kind: 'fodder',  count: 9,  spacing: 5  },
-      { atTimelineTick: seconds(64),  kind: 'striker', count: 7,  spacing: 9  },
+      { atTimelineTick: seconds(48),  kind: 'fodder',  count: 9,  spacing: 14  },
+      { atTimelineTick: seconds(64),  kind: 'striker', count: 7,  spacing: 15  },
       { atTimelineTick: seconds(78),  kind: 'tank',    count: 1,  spacing: 0  },
       { atTimelineTick: seconds(80),  kind: 'booster', count: 1,  spacing: 0  },
-      { atTimelineTick: seconds(84),  kind: 'fodder',  count: 9,  spacing: 5  },
-      { atTimelineTick: seconds(100), kind: 'striker', count: 7,  spacing: 8  },
+      { atTimelineTick: seconds(84),  kind: 'fodder',  count: 9,  spacing: 14  },
+      { atTimelineTick: seconds(100), kind: 'striker', count: 7,  spacing: 15  },
       { atTimelineTick: seconds(114), kind: 'tank',    count: 1,  spacing: 0  },
       { atTimelineTick: seconds(116), kind: 'booster', count: 1,  spacing: 0  },
-      { atTimelineTick: seconds(120), kind: 'fodder',  count: 10, spacing: 5  },
-      { atTimelineTick: seconds(136), kind: 'striker', count: 8,  spacing: 8  },
+      { atTimelineTick: seconds(120), kind: 'fodder',  count: 10, spacing: 14  },
+      { atTimelineTick: seconds(136), kind: 'striker', count: 8,  spacing: 15  },
       { atTimelineTick: seconds(150), kind: 'tank',    count: 1,  spacing: 0  },
       { atTimelineTick: seconds(152), kind: 'booster', count: 1,  spacing: 0  },
-      { atTimelineTick: seconds(156), kind: 'fodder',  count: 10, spacing: 5  },
-      { atTimelineTick: seconds(172), kind: 'striker', count: 9,  spacing: 7  },
+      { atTimelineTick: seconds(156), kind: 'fodder',  count: 10, spacing: 14  },
+      { atTimelineTick: seconds(172), kind: 'striker', count: 9,  spacing: 15  },
       // Finale — three pairs staggered ~9s apart, the mission's one real overlap.
       { atTimelineTick: seconds(186), kind: 'tank',    count: 1,  spacing: 0  },
       { atTimelineTick: seconds(188), kind: 'booster', count: 1,  spacing: 0  },
       { atTimelineTick: seconds(195), kind: 'tank',    count: 1,  spacing: 0  },
       { atTimelineTick: seconds(197), kind: 'booster', count: 1,  spacing: 0  },
-      { atTimelineTick: seconds(204), kind: 'tank',    count: 2,  spacing: 9  },
-      { atTimelineTick: seconds(206), kind: 'booster', count: 2,  spacing: 6  },
-      { atTimelineTick: seconds(224), kind: 'striker', count: 7,  spacing: 9.5 },
+      { atTimelineTick: seconds(204), kind: 'tank',    count: 2,  spacing: 16  },
+      { atTimelineTick: seconds(206), kind: 'booster', count: 2,  spacing: 15  },
+      { atTimelineTick: seconds(224), kind: 'striker', count: 7,  spacing: 15 },
     ],
     supportCallTicks: [
       seconds(12), seconds(38), seconds(66), seconds(96),
@@ -546,11 +722,15 @@ export const ALL_MISSIONS: MissionSpec[] = [
     // tension that ruled out all-kills. m3 (see above) already omits shield-unbroken
     // for its own reasons, so this isn't a new pattern for the mission roster.
     // T1-T4 re-anchored 2026-07-15 (F4) to the new intended/T3-tier/T4-tier method —
-    // see m1's comment above. T1/T2 pinned to intended (75th/50th percentile); T3/T4
-    // measure a real faster clear on the fixed T3/T4 reference loadouts.
+    // see m1's comment above. T1 pinned to intended (75th percentile); T2/T3/T4
+    // measure a real faster clear on the fixed T2/T3/T4 reference loadouts. T2
+    // re-anchored 2026-07-18 (B1) — see m1's comment; its old value (233.9s, a 0.1s
+    // shave off T1) had drifted to 4.2-4.8% reachable after the MIN_VISUAL_SPACING fix
+    // (docs/known-issues.md, resolved 2026-07-18) — the `timeStarT2Loadout` anchor
+    // replaces it with a genuinely different gear bar instead of a razor-thin percentile.
     stars: [
       { id: 'm3b-time-t1', family: 'finish-time', threshold: seconds(234.0) },
-      { id: 'm3b-time-t2', family: 'finish-time', threshold: seconds(233.9) },
+      { id: 'm3b-time-t2', family: 'finish-time', threshold: seconds(122.8) },
       { id: 'm3b-time-t3', family: 'finish-time', threshold: seconds(117.2) },
       { id: 'm3b-time-t4', family: 'finish-time', threshold: seconds(78.6) },
       { id: 'm3b-hull-50', family: 'hull-above', threshold: 0.5 },
@@ -570,46 +750,47 @@ export const ALL_MISSIONS: MissionSpec[] = [
     // untouched); every remaining blocker event still gives m4 its blockade climax.
     enemyKinds: { fodder: FODDER, striker: STRIKER, blocker: BLOCKER, turret: TURRET },
     events: [
-      { atTimelineTick: seconds(2),   kind: 'fodder',  count: 4,  spacing: 12 },
-      { atTimelineTick: seconds(14),  kind: 'fodder',  count: 5,  spacing: 11 },
+      { atTimelineTick: seconds(2),   kind: 'fodder',  count: 4,  spacing: 14 },
+      { atTimelineTick: seconds(14),  kind: 'fodder',  count: 5,  spacing: 14 },
       { atTimelineTick: seconds(26),  kind: 'turret',  count: 1,  spacing: 0  },
       { atTimelineTick: seconds(40),  kind: 'striker', count: 3,  spacing: 15 },
-      { atTimelineTick: seconds(52),  kind: 'fodder',  count: 6,  spacing: 10 },
+      { atTimelineTick: seconds(52),  kind: 'fodder',  count: 6,  spacing: 14 },
       { atTimelineTick: seconds(64),  kind: 'turret',  count: 1,  spacing: 0  },
       // Striker counts bumped 2026-07-10 (gradual-tension pass, decision 2 in
       // docs/plans/game-identity-and-design-review-followup.md) — deliberately not
       // touching blocker counts, which sit on a known 2-vs-3-per-wave difficulty cliff
       // and are this mission's own load-bearing "DPS check" identity.
-      { atTimelineTick: seconds(78),  kind: 'striker', count: 5,  spacing: 13 },
-      { atTimelineTick: seconds(92),  kind: 'fodder',  count: 7,  spacing: 9  },
+      { atTimelineTick: seconds(78),  kind: 'striker', count: 5,  spacing: 15 },
+      { atTimelineTick: seconds(92),  kind: 'fodder',  count: 7,  spacing: 14  },
       { atTimelineTick: seconds(106), kind: 'blocker', count: 2,  spacing: 20 },
-      { atTimelineTick: seconds(122), kind: 'striker', count: 6,  spacing: 12 },
-      { atTimelineTick: seconds(136), kind: 'fodder',  count: 8,  spacing: 8  },
+      { atTimelineTick: seconds(122), kind: 'striker', count: 6,  spacing: 15 },
+      { atTimelineTick: seconds(136), kind: 'fodder',  count: 8,  spacing: 14  },
       { atTimelineTick: seconds(150), kind: 'blocker', count: 2,  spacing: 22 },
-      { atTimelineTick: seconds(166), kind: 'striker', count: 6,  spacing: 11 },
-      { atTimelineTick: seconds(180), kind: 'fodder',  count: 8,  spacing: 7  },
-      { atTimelineTick: seconds(196), kind: 'striker', count: 6,  spacing: 11 },
-      { atTimelineTick: seconds(208), kind: 'fodder',  count: 6,  spacing: 9  },
-      { atTimelineTick: seconds(218), kind: 'striker', count: 4,  spacing: 12 },
+      { atTimelineTick: seconds(166), kind: 'striker', count: 6,  spacing: 15 },
+      { atTimelineTick: seconds(180), kind: 'fodder',  count: 8,  spacing: 14  },
+      { atTimelineTick: seconds(196), kind: 'striker', count: 6,  spacing: 15 },
+      { atTimelineTick: seconds(208), kind: 'fodder',  count: 6,  spacing: 14  },
+      { atTimelineTick: seconds(218), kind: 'striker', count: 4,  spacing: 15 },
       // Final push — three blocker waves back-to-back, no breathing room. Gaps
       // tightened 20s→12s 2026-07-15 — same idle-stretch fix and reasoning as m3's
       // final push above (docs/known-issues.md); blocksConveyor freezing the timeline
       // for a wave's entire lifetime turned the nominal 20s gap into genuine dead time
       // once the wave died, contradicting this event's own "no breathing room" comment.
-      { atTimelineTick: seconds(230), kind: 'blocker', count: 4,  spacing: 12 },
-      { atTimelineTick: seconds(242), kind: 'blocker', count: 4,  spacing: 12 },
-      { atTimelineTick: seconds(254), kind: 'blocker', count: 4,  spacing: 12 },
+      { atTimelineTick: seconds(230), kind: 'blocker', count: 4,  spacing: 19 },
+      { atTimelineTick: seconds(242), kind: 'blocker', count: 4,  spacing: 19 },
+      { atTimelineTick: seconds(254), kind: 'blocker', count: 4,  spacing: 19 },
     ],
     supportCallTicks: [
       seconds(20), seconds(50), seconds(80), seconds(115),
       seconds(148), seconds(188), seconds(218),
     ],
-    // Re-anchored 2026-07-15 (F4) — see m1's comment above for method; T1/T2 measured
+    // Re-anchored 2026-07-15 (F4) — see m1's comment above for method; T1 measured
     // fresh after this mission's own idle-stretch timing fix (above) shifted its
-    // intended-loadout duration (361.5s→342.7s avg).
+    // intended-loadout duration (361.5s→342.7s avg). T2 re-anchored 2026-07-18 (B1) —
+    // see m1's comment above; `timeStarT2Loadout`, 2000 runs.
     stars: [
       { id: 'm4-time-t1', family: 'finish-time', threshold: seconds(353.5) },
-      { id: 'm4-time-t2', family: 'finish-time', threshold: seconds(353.5) },
+      { id: 'm4-time-t2', family: 'finish-time', threshold: seconds(193.0) },
       { id: 'm4-time-t3', family: 'finish-time', threshold: seconds(179.4) },
       { id: 'm4-time-t4', family: 'finish-time', threshold: seconds(118.6) },
       { id: 'm4-hull-50', family: 'hull-above', threshold: 0.5 },
@@ -642,36 +823,36 @@ export const ALL_MISSIONS: MissionSpec[] = [
     enemyKinds: { fodder: FODDER, swarm: SWARM, striker: STRIKER, blocker: BLOCKER, kamikaze: KAMIKAZE },
     events: [
       // Patient-tier warm-up — lane-reading time and a support call before the ramp
-      { atTimelineTick: seconds(2),   kind: 'fodder',  count: 5,  spacing: 12 },
-      { atTimelineTick: seconds(16),  kind: 'fodder',  count: 6,  spacing: 11 },
+      { atTimelineTick: seconds(2),   kind: 'fodder',  count: 5,  spacing: 14 },
+      { atTimelineTick: seconds(16),  kind: 'fodder',  count: 6,  spacing: 14 },
       // Escalating tier begins — swarm introduced gradually, with recovery gaps and
       // support calls timed to land before each step up, not mid-wave
-      { atTimelineTick: seconds(30),  kind: 'swarm',   count: 8,  spacing: 6  },
-      { atTimelineTick: seconds(44),  kind: 'swarm',   count: 9,  spacing: 6  },
+      { atTimelineTick: seconds(30),  kind: 'swarm',   count: 8,  spacing: 9  },
+      { atTimelineTick: seconds(44),  kind: 'swarm',   count: 9,  spacing: 9  },
       { atTimelineTick: seconds(58),  kind: 'striker', count: 3,  spacing: 15 },
       // Swarm counts bumped 2026-07-10 (gradual-tension pass, decision 2 in
       // docs/plans/game-identity-and-design-review-followup.md) — swarm density is
       // this mission's real difficulty lever (blocker count has no effect on its
       // clear rate, confirmed earlier this session), so the mid-mission ramp is
       // nudged up here rather than touching the tuned finale below.
-      { atTimelineTick: seconds(72),  kind: 'swarm',   count: 11, spacing: 5  },
-      { atTimelineTick: seconds(86),  kind: 'swarm',   count: 12, spacing: 5  },
+      { atTimelineTick: seconds(72),  kind: 'swarm',   count: 11, spacing: 9  },
+      { atTimelineTick: seconds(86),  kind: 'swarm',   count: 12, spacing: 9  },
       { atTimelineTick: seconds(100), kind: 'striker', count: 3,  spacing: 15 },
-      { atTimelineTick: seconds(114), kind: 'swarm',   count: 13, spacing: 4  },
-      { atTimelineTick: seconds(128), kind: 'swarm',   count: 14, spacing: 4  },
-      { atTimelineTick: seconds(142), kind: 'kamikaze', count: 4, spacing: 8  },
-      { atTimelineTick: seconds(156), kind: 'swarm',   count: 13, spacing: 4  },
-      { atTimelineTick: seconds(170), kind: 'swarm',   count: 14, spacing: 3  },
-      { atTimelineTick: seconds(184), kind: 'striker', count: 3,  spacing: 13 },
-      { atTimelineTick: seconds(198), kind: 'swarm',   count: 16, spacing: 3  },
-      { atTimelineTick: seconds(212), kind: 'swarm',   count: 16, spacing: 3  },
-      { atTimelineTick: seconds(226), kind: 'kamikaze', count: 4, spacing: 8  },
-      { atTimelineTick: seconds(240), kind: 'swarm',   count: 15, spacing: 3  },
+      { atTimelineTick: seconds(114), kind: 'swarm',   count: 13, spacing: 9  },
+      { atTimelineTick: seconds(128), kind: 'swarm',   count: 14, spacing: 9  },
+      { atTimelineTick: seconds(142), kind: 'kamikaze', count: 4, spacing: 12  },
+      { atTimelineTick: seconds(156), kind: 'swarm',   count: 13, spacing: 9  },
+      { atTimelineTick: seconds(170), kind: 'swarm',   count: 14, spacing: 9  },
+      { atTimelineTick: seconds(184), kind: 'striker', count: 3,  spacing: 15 },
+      { atTimelineTick: seconds(198), kind: 'swarm',   count: 16, spacing: 9  },
+      { atTimelineTick: seconds(212), kind: 'swarm',   count: 16, spacing: 9  },
+      { atTimelineTick: seconds(226), kind: 'kamikaze', count: 4, spacing: 12  },
+      { atTimelineTick: seconds(240), kind: 'swarm',   count: 15, spacing: 9  },
       // Final push — blockers, paired with a swarm tail so the escalating tier stays
       // the dominant threat rather than ending the hardest mission on a slow enemy
-      { atTimelineTick: seconds(254), kind: 'blocker', count: 3,  spacing: 13 },
-      { atTimelineTick: seconds(270), kind: 'swarm',   count: 14, spacing: 3  },
-      { atTimelineTick: seconds(282), kind: 'blocker', count: 2,  spacing: 13 },
+      { atTimelineTick: seconds(254), kind: 'blocker', count: 3,  spacing: 19 },
+      { atTimelineTick: seconds(270), kind: 'swarm',   count: 14, spacing: 9  },
+      { atTimelineTick: seconds(282), kind: 'blocker', count: 2,  spacing: 19 },
     ],
     supportCallTicks: [
       seconds(12), seconds(42), seconds(72), seconds(102),
@@ -681,9 +862,16 @@ export const ALL_MISSIONS: MissionSpec[] = [
     // original F4 complaint that m5's T1-T4 were literally unearnable at motor-1 (the
     // old thresholds assumed a motor tier the mission's own intended loadout never
     // used) — T3/T4 now correctly target the T3/T4 reference loadouts instead.
+    // T2 de-duplicated 2026-07-18 (B1): unlike m1-m4, the `timeStarT2Loadout` anchor
+    // doesn't work here — m5's own intended loadout already runs motor-2 (the same
+    // timeline compression as the T2/T3 references), so the t2 reference measured
+    // 160.2s, exactly T1's value. T2 is instead the T1↔T3 midpoint (158.2s). The whole
+    // T1-T3 band being only 4s wide is a pre-existing property of this mission's
+    // motor-2-compressed ladder, not something this fix introduced or can fix from
+    // threshold data alone; widening it would mean retuning m5's ladder structure.
     stars: [
       { id: 'm5-time-t1', family: 'finish-time', threshold: seconds(160.2) },
-      { id: 'm5-time-t2', family: 'finish-time', threshold: seconds(160.2) },
+      { id: 'm5-time-t2', family: 'finish-time', threshold: seconds(158.2) },
       { id: 'm5-time-t3', family: 'finish-time', threshold: seconds(156.2) },
       { id: 'm5-time-t4', family: 'finish-time', threshold: seconds(104.1) },
       { id: 'm5-hull-50', family: 'hull-above', threshold: 0.5 },
@@ -704,32 +892,32 @@ export const ALL_MISSIONS: MissionSpec[] = [
       tank: TANK, blocker: BLOCKER, turret: TURRET, kamikaze: KAMIKAZE, boss: BOSS,
     },
     events: [
-      { atTimelineTick: seconds(2),   kind: 'fodder',   count: 4,  spacing: 12 },
+      { atTimelineTick: seconds(2),   kind: 'fodder',   count: 4,  spacing: 14 },
       { atTimelineTick: seconds(12),  kind: 'striker',  count: 3,  spacing: 15 },
-      { atTimelineTick: seconds(24),  kind: 'fodder',   count: 5,  spacing: 11 },
+      { atTimelineTick: seconds(24),  kind: 'fodder',   count: 5,  spacing: 14 },
       { atTimelineTick: seconds(36),  kind: 'blocker',  count: 1,  spacing: 0  },
-      { atTimelineTick: seconds(50),  kind: 'striker',  count: 4,  spacing: 14 },
-      { atTimelineTick: seconds(62),  kind: 'fodder',   count: 6,  spacing: 10 },
+      { atTimelineTick: seconds(50),  kind: 'striker',  count: 4,  spacing: 15 },
+      { atTimelineTick: seconds(62),  kind: 'fodder',   count: 6,  spacing: 14 },
       // First turret gate — static, high fire rate, blocks until burned down
       { atTimelineTick: seconds(70),  kind: 'turret',   count: 1,  spacing: 0  },
-      { atTimelineTick: seconds(80),  kind: 'swarm',    count: 10, spacing: 5  },
-      { atTimelineTick: seconds(92),  kind: 'striker',  count: 4,  spacing: 13 },
-      { atTimelineTick: seconds(106), kind: 'blocker',  count: 2,  spacing: 15 },
-      { atTimelineTick: seconds(120), kind: 'fodder',   count: 7,  spacing: 9  },
-      { atTimelineTick: seconds(134), kind: 'swarm',    count: 12, spacing: 4  },
-      { atTimelineTick: seconds(148), kind: 'striker',  count: 5,  spacing: 12 },
+      { atTimelineTick: seconds(80),  kind: 'swarm',    count: 10, spacing: 9  },
+      { atTimelineTick: seconds(92),  kind: 'striker',  count: 4,  spacing: 15 },
+      { atTimelineTick: seconds(106), kind: 'blocker',  count: 2,  spacing: 19 },
+      { atTimelineTick: seconds(120), kind: 'fodder',   count: 7,  spacing: 14  },
+      { atTimelineTick: seconds(134), kind: 'swarm',    count: 12, spacing: 9  },
+      { atTimelineTick: seconds(148), kind: 'striker',  count: 5,  spacing: 15 },
       { atTimelineTick: seconds(162), kind: 'tank',     count: 2,  spacing: 20 },
       // Kamikaze rush through the blocker gate — high speed, high damage
-      { atTimelineTick: seconds(170), kind: 'kamikaze', count: 3,  spacing: 8  },
-      { atTimelineTick: seconds(178), kind: 'blocker',  count: 3,  spacing: 13 },
-      { atTimelineTick: seconds(194), kind: 'fodder',   count: 8,  spacing: 8  },
-      { atTimelineTick: seconds(208), kind: 'striker',  count: 6,  spacing: 11 },
-      { atTimelineTick: seconds(220), kind: 'swarm',    count: 15, spacing: 4  },
+      { atTimelineTick: seconds(170), kind: 'kamikaze', count: 3,  spacing: 12  },
+      { atTimelineTick: seconds(178), kind: 'blocker',  count: 3,  spacing: 19 },
+      { atTimelineTick: seconds(194), kind: 'fodder',   count: 8,  spacing: 14  },
+      { atTimelineTick: seconds(208), kind: 'striker',  count: 6,  spacing: 15 },
+      { atTimelineTick: seconds(220), kind: 'swarm',    count: 15, spacing: 9  },
       // Second turret + kamikaze wave before boss sprint
       { atTimelineTick: seconds(232), kind: 'turret',   count: 1,  spacing: 0  },
-      { atTimelineTick: seconds(236), kind: 'kamikaze', count: 4,  spacing: 6  },
+      { atTimelineTick: seconds(236), kind: 'kamikaze', count: 4,  spacing: 12  },
       { atTimelineTick: seconds(242), kind: 'tank',     count: 3,  spacing: 18 },
-      { atTimelineTick: seconds(248), kind: 'striker',  count: 6,  spacing: 10 },
+      { atTimelineTick: seconds(248), kind: 'striker',  count: 6,  spacing: 15 },
       { atTimelineTick: seconds(254), kind: 'boss',     count: 1,  spacing: 0  },
     ],
     supportCallTicks: [
@@ -747,14 +935,25 @@ export const ALL_MISSIONS: MissionSpec[] = [
     // same "near-zero variance under greedy" pattern as m1-m5's finish-time stars) but
     // the 10th percentile shows genuine spread (304.2s), a real tighter tier unlike the
     // pre-F3 synthetic ±1-3s spread. 3000 runs, `pnpm sim`-equivalent percentile method.
+    // T2/T3 de-duplicated 2026-07-18 (B1): T1/T2/T3 were all 317s — three stars a
+    // player earned or missed together, indistinguishable on the result screen. m1-m4's
+    // fix (anchor T2 to the fixed `timeStarT2Loadout`) doesn't transfer to this family:
+    // boss-time measures bossKillTick, not mission duration, and a 2000-run probe of
+    // the reference tiers' bossKillTick found t2/t3 gear kills the boss at ~204s/~189s
+    // — anchoring there would roughly HALVE the finale's T2/T3 requirements, a real
+    // difficulty change beyond a de-dup fix. Conservative fix instead: T2/T3 step
+    // evenly through the intended loadout's own measured kill-tick spread (316.8s
+    // median → 304.2s 10th percentile), leaving T1/T4 untouched. The reference-tier
+    // re-anchor stays available as a deliberate future call — see the m6 boss-time
+    // entry in docs/known-issues.md.
     stars: [
       // Boss time-stars: tick from mission start by which the boss must die (by weapon
       // fire). Renamed from the old value-encoded ids (m6-boss-320 etc.) to the t1-t4
       // tier convention used everywhere else — early-dev save policy (v2/CLAUDE.md), no
       // migration needed.
       { id: 'm6-boss-t1', family: 'boss-time', threshold: seconds(317) },
-      { id: 'm6-boss-t2', family: 'boss-time', threshold: seconds(317) },
-      { id: 'm6-boss-t3', family: 'boss-time', threshold: seconds(317) },
+      { id: 'm6-boss-t2', family: 'boss-time', threshold: seconds(312.7) },
+      { id: 'm6-boss-t3', family: 'boss-time', threshold: seconds(308.3) },
       { id: 'm6-boss-t4', family: 'boss-time', threshold: seconds(304) },
       { id: 'm6-hull-50',  family: 'hull-above', threshold: 0.5 },
       { id: 'm6-all-kills', family: 'all-kills', threshold: 0 },
@@ -766,10 +965,24 @@ const MISSIONS_BY_ID: Record<string, MissionSpec> = Object.fromEntries(
   ALL_MISSIONS.map((m) => [m.id, m]),
 );
 
+// The daily mission (src/data/dailyMission.ts) is generated fresh per calendar day by
+// the view layer, not authored here — it's deliberately not part of ALL_MISSIONS/
+// MISSION_UNLOCK_EDGES (not a campaign node). This tiny registry lets `missionById`
+// resolve it anyway, so CombatScene/buildMissionResult/the result viewmodel can all
+// keep using the one lookup path they already use for every other mission.
+let dailyMissionSpec: MissionSpec | null = null;
+
+/** Registers today's generated daily mission so `missionById('daily')` resolves it.
+ * Called once by HubScene after computing today's date-derived seed. */
+export function setDailyMission(spec: MissionSpec): void {
+  dailyMissionSpec = spec;
+}
+
 export function missionById(id: string): MissionSpec {
   const mission = MISSIONS_BY_ID[id];
-  if (mission === undefined) throw new Error(`Unknown mission "${id}"`);
-  return mission;
+  if (mission !== undefined) return mission;
+  if (dailyMissionSpec !== null && dailyMissionSpec.id === id) return dailyMissionSpec;
+  throw new Error(`Unknown mission "${id}"`);
 }
 
 /** Total stars earnable across non-tutorial missions — used by the menu progress display. */

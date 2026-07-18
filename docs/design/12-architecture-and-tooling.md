@@ -9,8 +9,12 @@
 Interpolates positions between ticks for smooth animation.
 
 **Simulator (`v2/tools/simulate.ts`):** imports the real core. Flags: `--mission`, `--runs`,
-`--strategy`, `--loadout`, `--seed`. Prints clear-rate, average duration, per-star achievement
-rates. This is the mission editor — balance numbers here are exactly what players experience.
+`--strategy`, `--loadout`, `--seed`, `--daily-seed` (generates and runs the Daily Mission,
+[Mission Progression](09-mission-progression.md), in place of `--mission`), `--max-ticks`
+(raises `runMission`'s simulator-only safety cap — a well-tuned daily run can legitimately
+approach the 600s default). Prints clear-rate, average duration, average/median coins,
+average weapon-kills/collisions, and per-star achievement rates. This is the mission editor —
+balance numbers here are exactly what players experience.
 
 **Campaign simulator (`v2/tools/campaign-simulate.ts`, `pnpm campaign`):** plays the *whole*
 campaign, not one mission — two player-tier archetypes, **expert** and **average** (added

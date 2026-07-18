@@ -5,19 +5,45 @@
 A mission is a sequence of wave events on a timeline (in ticks). The motor's
 `timelineMultiplier` compresses or expands the timeline.
 
-**Tick loop (100 ms / tick, 10 ticks/sec):**
-1. Move enemies — each advances by `speed` distance units.
-2. Fire enemy weapons at the ship.
-3. Front weapon fires at the front-most enemy (brownout stretches interval if energy < 30%).
-4. Rear weapon fires sideways at mid-queue depth (if toggled on).
-5. Generator produces energy; if a pulse fires, restore `shield × pulseShieldFraction`.
-6. Motor draws `powerDrawPerTick` from energy.
-7. Advance the timeline; spawn new wave events as they become due.
-8. Check support call triggers; evaluate star benchmarks; check victory/defeat.
+**Tick loop (100 ms / tick, 10 ticks/sec) — corrected 2026-07-18 (Fable full-review
+session; the previous 8-step list didn't match `tick.ts`'s actual call order, a
+determinism contract per `v2/CLAUDE.md`). Transcribed directly from
+`advanceTick`'s body, in order:**
+1. Generator produces energy; motor draws its constant cost (energy never goes negative).
+2. Each equipped active ability's cooldown ticks down by one, if running.
+3. Advance the timeline (frozen entirely while any `blocksConveyor` enemy — blocker,
+   turret, boss, booster — is alive, which cascades to freezing both new spawns and
+   support-call triggers, not just spawns); spawn new wave events and check support
+   calls as they become due.
+4. Enemies regenerate HP (a self-healing kind, or a booster feeding its nearest-ahead
+   neighbor).
+5. Front weapon fires at the front-most (or tap-marked priority) enemy — firing always
+   happens once its timer elapses; brownout stretches the *next* interval instead of
+   blocking the shot (energy < 30% of capacity).
+6. Rear weapon fires sideways at mid-queue depth (if toggled on) — its own interval
+   never stretches under brownout (see clarification below).
+7. Enemies fire at the ship.
+8. Enemies move; any reaching distance 0 collides — dies, deals `shotDamage × 3` to the
+   ship (shield-first), and 60% of whatever the shield absorbed bursts back as AoE
+   damage to every other surviving enemy. An enemy killed by the burst is removed and
+   fully death-processed (kill credit, coins, on-kill chains, blocker bonus calls) in
+   this same step, not left to linger until a later weapon shot prunes it.
+9. If the generator is at full capacity, it pulses: shield gains
+   `shield × pulseShieldFraction`, generator drops by its pulse drain.
+10. Expire any timed card/supply effects whose duration has run out.
+11. Blocker/turret/boss hold-charge accrues by one tick — only while at least one other
+    enemy is also alive on the conveyor.
+12. If a blocker death queued a bonus support call and none is currently pending, fire it.
+13. Check victory/defeat, star benchmarks, and any scripted narrator event due at this
+    timeline tick.
 
-**Collision:** when an enemy reaches distance 0, it dies and deals `shotDamage × 3` to the ship
-(shield-first). The shield absorbs what it can; 60% of the absorbed amount bursts back as AoE
-damage to all remaining enemies.
+**Boss approach/stall cycle** (not previously documented): a boss alternates moving at
+its normal `speed` for `BOSS_APPROACH_TICKS` (6s) and standing still for
+`BOSS_STALL_TICKS` (8s), repeating for its whole fight (`conveyor.ts`'s
+`effectiveSpeed`, constants in `constants.ts`) — every other enemy kind ignores this and
+always moves at its own `speed`. Exists so the boss can't just walk into the player and
+win via collision before weapon DPS gets a real shot at it (the F3 anticlimax fix,
+[Balance & Tuning](13-balance-and-tuning.md)).
 
 **Victory:** all events complete and the conveyor empties. **Defeat:** hull reaches 0.
 
@@ -25,12 +51,18 @@ damage to all remaining enemies.
 - **Rear weapon energy vs. brownout.** The rear weapon costs energy per shot like the front
   weapon, but its fire interval never stretches under brownout — it fires on a fixed schedule
   regardless of energy level, so the player can rely on it as a predictable AoE tool. Only the
-  front weapon's fire rate responds to brownout (line 3 of the tick loop above).
+  front weapon's fire rate responds to brownout (step 5 of the tick loop above).
 - **Enemies never interact with each other.** The conveyor is a set of independent distance
   values, not a physical queue — enemies never block, collide with, or pass around each other.
-  `blocksConveyor` (the blocker/turret/boss/booster flag) only freezes *new spawns* from the
-  mission's event list; it has no effect on enemies already on the lane, which keep moving at
-  their own speed regardless.
+  `blocksConveyor` (the blocker/turret/boss/booster flag) has no effect on enemies already
+  on the lane, which keep moving at their own speed regardless (the boss is the one
+  exception — its own STALL half of the approach/stall cycle above stops its movement too,
+  but that's driven by its `aliveTicks` cycle, not by `blocksConveyor`). **Corrected
+  2026-07-18:** it freezes `timelineTick` itself, not just "new spawns" as this line
+  previously said — which also freezes support-call triggers for as long as the enemy is
+  alive (a real mission bug once: t3's own support call was scheduled past its guardian's
+  spawn tick and could never fire while the guardian lived, fixed 2026-07-17 by moving the
+  call earlier — see [Balance & Tuning](13-balance-and-tuning.md)/`docs/known-issues.md`).
 
 ## Manual controls
 

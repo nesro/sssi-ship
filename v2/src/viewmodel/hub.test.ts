@@ -10,9 +10,10 @@ import {
   computeLevelChips, computeLoadoutRows, computeMissionDetail, computeSettings, computeSupplies,
   DEFAULT_HUB_UI_STATE, resolveUiState,
 } from './hub';
-import type { HubUIState } from './hub';
+import type { DailyPanelInput, HubUIState } from './hub';
 import { SUBSCRIPTIONS } from '../data/subscriptions';
 import { ALL_MISSIONS } from '../data/missions';
+import { DAILY_MISSION_ID, generateDailyMission } from '../data/dailyMission';
 
 beforeEach(() => {
   resetSave();
@@ -21,6 +22,28 @@ beforeEach(() => {
 function uiState(overrides: Partial<HubUIState> = {}): HubUIState {
   return { ...DEFAULT_HUB_UI_STATE, ...overrides };
 }
+
+// 2026-07-18 fix: targetsLabel (shopSystems.ts) used to check `maxTargets === Infinity`.
+// The JSON-safety fix (core/constants.ts's HIT_ALL_TARGETS) replaced the "hit everyone"
+// sentinel with a large finite number, so this must still read as "∞ targets", not a
+// literal 9-quadrillion in the shop UI.
+describe('shop detail lines show "∞ targets" for hit-everyone weapons', () => {
+  it('front weapon: nova', () => {
+    const lines = WEAPON_SYSTEM.detailLines('nova', 1);
+    expect(lines.some((l) => l.includes('∞ targets'))).toBe(true);
+  });
+
+  it('side weapon: orbital', () => {
+    const lines = SIDE_WEAPON_SYSTEM.detailLines('orbital', 1);
+    expect(lines.some((l) => l.includes('∞ targets'))).toBe(true);
+  });
+
+  it('a single-target weapon (pulse) is unaffected', () => {
+    const lines = WEAPON_SYSTEM.detailLines('pulse', 1);
+    expect(lines.some((l) => l.includes('1 target'))).toBe(true);
+    expect(lines.some((l) => l.includes('∞'))).toBe(false);
+  });
+});
 
 describe('resolveUiState', () => {
   it('undefined selection defaults to the equipped kind', () => {
@@ -499,7 +522,7 @@ describe('computeGalaxyMap / computeMissionDetail', () => {
     // w0 ("Calibration Run") is a deliberate exception — a pre-hub first-launch
     // mission (SaveManager.ts special-cases 'w0'), never meant to appear on the map.
     const save = defaultSave();
-    const map = computeGalaxyMap(save, null);
+    const map = computeGalaxyMap(save, null, null);
     const mappedIds = new Set(map.missions.map((m) => m.id));
     const missing = ALL_MISSIONS.filter((m) => m.id !== 'w0' && !mappedIds.has(m.id)).map((m) => m.id);
     expect(missing).toEqual([]);
@@ -507,39 +530,146 @@ describe('computeGalaxyMap / computeMissionDetail', () => {
 
   it('t1 is unlocked from the start; m1 is locked until t1 clears', () => {
     const save = defaultSave();
-    const map = computeGalaxyMap(save, null);
+    const map = computeGalaxyMap(save, null, null);
     expect(map.missions.find((m) => m.id === 't1')?.unlocked).toBe(true);
     expect(map.missions.find((m) => m.id === 'm1')?.unlocked).toBe(false);
 
-    const afterT1 = computeGalaxyMap({ ...save, completedMissionIds: ['t1'] }, null);
+    const afterT1 = computeGalaxyMap({ ...save, completedMissionIds: ['t1'] }, null, null);
     expect(afterT1.missions.find((m) => m.id === 'm1')?.unlocked).toBe(true);
     expect(afterT1.missions.find((m) => m.id === 'm3')?.unlocked).toBe(false);
   });
 
   it('a locked mission shows "???" as its label', () => {
     const save = defaultSave();
-    const map = computeGalaxyMap(save, null);
+    const map = computeGalaxyMap(save, null, null);
     expect(map.missions.find((m) => m.id === 'm3')?.label).toBe('???');
   });
 
   it('missionDetail is null when nothing is selected', () => {
     const save = defaultSave();
-    expect(computeMissionDetail(save, null)).toBeNull();
+    expect(computeMissionDetail(save, null, null)).toBeNull();
   });
 
   it('tutorial missions have no star list', () => {
     const save = defaultSave();
-    const detail = computeMissionDetail(save, 't1');
+    const detail = computeMissionDetail(save, 't1', null);
     expect(detail?.isTutorial).toBe(true);
     expect(detail?.stars).toEqual([]);
   });
 
   it('a non-tutorial mission lists its stars with descriptions', () => {
     const save = defaultSave();
-    const detail = computeMissionDetail(save, 'm1');
+    const detail = computeMissionDetail(save, 'm1', null);
     expect(detail?.isTutorial).toBe(false);
     expect(detail?.stars.length).toBeGreaterThan(0);
     expect(detail?.stars[0]?.description).toBeTruthy();
+  });
+
+  // The "skip tutorials" link (HubScene's missions screen) replaced a separate
+  // OnboardingScene prompt (2026-07-17, playtest feedback) — same all-or-nothing
+  // semantics as skipTutorials() itself, so this flag is what decides whether the link
+  // renders at all.
+  describe('showSkipTutorialsHint', () => {
+    it('is true on a fresh save — no tutorial completed yet', () => {
+      const map = computeGalaxyMap(defaultSave(), null, null);
+      expect(map.showSkipTutorialsHint).toBe(true);
+    });
+
+    it('is false once any single tutorial is completed — not all-or-nothing to earn, only to lose', () => {
+      const save = { ...defaultSave(), completedMissionIds: ['t1'] };
+      const map = computeGalaxyMap(save, null, null);
+      expect(map.showSkipTutorialsHint).toBe(false);
+    });
+
+    it('is false after skipTutorials() marks all four completed', () => {
+      const save = { ...defaultSave(), completedMissionIds: ['t1', 't2', 't3', 't4'] };
+      const map = computeGalaxyMap(save, null, null);
+      expect(map.showSkipTutorialsHint).toBe(false);
+    });
+
+    it('is unaffected by non-tutorial mission completion', () => {
+      const save = { ...defaultSave(), completedMissionIds: ['w0'] };
+      const map = computeGalaxyMap(save, null, null);
+      expect(map.showSkipTutorialsHint).toBe(true);
+    });
+  });
+});
+
+describe('daily mission — galaxy node and detail panel', () => {
+  function dailyInput(overrides: Partial<DailyPanelInput> = {}): DailyPanelInput {
+    return {
+      spec: generateDailyMission(1),
+      available: true,
+      bestScore: 0,
+      resetInLabel: '',
+      ...overrides,
+    };
+  }
+
+  /** The daily's galaxy node is gated on completing m1 (B2, 2026-07-18) — a save that
+   * has passed that gate. */
+  function m1ClearedSave(): ReturnType<typeof defaultSave> {
+    const save = defaultSave();
+    return { ...save, completedMissionIds: [...save.completedMissionIds, 'm1'] };
+  }
+
+  it('is absent from the map when no daily has been generated yet', () => {
+    const save = defaultSave();
+    const map = computeGalaxyMap(save, null, null);
+    expect(map.missions.find((m) => m.id === DAILY_MISSION_ID)).toBeUndefined();
+  });
+
+  it('is locked and anonymized ("???") on a fresh save — m1 not yet completed (B2, 2026-07-18)', () => {
+    const save = defaultSave();
+    const map = computeGalaxyMap(save, null, dailyInput());
+    const node = map.missions.find((m) => m.id === DAILY_MISSION_ID);
+    expect(node).toBeDefined();
+    expect(node?.unlocked).toBe(false);
+    expect(node?.label).toBe('???');
+  });
+
+  it('unlocks once m1 is completed, distinct from campaign nodes', () => {
+    const map = computeGalaxyMap(m1ClearedSave(), null, dailyInput());
+    const node = map.missions.find((m) => m.id === DAILY_MISSION_ID);
+    expect(node).toBeDefined();
+    expect(node?.unlocked).toBe(true);
+    expect(node?.isDaily).toBe(true);
+    expect(node?.showStarCount).toBe(false);
+  });
+
+  it('has no unlock-graph connections — MISSION_UNLOCK_EDGES never mentions it', () => {
+    const map = computeGalaxyMap(m1ClearedSave(), null, dailyInput());
+    const touchesDaily = map.connections.some((c) => c.fromId === DAILY_MISSION_ID || c.toId === DAILY_MISSION_ID);
+    expect(touchesDaily).toBe(false);
+  });
+
+  it('detail panel while m1-locked: generic LOCKED shape, no daily field, no live START', () => {
+    const save = defaultSave();
+    const detail = computeMissionDetail(save, DAILY_MISSION_ID, dailyInput({ available: true, bestScore: 500 }));
+    expect(detail).not.toBeNull();
+    expect(detail?.canStart).toBe(false);
+    expect(detail?.daily).toBeUndefined(); // HubScene falls through to its LOCKED panel
+    expect(detail?.name).toBe('???');
+  });
+
+  it('detail panel shows the available state with no stars', () => {
+    const detail = computeMissionDetail(m1ClearedSave(), DAILY_MISSION_ID, dailyInput({ available: true, bestScore: 500 }));
+    expect(detail).not.toBeNull();
+    expect(detail?.canStart).toBe(true);
+    expect(detail?.stars).toEqual([]);
+    expect(detail?.daily).toEqual({ available: true, bestScore: 500, resetInLabel: '' });
+  });
+
+  it('detail panel shows the already-played state with a reset countdown', () => {
+    const detail = computeMissionDetail(m1ClearedSave(), DAILY_MISSION_ID, dailyInput({ available: false, bestScore: 500, resetInLabel: '3h 12m' }));
+    expect(detail?.canStart).toBe(false);
+    expect(detail?.daily?.available).toBe(false);
+    expect(detail?.daily?.resetInLabel).toBe('3h 12m');
+  });
+
+  it('returns null when the daily is selected but not yet generated', () => {
+    const save = defaultSave();
+    expect(computeMissionDetail(save, DAILY_MISSION_ID, null)).toBeNull();
   });
 });
 

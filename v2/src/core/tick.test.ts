@@ -4,7 +4,7 @@ import { bonusCallsForHoldCharge } from './combat';
 import { HOLD_CHARGE_TIER_2_TICKS, HOLD_CHARGE_TIER_3_TICKS } from './constants';
 import { FIXTURE_LOADOUT, FIXTURE_MISSION, makeFixtureEnemy } from './fixtures';
 import { createCoreState } from './state';
-import { advanceTick } from './tick';
+import { abandonRun, advanceTick } from './tick';
 
 // accrueHoldCharge (Item 6) is internal to tick.ts — exercised only via advanceTick.
 // autoFireEnabled is turned off throughout so combat outcomes (kills, HP changes)
@@ -125,5 +125,21 @@ describe('blocker kill banks hold-charge into bonus-call payout', () => {
     expect(state.enemies.some((e) => e.id === 1)).toBe(false); // turret died
     const totalBonusQueuedOrFired = state.bonusCallsPending + (state.pendingOffer !== null ? 1 : 0);
     expect(totalBonusQueuedOrFired).toBe(1);
+  });
+});
+
+describe('abandonRun', () => {
+  it('force-ends a running mission as a defeat', () => {
+    const state = createCoreState(FIXTURE_MISSION, FIXTURE_LOADOUT, 1, ALL_ABILITIES);
+    expect(state.status).toBe('running');
+    abandonRun(state);
+    expect(state.status).toBe('defeat');
+  });
+
+  it('is a no-op if the mission already ended on its own', () => {
+    const state = createCoreState(FIXTURE_MISSION, FIXTURE_LOADOUT, 1, ALL_ABILITIES);
+    state.status = 'victory';
+    abandonRun(state);
+    expect(state.status).toBe('victory'); // not overwritten to 'defeat'
   });
 });

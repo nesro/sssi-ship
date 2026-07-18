@@ -4,12 +4,18 @@
 > `docs/design/` from before this restructure, `V2_HANDOFF.md`, and `v3_docs.md` where they
 > conflict. All implemented values are drawn from `v2/src/`.
 
-Nesro Nova is a mobile idle/roguelite space shooter for Google Play (`com.nesro.nova`), free,
+Nesro Nova is a mobile arcade roguelite space shooter for Google Play (`com.nesro.nova`), free,
 offline, no ads or IAP. The player builds a ship from modules in a persistent shop, then runs
-30–300-second missions where the ship fights automatically. During combat the player manages
+30–360-second missions where the ship fights automatically. During combat the player manages
 energy by toggling modules, fires side weapons manually, and picks cards offered by support
 ships. The goal is to complete a ~1-hour campaign (one sector, boss finish) by tuning the
 loadout between runs — never grinding, always progressing.
+
+**Corrected 2026-07-18** to match [Game Identity](docs/design/01-identity.md) (the
+authority on this) verbatim — this intro had drifted to say "idle/roguelite" (dropped
+2026-07-15: no idle/away-progression mechanics exist) and "30–300-second" (widened to
+30–360s on 2026-07-15 once real mission durations, m3/m4 specifically, were measured
+against it).
 
 This file used to be one 800+ line document; it's now an index. Each topic below is its own
 short file in `docs/design/` — read the ones relevant to what you're working on, not all of

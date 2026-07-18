@@ -14,6 +14,7 @@ import {
   supplyById,
   weaponSpecById,
 } from '../data/items';
+import { DAILY_MISSION_ID } from '../data/dailyMission';
 import { MISSION_UNLOCK_EDGES, missionById } from '../data/missions';
 import { cardIdsAtLevel, subscriptionById } from '../data/subscriptions';
 
@@ -39,33 +40,65 @@ export interface SaveData {
   ownedSubscriptions: Record<string, number>;
   /** Absent or true = dev border visible; explicit false = hidden. */
   devMode?: boolean;
-  /** Set after completing the welcome mission (w0); gates the hub from redirecting again. */
+  /** Set after completing the welcome mission (w0). Corrected 2026-07-18: this field
+   * does not actually gate anything today — nothing reads it. `w0` itself currently has
+   * no unlock edge and no launcher, so it's unreachable in real play; see
+   * `docs/known-issues.md`'s `w0`/`firstBranchChoice` entry for the full picture. */
   w0Completed?: boolean;
-  /** Player's branch pick at the end of w0; used to open the right hub section on first load. */
+  /** Player's branch pick at the end of w0. Corrected 2026-07-18: nothing reads this
+   * either, despite the field still being written by `ResultScene.ts`'s w0-branch
+   * buttons — see the same `docs/known-issues.md` entry above. */
   firstBranchChoice?: 'tutorial' | 'missions';
-  /** Set the moment OnboardingScene's tutorials-or-skip choice is made (either button) —
-   * absent/undefined on every pre-existing save means "hasn't seen it yet", the correct
+  /** Set by BootScene the moment a save's first-ever hub visit happens — absent/
+   * undefined on every pre-existing save means "hasn't launched yet", the correct
    * default with no migration needed. Deliberately distinct from a "fresh save" check
-   * (completedMissionIds.length === 0 && ...): "Start with tutorials" doesn't mutate
-   * anything else, so without this field the onboarding prompt and tour would reappear
-   * on every launch until the player finished a mission or earned a coin. */
+   * (completedMissionIds.length === 0 && ...): gates only the one-time hub button tour
+   * now (the tutorials-or-skip choice moved onto the galaxy screen itself, 2026-07-17 —
+   * see HubScene's missions-screen "skip tutorials" link), so without this field the
+   * tour would replay on every launch until the player finished a mission or earned a
+   * coin. */
   onboardingSeen?: boolean;
+  /** Set the first time the player ever opens the Shop / Dispatch Reinforcements panel
+   * — same absent-means-unset precedent as `onboardingSeen` above, no migration needed.
+   * Gates HubScene's screen-specific coach-mark tours (2026-07-17, playtest feedback:
+   * "the shop and dispatch needs tutorial as well") — each fires once, the first time
+   * its screen is opened, independent of the main-menu button tour and of each other. */
+  shopTourSeen?: boolean;
+  dispatchTourSeen?: boolean;
+  /**
+   * Daily mission state (src/data/dailyMission.ts). Absent = never played, available
+   * today — the same "optional/absent = unset" precedent as `onboardingSeen` above, so
+   * this needs no SAVE_VERSION bump or migration. `lastPlayedDate` is a local
+   * `YYYY-MM-DD` key (dailyDateKey), written the moment a run STARTS
+   * (`reserveDailyAttempt`), not when it ends — see that function's comment for why.
+   * `bestScore` is the highest raw run score (MissionResult.coins, before
+   * DAILY_COIN_MULT) ever recorded, for the "NEW BEST!" self-competition hook — never
+   * decreases. `paid` is false the instant a run is reserved and flips true once
+   * `applyDailyResult` actually deposits coins — the guard against ever paying out twice
+   * for the same reservation.
+   */
+  daily?: { lastPlayedDate: string; bestScore: number; paid: boolean };
 }
 
 const SAVE_VERSION = 13;
 const STORAGE_KEY = 'nesro-nova-v2-save';
 
-/** Maps v9-and-earlier item IDs to their v10+ equivalents. */
-const LEGACY_ID_MAP: Record<string, string> = {
-  'shield-1': 'shield-wall-1', 'shield-2': 'shield-wall-2', 'shield-3': 'shield-wall-3',
-  'shield-reflex-2': 'shield-reflex-2', 'shield-reflex-3': 'shield-reflex-3',
-  'generator-1': 'generator-torrent-1', 'generator-2': 'generator-torrent-2', 'generator-3': 'generator-torrent-3',
-  'generator-reserve-2': 'generator-reserve-2', 'generator-reserve-3': 'generator-reserve-3',
-  'motor-1': 'motor-rush-1', 'motor-2': 'motor-rush-2', 'motor-3': 'motor-rush-3',
-  'motor-tactical-2': 'motor-tactical-2', 'motor-tactical-3': 'motor-tactical-3',
-};
-
-const renameId = (id: string): string => LEGACY_ID_MAP[id] ?? id;
+/**
+ * The daily mission's coin payout multiplier over its raw run score
+ * (MissionResult.coins, itself state.stats.coinsEarned accumulated per kill — the
+ * daily's completionCoins is always 0, see dailyMission.ts).
+ *
+ * Tuned against `pnpm sim -- --daily-seed 1 --runs 300 --strategy greedy --loadout <X>`
+ * (docs/design/13-balance-and-tuning.md). At 1.5 (first-cut), a starter-gear daily run
+ * (raw score ~175) deposited only ~263 coins — LESS than a real m1 clear at starter gear
+ * (`pnpm sim --mission m1 --loadout starter`, ~555 coins including its completion
+ * bonus), failing the confirmed "pays more than a normal mission" requirement. 4.0
+ * brings starter to ~700 (comfortably above m1's ~555) while still scaling hard at the
+ * top: t4-reference gear (weapon5/shield4/gen5/motor3, `tools/loadoutPresets.ts`) nets
+ * ~11,600 coins in one ~7-9min run — a real, deliberate premium for the "scale best in
+ * the endgame, where campaign income has dried up" requirement, not an oversight.
+ */
+export const DAILY_COIN_MULT = 4.0;
 
 export function defaultSave(): SaveData {
   return {
@@ -89,126 +122,25 @@ export function defaultSave(): SaveData {
 
 type ParsedSave = Record<string, unknown>;
 
-/** v11 → current: add sideWeapon: null to equipped (§5, side weapons) and completedMissionIds. */
-function migrateV11(parsed: ParsedSave): SaveData {
-  const v11 = parsed as unknown as Omit<SaveData, 'version' | 'equipped' | 'completedMissionIds'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
-  return { ...v11, version: SAVE_VERSION, equipped: { ...v11.equipped, sideWeapon: null }, completedMissionIds: [] };
-}
-
-/** v10 → current: no data shape change beyond dropping ownedItems (handled by the caller); still needs sideWeapon and completedMissionIds added. */
-function migrateV10(parsed: ParsedSave): SaveData {
-  const v10 = parsed as unknown as Omit<SaveData, 'version' | 'equipped' | 'completedMissionIds'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
-  return { ...v10, version: SAVE_VERSION, equipped: { ...v10.equipped, sideWeapon: null }, completedMissionIds: [] };
-}
-
-/** v9 → current: shield/generator/motor IDs gain kind prefixes; still needs sideWeapon and completedMissionIds added. */
-function migrateV9(parsed: ParsedSave): SaveData {
-  const v9 = parsed as unknown as Omit<SaveData, 'equipped' | 'completedMissionIds'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
-  const oldShip = v9.equipped.ship;
-  const newShip = /-\d+$/.test(oldShip) ? oldShip : `${oldShip}-1`;
-  const renamedEquipped: SaveData['equipped'] = {
-    ...v9.equipped,
-    ship: newShip,
-    shield: v9.equipped.shield !== null ? renameId(v9.equipped.shield) : null,
-    generator: renameId(v9.equipped.generator),
-    motor: renameId(v9.equipped.motor),
-    sideWeapon: null,
-  };
-  return { ...v9, version: SAVE_VERSION, equipped: renamedEquipped, completedMissionIds: [] };
-}
-
-/** v8 → current: ship IDs gain level suffix, shield/generator/motor get kind prefixes; still needs sideWeapon and completedMissionIds added. */
-function migrateV8(parsed: ParsedSave): SaveData {
-  const v8 = parsed as unknown as Omit<SaveData, 'equipped' | 'completedMissionIds'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
-  const oldShip = v8.equipped.ship;
-  const newShip = /-\d+$/.test(oldShip) ? oldShip : `${oldShip}-1`;
-  const renamedEquipped: SaveData['equipped'] = {
-    ...v8.equipped,
-    ship: newShip,
-    shield: v8.equipped.shield !== null ? renameId(v8.equipped.shield) : null,
-    generator: renameId(v8.equipped.generator),
-    motor: renameId(v8.equipped.motor),
-    sideWeapon: null,
-  };
-  return { ...v8, version: SAVE_VERSION, equipped: renamedEquipped, completedMissionIds: [] };
-}
-
-/** v7 → current: weapon and shield became nullable in SaveData; still needs sideWeapon and completedMissionIds added. */
-function migrateV7(parsed: ParsedSave): SaveData {
-  const v7 = parsed as unknown as Omit<SaveData, 'version' | 'equipped' | 'completedMissionIds'> & { equipped: Omit<SaveData['equipped'], 'sideWeapon'> };
-  return { ...v7, version: SAVE_VERSION, equipped: { ...v7.equipped, sideWeapon: null }, completedMissionIds: [] };
-}
-
-/** v6 → current: add rearWeapon: null and sideWeapon: null to equipped, plus completedMissionIds. */
-function migrateV6(parsed: ParsedSave): SaveData {
-  const v6 = parsed as unknown as Omit<SaveData, 'version' | 'equipped' | 'completedMissionIds'> & { equipped: Omit<SaveData['equipped'], 'rearWeapon' | 'sideWeapon'> };
-  return { ...v6, version: SAVE_VERSION, equipped: { ...v6.equipped, rearWeapon: null, sideWeapon: null }, completedMissionIds: [] };
-}
-
-/** v5 → current: add ownedSubscriptions with Basic at Lv1, rearWeapon: null, sideWeapon: null, completedMissionIds. */
-function migrateV5(parsed: ParsedSave): SaveData {
-  const v5 = parsed as unknown as Omit<SaveData, 'version' | 'ownedSubscriptions' | 'equipped' | 'completedMissionIds'> & { equipped: Omit<SaveData['equipped'], 'rearWeapon' | 'sideWeapon'> };
-  return {
-    ...v5,
-    version: SAVE_VERSION,
-    equipped: { ...v5.equipped, rearWeapon: null, sideWeapon: null },
-    ownedSubscriptions: { 'sub-basic': 1 },
-    completedMissionIds: [],
-  };
-}
-
-/** v2/v3/v4 → current: earliest supported shape — only coins/equipped/stars/supplies survive (already gets completedMissionIds: [] via the defaultSave() spread below). */
-function migrateLegacy(parsed: ParsedSave): SaveData {
-  const rawEquipped = (parsed['equipped'] as Omit<SaveData['equipped'], 'rearWeapon' | 'sideWeapon' | 'ship'> | undefined) ?? defaultSave().equipped;
-  const baseEquipped: Omit<SaveData['equipped'], 'rearWeapon' | 'sideWeapon'> = parsed['version'] === 4
-    ? { ...(parsed['equipped'] as Omit<SaveData['equipped'], 'rearWeapon' | 'sideWeapon'> | undefined) ?? defaultSave().equipped }
-    : { ship: DEFAULT_SHIP_ID, ...rawEquipped };
-  const oldEquipped: SaveData['equipped'] = {
-    ...baseEquipped,
-    rearWeapon: null,
-    sideWeapon: null,
-    shield: baseEquipped.shield !== null ? renameId(baseEquipped.shield) || null : null,
-    generator: renameId(baseEquipped.generator),
-    motor: renameId(baseEquipped.motor),
-  };
-  return {
-    ...defaultSave(),
-    coins: typeof parsed['coins'] === 'number' ? parsed['coins'] : 0,
-    equipped: oldEquipped,
-    missionStars: (parsed['missionStars'] as SaveData['missionStars'] | undefined) ?? {},
-    ownedSupplyCharges: (parsed['ownedSupplyCharges'] as SaveData['ownedSupplyCharges'] | undefined) ?? {},
-  };
-}
-
-/** Picks the right migration for a parsed save's version; null for anything unsupported. */
-function migrateSave(parsed: ParsedSave): SaveData | null {
-  switch (parsed['version']) {
-    case 11: return migrateV11(parsed);
-    case 10: return migrateV10(parsed);
-    case 9: return migrateV9(parsed);
-    case 8: return migrateV8(parsed);
-    case 7: return migrateV7(parsed);
-    case 6: return migrateV6(parsed);
-    case 5: return migrateV5(parsed);
-    case 4: case 3: case 2: return migrateLegacy(parsed);
-    default: return null;
-  }
-}
-
-/** Loads the save; migrates v2–v11 (keeping coins/equipped/stars/supplies), resets anything older. */
+/**
+ * Loads the save; any version other than the current `SAVE_VERSION` resets to
+ * `defaultSave()` — no migration path. Per the project's early-dev save-data policy
+ * (docs/design/12-architecture-and-tooling.md: "bumping SAVE_VERSION and falling back
+ * to defaultSave() is sufficient until closer to release"), migration functions for
+ * v2–v11 (renaming legacy item ids, adding new equipped-slot fields as they shipped)
+ * used to accumulate here instead — removed 2026-07-18 (D8 of
+ * fable-review-fixes-2026-07-18.md) once that policy was applied for real: this also
+ * closes the "no migrateV12 case" gap docs/known-issues.md had flagged (a version that
+ * fell through to `defaultSave()` by accident, not decision) since there is now
+ * deliberately no migration switch at all to have a gap in.
+ */
 export function loadSave(): SaveData {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (raw === null) return defaultSave();
   try {
     const parsed = JSON.parse(raw) as ParsedSave;
-    // ownedItems (multi-ownership tracking, v10 and earlier) is gone: a system's only
-    // owned item is whatever is equipped, so there is nothing left to carry over.
-    delete parsed['ownedItems'];
     if (parsed['version'] === SAVE_VERSION) return parsed as unknown as SaveData;
-    const migrated = migrateSave(parsed);
-    if (migrated === null) return defaultSave();
-    persistSave(migrated);
-    return migrated;
+    return defaultSave();
   } catch {
     return defaultSave();
   }
@@ -247,15 +179,17 @@ export function isMissionUnlocked(save: SaveData, missionId: string): boolean {
   return incoming.some(([fromId]) => save.completedMissionIds.includes(fromId));
 }
 
-const TUTORIAL_MISSION_IDS = ['t1', 't2', 't3', 't4'];
+/** Exported so viewmodel/hub.ts's "show the skip-tutorials link" check (all-or-nothing,
+ * same semantics as skipTutorials() below) never drifts out of sync with this list. */
+export const TUTORIAL_MISSION_IDS = ['t1', 't2', 't3', 't4'];
 
-/** OnboardingScene's "Start with tutorials" choice: just marks the prompt seen, no
- * other mutation — tutorials remain fully playable and rewarded normally. */
+/** BootScene's first-launch marker: just marks the (now implicit) onboarding moment
+ * seen, no other mutation — tutorials remain fully playable and rewarded normally. */
 export function acceptOnboarding(save: SaveData): SaveData {
   return { ...save, onboardingSeen: true };
 }
 
-/** OnboardingScene's "Skip tutorials" choice: marks t1-t4 completed (so m1 unlocks via
+/** The galaxy screen's "skip tutorials" link: marks t1-t4 completed (so m1 unlocks via
  * MISSION_UNLOCK_EDGES and t2-t4 don't sit around as unclaimed locked nodes) without
  * granting their coin rewards — the player chose not to play them. */
 export function skipTutorials(save: SaveData): SaveData {
@@ -412,6 +346,80 @@ export function downgradeSubscription(save: SaveData, subId: string): SaveData {
 export interface AppliedResult {
   save: SaveData;
   newStarIds: string[];
+}
+
+/** True if today's daily mission hasn't been RESERVED yet (see `reserveDailyAttempt`) —
+ * the gate CombatScene checks before letting a run start. Deliberately checks
+ * `lastPlayedDate` alone, not `paid`: a reservation with no payout yet still counts as
+ * "today is used up," which is the entire point (see `reserveDailyAttempt`'s comment). */
+export function isDailyAvailable(save: SaveData, todayStr: string): boolean {
+  return save.daily === undefined || save.daily.lastPlayedDate !== todayStr;
+}
+
+/** Highest raw daily run score ever recorded (0 if never played). */
+export function dailyBestScore(save: SaveData): number {
+  return save.daily?.bestScore ?? 0;
+}
+
+/**
+ * Consumes today's daily attempt the moment a run actually STARTS (CombatScene.create),
+ * not when it ends. Fixes a real exploit found in review: paying out only at the end
+ * (the first version of this feature) left `save.daily` untouched if the app was force-
+ * quit or the tab closed mid-run — on mobile that's a two-swipe gesture — so a player
+ * could retry indefinitely with a fresh seed until a good roll, defeating the entire
+ * "one attempt" premise. Reserving up front means a crash costs the day's attempt with
+ * no payout — harsh, but it's the only way this mode can actually be "one shot."
+ * `bestScore` carries over unchanged (this run's outcome isn't known yet); `paid: false`
+ * until `applyDailyResult` actually deposits coins.
+ */
+export function reserveDailyAttempt(save: SaveData, todayStr: string): SaveData {
+  const next: SaveData = { ...save, daily: { lastPlayedDate: todayStr, bestScore: dailyBestScore(save), paid: false } };
+  persistSave(next);
+  return next;
+}
+
+export interface AppliedDailyResult {
+  save: SaveData;
+  /** Actual coins deposited into the wallet (result.coins × DAILY_COIN_MULT) — what
+   * ResultScene should display, distinct from the raw score used for bestScore/"NEW
+   * BEST!" comparisons. */
+  coinsAwarded: number;
+  isNewBest: boolean;
+}
+
+/**
+ * Folds a finished daily-mission run into the save. Deliberately NOT built on top of
+ * `applyMissionResult` — the daily must never touch `completedMissionIds` (it isn't
+ * part of the campaign unlock graph, MISSION_UNLOCK_EDGES) and never awards campaign
+ * stars (its MissionSpec.stars is always empty; evaluateStars would return [] anyway).
+ * Pays out `DAILY_COIN_MULT × result.coins` rather than `result.coins` + a flat
+ * completion bonus, since the daily's `completionCoins` is always 0 — the entire reward
+ * is the per-kill score.
+ *
+ * Expects `reserveDailyAttempt` to have already run (CombatScene.create, before the
+ * first tick) with the SAME `todayStr` — passing a fresh `new Date()` here instead would
+ * risk a midnight-crossing skew on a long run (started day D, finishes after midnight,
+ * pays out against day D+1's date). Defense in depth against ever paying out twice or
+ * for an unreserved day: no-ops (0 coins, not a new best) unless `save.daily` matches
+ * `todayStr` and hasn't been paid yet.
+ */
+export function applyDailyResult(save: SaveData, result: MissionResult, todayStr: string): AppliedDailyResult {
+  if (result.missionId !== DAILY_MISSION_ID) {
+    throw new Error(`applyDailyResult called with a non-daily result ("${result.missionId}")`);
+  }
+  if (save.daily === undefined || save.daily.lastPlayedDate !== todayStr || save.daily.paid) {
+    return { save, coinsAwarded: 0, isNewBest: false };
+  }
+  const previousBest = save.daily.bestScore;
+  const isNewBest = result.coins > previousBest;
+  const coinsAwarded = Math.round(result.coins * DAILY_COIN_MULT);
+  const next: SaveData = {
+    ...save,
+    coins: save.coins + coinsAwarded,
+    daily: { lastPlayedDate: todayStr, bestScore: Math.max(previousBest, result.coins), paid: true },
+  };
+  persistSave(next);
+  return { save: next, coinsAwarded, isNewBest };
 }
 
 /**

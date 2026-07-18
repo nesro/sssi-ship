@@ -1,14 +1,15 @@
 import Phaser from 'phaser';
 import type { LoadoutSnapshot, RearWeaponKind, SideWeaponKind, WeaponKind } from '../core/types';
-import { ALL_MISSIONS, totalStarsAvailable } from '../data/missions';
+import { ALL_MISSIONS, missionById, setDailyMission, totalStarsAvailable } from '../data/missions';
+import { DAILY_MISSION_ID, dailyDateKey, dailySeedForDate, generateDailyMission, timeUntilNextMidnight } from '../data/dailyMission';
 import {
   shipById,
   generatorSpecAtLevel, motorSpecAtLevel, rearWeaponSpecAtLevel, shieldSpecAtLevel, sideWeaponSpecAtLevel, weaponSpecAtLevel,
 } from '../data/items';
 import type { GeneratorKind, MotorKind, ShieldKind } from '../data/items';
 import {
-  buildLoadout, buySubscription, buySupplyCharge, downgradeSubscription,
-  loadSave, persistSave, resetSave, sellSupplyCharge, switchItem,
+  buildLoadout, buySubscription, buySupplyCharge, dailyBestScore, downgradeSubscription,
+  isDailyAvailable, loadSave, persistSave, resetSave, sellSupplyCharge, skipTutorials, switchItem,
   switchRearWeapon, switchShip, switchSideWeapon, totalStars, unequipShield, unequipWeapon, upgradeSubscription,
 } from '../save/SaveManager';
 import type { SaveData } from '../save/SaveManager';
@@ -18,7 +19,7 @@ import { fontPx, HUB_LEFT_W, LOGICAL_HEIGHT, LOGICAL_WIDTH, px } from './layout'
 import { ShopPreviewPanel } from './ShopPreviewPanel';
 import type { PreviewLayout } from './ShopPreviewPanel';
 import { buildGameTextures } from './textures';
-import { addLabel, addTextButton, drawDevBorder, UI_FONT } from './widgets';
+import { addLabel, addTextButton, drawDevBorder, ensureMinTapTarget, UI_FONT } from './widgets';
 import { HubTour } from './HubTour';
 import type { TourStep } from './HubTour';
 import { Sound } from '../audio/SoundManager';
@@ -28,7 +29,7 @@ import {
   computeSettings, computeSupplies, resolveUiState,
 } from '../viewmodel/hub';
 import type {
-  DispatchCardViewModel, DispatchViewModel, GalaxyMapViewModel, HubNav, HubUIState,
+  DailyPanelInput, DispatchCardViewModel, DispatchViewModel, GalaxyMapViewModel, HubNav, HubUIState,
   KindRowState, KindRowViewModel, LevelChipViewModel, MissionDetailViewModel, SubLevelChipViewModel,
 } from '../viewmodel/hub';
 import { shopSystemFor } from '../viewmodel/shopSystems';
@@ -98,16 +99,66 @@ const NAV_ITEMS: { key: NavItem; label: string; color: number }[] = [
   { key: 'shop',                    label: 'SHIP CONFIGURATION',      color: PALETTE.motorMagenta },
   { key: 'dispatch-reinforcements', label: 'DISPATCH REINFORCEMENTS', color: PALETTE.shieldBlue },
   { key: 'settings',                label: 'SETTINGS',                color: PALETTE.hullWhite },
+  { key: 'credits',                 label: 'CREDITS',                 color: 0x8888aa },
 ];
 
 // Main-menu button tour (docs/plans/first-open-and-tutorial-tour.md, Part B) — one step
 // per NAV_ITEMS key, matched at runtime via .setData('tourId', ...) in buildMainMenu.
 // Voice matches W0_NARRATOR_EVENTS's direct "Commander…" briefing tone (missions.ts).
+// Captions lengthened 2026-07-17 (playtest feedback: restyle to the popup-modal look
+// "and make it more detailed") — CREDITS (the 5th NAV_ITEMS entry) deliberately has no
+// step here: supplementary content, not core navigation, same call already made for
+// DAILY MISSION's galaxy-map node.
 const HUB_TOUR_STEPS: TourStep[] = [
-  { tourId: 'missions', caption: 'Commander. This is your galaxy map — pick a mission to fly.' },
-  { tourId: 'shop', caption: 'Outfit your ship here: weapons, shields, and more.' },
-  { tourId: 'dispatch-reinforcements', caption: 'Subscribe for support cards you\'ll draw mid-mission.' },
-  { tourId: 'settings', caption: 'Audio, dev tools, and this tour again — any time.' },
+  {
+    tourId: 'missions',
+    caption: 'This is your galaxy map, Commander. Pick a mission to fly — each one pays out coins and stars, and higher stars unlock better gear.',
+  },
+  {
+    tourId: 'shop',
+    caption: 'Outfit your ship here: weapon, shield, generator, motor, and more. Spend coins earned from missions to upgrade or switch systems.',
+  },
+  {
+    tourId: 'dispatch-reinforcements',
+    caption: 'Choose your reinforcements here — they shape which support cards you\'re offered mid-mission.',
+  },
+  {
+    tourId: 'settings',
+    caption: 'Audio, dev tools, and this tour again — any time. Credits, right next to it, has the developer\'s note.',
+  },
+];
+
+// Screen-specific coach-mark tours (2026-07-17, playtest feedback: "the shop and
+// dispatch needs tutorial as well") — each fires once, the first time its own screen
+// opens (SaveData's shopTourSeen/dispatchTourSeen), independent of HUB_TOUR_STEPS
+// above and of each other. Targets are tagged onto SHOP_TABS' tab buttons and the
+// Dispatch subscription rows — both always rendered regardless of what's selected, so
+// (unlike the shop's kind-row list or the dispatch cards grid, which only exist once a
+// kind/subscription is picked) these are safe, stable first-visit anchors.
+const SHOP_TOUR_STEPS: TourStep[] = [
+  {
+    tourId: 'shop-tab-loadout',
+    caption: 'MY LOADOUT shows your whole ship at a glance — every system you currently have equipped.',
+  },
+  {
+    tourId: 'shop-tab-weapon',
+    caption: 'Every other tab works the same way: browse kinds and levels, then buy or switch — spend coins earned from missions.',
+  },
+  {
+    tourId: 'shop-tab-supplies',
+    caption: 'SUPPLIES are consumables you carry into a mission and trigger manually — stock up here before you fly.',
+  },
+];
+
+const DISPATCH_TOUR_STEPS: TourStep[] = [
+  {
+    tourId: 'dispatch-sub-0',
+    caption: 'Each reinforcement type shapes which support cards you get offered mid-mission — pick the one that matches how you like to play.',
+  },
+  {
+    tourId: 'dispatch-sub-1',
+    caption: 'Tap one to see its cards, then spend stars to upgrade its tier for a wider pool.',
+  },
 ];
 
 const SHOP_TABS: { key: ShopTab; label: string; color: number }[] = [
@@ -183,27 +234,32 @@ export class HubScene extends Phaser.Scene {
   private lastViewModel: unknown = null;
   private hubTour: HubTour | null = null;
   private showTourOnCreate = false;
+  private initialNavOnCreate: HubNav = null;
 
   constructor() { super('HubScene'); }
 
   /** Phaser calls init(data) before create() when the scene is started with data —
-   * OnboardingScene.ts passes { showTour: true } on both its buttons.
+   * BootScene passes { showTour: true } on a save's first-ever launch; ResultScene's
+   * SHOP button passes { initialNav: 'shop' } to land on the shop tab instead of the
+   * main menu.
    *
-   * Must consume the flag by mutating `data` in place, not just read it: Phaser's
+   * Must consume both flags by mutating `data` in place, not just read them: Phaser's
    * SceneManager only overwrites `scene.sys.settings.data` when a *later* start() call
    * passes a truthy data object (Systems.start) — every subsequent bare
-   * `scene.start('HubScene')` / `scene.restart()` (ResultScene's MISSIONS/SHOP buttons,
+   * `scene.start('HubScene')` / `scene.restart()` (ResultScene's MISSIONS button,
    * CombatScene's exit-confirm, the settings panel's DEV MODE/ADD COINS/UNLOCK STARS
    * buttons — none of them pass data) keeps re-delivering this SAME retained object to
-   * init() forever, replaying the tour after every mission and every dev-tools restart
-   * for the rest of the session. Confirmed as a real, reproducible bug (Fable's
-   * post-implementation review), not a theoretical one. Setting `data.showTour = false`
-   * mutates the retained object itself, so the next bare start() sees it already
-   * cleared. */
+   * init() forever, replaying the tour (or re-landing on the shop tab) after every
+   * mission and every dev-tools restart for the rest of the session. Confirmed as a
+   * real, reproducible bug (Fable's post-implementation review), not a theoretical one.
+   * Setting `data.showTour = false`/`data.initialNav = null` mutates the retained object
+   * itself, so the next bare start() sees both already cleared. */
   // fallow-ignore-next-line unused-class-member
-  init(data: { showTour?: boolean }): void {
+  init(data: { showTour?: boolean; initialNav?: HubNav }): void {
     this.showTourOnCreate = data.showTour === true;
     data.showTour = false;
+    this.initialNavOnCreate = data.initialNav ?? null;
+    data.initialNav = null;
   }
 
   private get playerStars(): number {
@@ -220,6 +276,13 @@ export class HubScene extends Phaser.Scene {
     this.uiState = DEFAULT_HUB_UI_STATE;
     this.contentObjects = [];
     this.scrollingStars = [];
+    // Generated once per HubScene lifetime (not per rebuildContent — it's a real cost
+    // to regenerate ~80 rounds of data on every navigation/click), registered into
+    // missions.ts's small daily-mission registry so CombatScene/buildMissionResult/the
+    // result viewmodel can all resolve 'daily' through the one missionById() path they
+    // already use for every other mission. This is the one place in the daily-mission
+    // feature that reads `new Date()` — src/core/ and src/viewmodel/ both stay clock-free.
+    setDailyMission(generateDailyMission(dailySeedForDate(new Date())));
     // Phaser reuses this Scene instance across stop/restart (__cheat's goTo() stops
     // every scene then starts HubScene fresh) — every display object from a previous
     // life, including any HubTour's target/backdrop/ring, is already destroyed by the
@@ -239,9 +302,15 @@ export class HubScene extends Phaser.Scene {
 
     this.preview = new ShopPreviewPanel(this, HUB_PREVIEW_LAYOUT);
 
-    this.setNav(null);
-
+    // showTour() always forces the main menu first (see its own comment) — if a
+    // requested initialNav ran first instead, showTour()'s setNav(null) would tear the
+    // just-created screen tour down before a single frame ever showed it, while
+    // maybeShowScreenTour had already persisted its seen-flag: a real coach-mark burned
+    // with nothing shown. Unreachable today (showTour only follows BootScene's
+    // first-ever-launch flag; initialNav only follows ResultScene's SHOP button, which a
+    // first-launch player can't press yet) but cheap to keep mutually exclusive.
     if (this.showTourOnCreate) this.showTour();
+    else this.setNav(this.initialNavOnCreate);
   }
 
   /** Always forces the main menu first — HUB_TOUR_STEPS' targets are only tagged on
@@ -272,6 +341,31 @@ export class HubScene extends Phaser.Scene {
     this.hubTour?.cheatSkip();
   }
 
+  /** __cheat.hub.showShopTour()/showDispatchTour() — force-launch a screen tour
+   * regardless of its seen-flag, mirroring cheatShowTour above. Needed for repeatable
+   * screenshot/audit-tap coverage: by the time any of those tools' shots reach shop or
+   * dispatch, an earlier shot in the same run has typically already visited that screen
+   * once and set its seen-flag, so relying on real first-visit detection alone
+   * wouldn't reliably re-trigger the tour on demand. cheatTourNext/cheatTourSkip above
+   * already work generically against whichever tour is active, main-menu or screen.
+   *
+   * setNav's own skipScreenTour=true is required here, not optional: setNav would
+   * otherwise auto-launch its OWN HubTour the moment shopTourSeen/dispatchTourSeen is
+   * still false (e.g. right after reset()), and the forced instance created below would
+   * silently replace it — orphaning the first instance's already-depth-raised,
+   * already-disableInteractive()'d target with nothing left to ever restore it. */
+  // fallow-ignore-next-line unused-class-member
+  cheatShowShopTour(): void {
+    this.setNav('shop', true);
+    this.hubTour = new HubTour(this, SHOP_TOUR_STEPS);
+  }
+
+  // fallow-ignore-next-line unused-class-member
+  cheatShowDispatchTour(): void {
+    this.setNav('dispatch-reinforcements', true);
+    this.hubTour = new HubTour(this, DISPATCH_TOUR_STEPS);
+  }
+
   // fallow-ignore-next-line unused-class-member
   override update(_time: number, deltaMs: number): void {
     for (const star of this.scrollingStars) {
@@ -281,7 +375,12 @@ export class HubScene extends Phaser.Scene {
     this.preview.update(deltaMs);
   }
 
-  private setNav(nav: HubNav): void {
+  /** skipScreenTour: only ever true from cheatShowShopTour/cheatShowDispatchTour below,
+   * which construct their own forced HubTour immediately after calling this — without
+   * it, a still-unseen screen tour would auto-launch here AND get silently replaced by
+   * the forced one, orphaning the first instance's depth-raised, disabled-interactive
+   * target (see those cheats' own comment for the full failure mode). */
+  private setNav(nav: HubNav, skipScreenTour = false): void {
     // A live HubTour points at main-menu buttons that rebuildContent() is about to
     // destroy (they're only tagged/rendered while nav === null) — end it first on any
     // navigation, for any reason, rather than leaving its backdrop/ring/caption
@@ -294,6 +393,26 @@ export class HubScene extends Phaser.Scene {
     this.rebuildContent();
     this.preview.setVisible(nav === 'shop');
     if (nav === 'shop') this.updatePreview();
+    if (!skipScreenTour) this.maybeShowScreenTour(nav);
+  }
+
+  /** Screen-specific coach-mark tours (2026-07-17, playtest feedback: "the shop and
+   * dispatch needs tutorial as well") — each fires once, the first time its own screen
+   * is opened (SHOP_TOUR_STEPS/DISPATCH_TOUR_STEPS' targets are tagged in
+   * buildShopContent/renderDRLeftPanel, both already rendered by the rebuildContent()
+   * call just above). Independent of HUB_TOUR_STEPS (the main-menu button tour) and of
+   * each other — a player can see all three, none, or any subset depending on which
+   * screens they've actually visited. */
+  private maybeShowScreenTour(nav: HubNav): void {
+    if (nav === 'shop' && this.save.shopTourSeen !== true) {
+      this.save = { ...this.save, shopTourSeen: true };
+      persistSave(this.save);
+      this.hubTour = new HubTour(this, SHOP_TOUR_STEPS);
+    } else if (nav === 'dispatch-reinforcements' && this.save.dispatchTourSeen !== true) {
+      this.save = { ...this.save, dispatchTourSeen: true };
+      persistSave(this.save);
+      this.hubTour = new HubTour(this, DISPATCH_TOUR_STEPS);
+    }
   }
 
   /** Dev-only: called by __cheat.navTo(nav) to jump directly to any top-level hub
@@ -311,6 +430,38 @@ export class HubScene extends Phaser.Scene {
   cheatSelectSubscription(id: string): void {
     this.uiState = { ...this.uiState, selectedSubscriptionId: id, dispatchPage: 1 };
     this.setNav('dispatch-reinforcements');
+  }
+
+  /** Dev-only: called by __cheat.selectMission(id) — the mission info panel (name,
+   * stars, START button) only renders once a galaxy node is selected (a real click on
+   * the node), which navTo('missions') alone can't reach. */
+  // fallow-ignore-next-line unused-class-member
+  cheatSelectMission(id: string): void {
+    this.uiState = { ...this.uiState, selectedMissionId: id };
+    this.setNav('missions');
+  }
+
+  /** Dev-only: called by __cheat.toggleAudio('music'|'sfx') — headless equivalent of
+   * tapping the Settings panel's MUSIC/SFX button (real click handlers call
+   * Sound.toggle*() directly without a full rebuild; re-running setNav('settings') here
+   * instead gets the same result through the normal render path, which is simpler than
+   * duplicating the real onClick's manual label/style patch for a dev-only entry point). */
+  // fallow-ignore-next-line unused-class-member
+  cheatToggleAudio(kind: 'music' | 'sfx'): void {
+    if (kind === 'music') Sound.toggleMusic();
+    else Sound.toggleSfx();
+    this.setNav('settings');
+  }
+
+  /** Dev-only: called by __cheat.hub.skipTutorials() — headless equivalent of tapping
+   * the missions screen's "skip tutorials" link (renders only while none of t1-t4 are
+   * completed), so it's a no-op (via the real skipTutorials() mutator's own idempotent
+   * completedMissionIds merge) if called when the link wouldn't be showing. */
+  // fallow-ignore-next-line unused-class-member
+  cheatSkipTutorials(): void {
+    this.save = skipTutorials(this.save);
+    persistSave(this.save);
+    this.setNav('missions');
   }
 
   /** Dev-only: called by __cheat.navShop(tab) to jump directly to a shop tab. */
@@ -357,6 +508,7 @@ export class HubScene extends Phaser.Scene {
       case 'shop':                    this.buildShopContent(); break;
       case 'dispatch-reinforcements': this.buildDispatchReinforcementsContent(); break;
       case 'settings':                this.buildSettingsContent(); break;
+      case 'credits':                 this.buildCreditsContent(); break;
     }
   }
 
@@ -412,17 +564,31 @@ export class HubScene extends Phaser.Scene {
 
   // ─── Missions (galaxy view) ──────────────────────────────────────────────────
 
+  /** Freshly computed on every call (cheap) rather than cached — "available today" and
+   * the reset countdown are both functions of the current moment, not just the save. */
+  private computeDailyPanelInput(): DailyPanelInput {
+    const now = new Date();
+    const available = isDailyAvailable(this.save, dailyDateKey(now));
+    return {
+      spec: missionById(DAILY_MISSION_ID),
+      available,
+      bestScore: dailyBestScore(this.save),
+      resetInLabel: available ? '' : timeUntilNextMidnight(now),
+    };
+  }
+
   private buildMissionsContent(): void {
     // The top nav bar (setNav()) already shows ★/coins for every screen — this used to
     // repeat it a second time, top-left, directly under the top-right original.
-    const map = computeGalaxyMap(this.save, this.uiState.selectedMissionId);
+    const daily = this.computeDailyPanelInput();
+    const map = computeGalaxyMap(this.save, this.uiState.selectedMissionId, daily);
     const gfx = this.addC(this.add.graphics().setDepth(2));
     this.renderGalaxyConnections(gfx, map);
     map.missions.forEach((mission) => { this.renderGalaxyNode(gfx, mission); });
 
     this.addC(this.add.rectangle(0, px(INFO_PANEL_TOP - 1), px(LOGICAL_WIDTH), px(1), 0x222244).setOrigin(0, 0));
-    const missionDetail = computeMissionDetail(this.save, this.uiState.selectedMissionId);
-    this.renderMissionInfoPanel(missionDetail);
+    const missionDetail = computeMissionDetail(this.save, this.uiState.selectedMissionId, daily);
+    this.renderMissionInfoPanel(missionDetail, map.showSkipTutorialsHint);
     this.lastViewModel = { panel: 'missions', galaxyMap: map, missionDetail };
   }
 
@@ -441,7 +607,10 @@ export class HubScene extends Phaser.Scene {
   }
 
   private renderGalaxyNode(gfx: Phaser.GameObjects.Graphics, mission: GalaxyMapViewModel['missions'][number]): void {
-    const nodeColor = mission.isTutorial ? PALETTE.generatorAmber : PALETTE.weaponCyan;
+    // Motor magenta is otherwise unused by galaxy nodes (tutorial=amber, main=cyan) —
+    // reusing it here for the daily keeps it inside the existing system-coded palette
+    // (v2/CLAUDE.md) instead of inventing a new hex value for one node.
+    const nodeColor = mission.isDaily ? PALETTE.motorMagenta : (mission.isTutorial ? PALETTE.generatorAmber : PALETTE.weaponCyan);
     const r = mission.isTutorial ? 6 : 8;
 
     gfx.fillStyle(nodeColor, mission.unlocked ? (mission.isSelected ? 0.22 : 0.10) : 0.04);
@@ -459,7 +628,7 @@ export class HubScene extends Phaser.Scene {
     }
 
     const labelY = mission.y + r + 10;
-    const labelColor = !mission.unlocked ? 0x445566 : (mission.isSelected ? nodeColor : (mission.isTutorial ? 0xaa8833 : 0x99aacc));
+    const labelColor = !mission.unlocked ? 0x445566 : (mission.isSelected ? nodeColor : (mission.isDaily ? 0xcc88bb : (mission.isTutorial ? 0xaa8833 : 0x99aacc)));
     this.addC(this.add.text(px(mission.x), px(labelY), mission.label, {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`, color: cssColor(labelColor),
     }).setOrigin(0.5, 0).setDepth(3).setAlpha(mission.unlocked ? 1 : 0.45));
@@ -487,11 +656,50 @@ export class HubScene extends Phaser.Scene {
     }
   }
 
-  private renderMissionInfoPanel(detail: MissionDetailViewModel | null): void {
+  private renderMissionInfoPanel(detail: MissionDetailViewModel | null, showSkipTutorialsHint: boolean): void {
     this.addC(this.add.rectangle(0, px(INFO_PANEL_TOP), px(LOGICAL_WIDTH), px(INFO_PANEL_H), 0x06060f, 0.92).setOrigin(0, 0));
 
     if (detail === null) {
-      this.addC(this.add.text(px(LOGICAL_WIDTH / 2), px(INFO_PANEL_TOP + INFO_PANEL_H / 2), 'Select a mission', {
+      // Onboarding lives here now, not a separate blocking scene (removed 2026-07-17,
+      // playtest feedback) — this is the very first thing a new player's eye lands on
+      // once they open the missions screen, and it's empty space otherwise.
+      const promptY = showSkipTutorialsHint ? INFO_PANEL_TOP + INFO_PANEL_H / 2 - 14 : INFO_PANEL_TOP + INFO_PANEL_H / 2;
+      this.addC(this.add.text(px(LOGICAL_WIDTH / 2), px(promptY), 'Select a mission', {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(11))}px`, color: cssColor(0x445566),
+      }).setOrigin(0.5));
+      if (showSkipTutorialsHint) {
+        this.addC(addTextButton(this, {
+          x: px(LOGICAL_WIDTH / 2), y: px(INFO_PANEL_TOP + INFO_PANEL_H / 2 + 20),
+          label: 'Already know how to play? Skip the tutorials →', color: 0x8888aa, size: 11,
+          onClick: () => {
+            this.save = skipTutorials(this.save);
+            persistSave(this.save);
+            this.rebuildContent();
+          },
+        }));
+      }
+      return;
+    }
+
+    // Checked before the generic canStart/"LOCKED" branch below. When `daily` is
+    // present the node has passed its m1-completion gate (computeMissionDetail omits
+    // the field entirely while locked, falling through to the generic LOCKED panel —
+    // 2026-07-18, B2), so detail.canStart here means "available today," which needs
+    // its own copy (best score + reset countdown), not the campaign's bare "LOCKED"
+    // message.
+    if (detail.daily !== undefined) {
+      this.renderDailyInfoPanel(detail, detail.daily);
+      return;
+    }
+
+    // Same defense-in-depth as the START button below (only cheat-reachable — real taps
+    // can't select a locked node, HubScene.ts's renderMissionNode) — the panel used to
+    // print the real name, duration, and full star list for a locked mission regardless,
+    // which is the exact information the "???" galaxy-map label exists to hide. Found in
+    // the same screenshot (`hub-mission-detail-locked`) that closed the START-button gap;
+    // missed at the time (docs/known-issues.md's coverage-sweep entry, Fable's review).
+    if (!detail.canStart) {
+      this.addC(this.add.text(px(LOGICAL_WIDTH / 2), px(INFO_PANEL_TOP + INFO_PANEL_H / 2), 'LOCKED', {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(11))}px`, color: cssColor(0x445566),
       }).setOrigin(0.5));
       return;
@@ -518,22 +726,74 @@ export class HubScene extends Phaser.Scene {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(0x887744),
       }));
     } else {
-      detail.stars.forEach((star) => {
-        this.addC(this.add.text(px(panelX), px(detailY), `${star.earned ? '★' : '☆'}  ${star.description}`, {
+      // Two columns of up to 4, not one column of up to 8 — a single column at 18px/row
+      // ran to topY+22+18(duration)+8*18=192px past the 152px-tall info panel (and off
+      // the bottom of the 540px screen entirely for the last 2 of 8 stars on every main
+      // mission). Never screenshot-tested before (no __cheat reached this panel), found
+      // via tools/screenshot.ts's hub-mission-detail-main shot, not eyeballed.
+      const STAR_ROWS_PER_COL = 4;
+      const STAR_COL_GAP = 230;
+      const STAR_ROW_H = 18;
+      detail.stars.forEach((star, i) => {
+        const col = Math.floor(i / STAR_ROWS_PER_COL);
+        const row = i % STAR_ROWS_PER_COL;
+        this.addC(this.add.text(px(panelX + col * STAR_COL_GAP), px(detailY + row * STAR_ROW_H), `${star.earned ? '★' : '☆'}  ${star.description}`, {
           fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`,
           color: cssColor(star.earned ? PALETTE.generatorAmber : 0x556677),
         }));
-        detailY += 18;
       });
     }
 
     const missionId = this.uiState.selectedMissionId;
     if (missionId === null) return;
+    // detail.canStart is unconditionally true past this point — the early "LOCKED"
+    // return above already handles the false case for the whole panel, name/stars
+    // included, not just this button.
     this.addC(addTextButton(this, {
       x: px(Math.round(LOGICAL_WIDTH * 0.76)), y: px(INFO_PANEL_TOP + INFO_PANEL_H / 2),
       label: '▶  START', color: PALETTE.weaponCyan, size: 14,
       onClick: () => { this.scene.start('CombatScene', { missionId }); },
     }));
+  }
+
+  /** Same layout skeleton as renderMissionInfoPanel (name/duration/button row), swapping
+   * the campaign's star list for a best-score line and PLAY/"already played" state —
+   * the daily is never locked (isMissionUnlocked always true, no incoming unlock edge),
+   * so this never needs the generic "LOCKED" branch at all. */
+  private renderDailyInfoPanel(detail: MissionDetailViewModel, daily: NonNullable<MissionDetailViewModel['daily']>): void {
+    const nodeColor = PALETTE.motorMagenta;
+    const panelX = CONTENT_PAD + 4;
+    const topY = INFO_PANEL_TOP + 16;
+
+    this.addC(this.add.text(px(panelX), px(topY), detail.name, {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(15))}px`, color: cssColor(nodeColor),
+    }));
+
+    const durationY = topY + 22;
+    this.addC(this.add.text(px(panelX), px(durationY), detail.duration, {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(0x667788),
+    }));
+
+    const bestScoreY = durationY + 18;
+    this.addC(this.add.text(px(panelX), px(bestScoreY), `Best: ${String(daily.bestScore)} coins`, {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(11))}px`, color: cssColor(PALETTE.generatorAmber),
+    }));
+
+    const missionId = this.uiState.selectedMissionId;
+    if (missionId === null) return;
+    if (daily.available) {
+      this.addC(addTextButton(this, {
+        x: px(Math.round(LOGICAL_WIDTH * 0.76)), y: px(INFO_PANEL_TOP + INFO_PANEL_H / 2),
+        label: '▶  PLAY', color: nodeColor, size: 14,
+        onClick: () => { this.scene.start('CombatScene', { missionId }); },
+      }));
+    } else {
+      this.addC(this.add.text(
+        px(Math.round(LOGICAL_WIDTH * 0.76)), px(INFO_PANEL_TOP + INFO_PANEL_H / 2),
+        `Played today\nresets in ${daily.resetInLabel}`,
+        { fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(0x556677), align: 'center' },
+      ).setOrigin(0.5));
+    }
   }
 
   // ─── Shop ─────────────────────────────────────────────────────────────────
@@ -549,7 +809,8 @@ export class HubScene extends Phaser.Scene {
       const active = tab.key === this.uiState.tab;
       const bg = this.addC(
         this.add.rectangle(px(CONTENT_PAD), px(tabY), px(SHOP_TAB_W), px(tabH - 2), active ? 0x111128 : 0x080818, 0.95)
-          .setOrigin(0, 0.5).setInteractive({ useHandCursor: true }),
+          .setOrigin(0, 0.5).setInteractive({ useHandCursor: true })
+          .setData('tourId', `shop-tab-${tab.key}`), // matched by SHOP_TOUR_STEPS
       );
       if (active) bg.setStrokeStyle(px(1), tab.color, 0.6);
       bg.on('pointerdown', () => {
@@ -565,7 +826,11 @@ export class HubScene extends Phaser.Scene {
           fontSize: `${String(fontPx(9))}px`,
           color: cssColor(active ? tab.color : 0x8899bb),
           align: 'center',
-        }).setOrigin(0.5).setAlpha(active ? 1 : 0.8),
+        }).setOrigin(0.5).setAlpha(active ? 1 : 0.8)
+          // Same tourId as this tab's own bg rectangle above — HubTour.ts raises every
+          // GameObject sharing a tourId, not just one; tagging only the bg left this
+          // label hidden behind the tour's dim backdrop (fixed 2026-07-17/18).
+          .setData('tourId', `shop-tab-${tab.key}`),
       );
     });
 
@@ -708,7 +973,12 @@ export class HubScene extends Phaser.Scene {
     if (count === 0) return;
     const chipW = Math.floor(SHOP_ITEM_W / count);
     const chipH = 32;
-    const chipCY = SHOP_ACTION_Y + 20;
+    // +28, not the original +20: a 6-row kind list (rear weapon always; weapon once
+    // y2010 unlocks) bottoms out at y=438 — CONTENT_TOP+22+6*SHOP_ROW_H — which
+    // overlapped the old chip top (436) by 2px, so the last row's tap area swallowed
+    // the chips' top edge (B5; found by tools/tap-target-audit.ts once the chips
+    // became interactive-with-coins there). 444 clears it.
+    const chipCY = SHOP_ACTION_Y + 28;
     const accent = accentColorFor(config.systemKey);
 
     chips.forEach((chip, i) => {
@@ -719,7 +989,19 @@ export class HubScene extends Phaser.Scene {
       const dimmed = chip.state === 'locked' || chip.state === 'unaffordable';
       if (!isCurrent) {
         if (dimmed) { rect.setAlpha(0.35); } else {
-          rect.setInteractive({ useHandCursor: true });
+          // 44px-tall hit area (B5, docs/plans/fable-review-fixes-2026-07-18.md): the
+          // 32px chip visual is below the mobile tap-target floor. Extended DOWNWARD
+          // only (hitArea local (0,0) = the rect's top-left), not centered via
+          // ensureMinTapTarget: a 6-row kind list (rear weapon always; weapon once
+          // y2010 unlocks) ends 2px above the chip visual, so a centered expansion
+          // overlapped the last kind row's own tap area — below the chips there's
+          // nothing interactive until well past the expansion. Width (≥55px at the
+          // widest chip count) already clears the floor.
+          rect.setInteractive({
+            hitArea: new Phaser.Geom.Rectangle(0, 0, rect.width, Math.max(rect.height, px(44))),
+            hitAreaCallback: (r: Phaser.Geom.Rectangle, x: number, y: number) => Phaser.Geom.Rectangle.Contains(r, x, y),
+            useHandCursor: true,
+          });
           rect.on('pointerdown', () => { this.onLevelChipTap(chip, config); });
           rect.on('pointerover', () => { rect.setFillStyle(0x151530); });
           rect.on('pointerout', () => { rect.setFillStyle(0x0e0e1e); });
@@ -860,7 +1142,8 @@ export class HubScene extends Phaser.Scene {
       // caught the hit area's left edge at 0px, not eyeballed).
       const bg = this.addC(
         this.add.rectangle(px(DR_LEFT_X), px(rowY), px(DR_LEFT_W - DR_LEFT_X), px(DR_ROW_H - 1), sub.isSelected ? 0x111128 : 0x080818, 0.95)
-          .setOrigin(0, 0).setInteractive({ useHandCursor: true }),
+          .setOrigin(0, 0).setInteractive({ useHandCursor: true })
+          .setData('tourId', `dispatch-sub-${String(i)}`), // matched by DISPATCH_TOUR_STEPS
       );
       if (sub.isSelected) bg.setStrokeStyle(px(1), sub.color, 0.5);
       bg.on('pointerdown', () => {
@@ -868,18 +1151,25 @@ export class HubScene extends Phaser.Scene {
         this.uiState = { ...this.uiState, selectedSubscriptionId: sub.id, dispatchPage: wasSelected ? this.uiState.dispatchPage : 1 };
         this.rebuildContent();
       });
+      // Same tourId as this row's own bg rectangle above, on all three label Texts —
+      // HubTour.ts raises every GameObject sharing a tourId, not just one; tagging only
+      // the bg left these labels hidden behind the tour's dim backdrop (fixed
+      // 2026-07-17/18). Tagged on every row (not just the two DISPATCH_TOUR_STEPS
+      // actually target), matching the bg's own existing tagging — harmless, since
+      // HubTour only ever searches for tourIds its current steps list mentions.
+      const rowTourId = `dispatch-sub-${String(i)}`;
       this.addC(this.add.text(px(DR_LEFT_X + 8), px(midY - 10), sub.name, {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(12))}px`,
         color: cssColor(sub.isSelected ? sub.color : (sub.ownedLevel > 0 ? 0x9999bb : 0x555577)),
-      }).setOrigin(0, 0.5));
+      }).setOrigin(0, 0.5).setData('tourId', rowTourId));
       this.addC(this.add.text(px(DR_LEFT_W - 6), px(midY - 10), sub.dots, {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`,
         color: cssColor(sub.ownedLevel > 0 ? sub.color : 0x444466),
-      }).setOrigin(1, 0.5));
+      }).setOrigin(1, 0.5).setData('tourId', rowTourId));
       this.addC(this.add.text(px(DR_LEFT_X + 8), px(midY + 10), sub.statusText, {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`,
         color: cssColor(sub.ownedLevel > 0 ? 0x778899 : 0x334455),
-      }).setOrigin(0, 0.5));
+      }).setOrigin(0, 0.5).setData('tourId', rowTourId));
     });
     this.renderDRActionZone(dispatch);
   }
@@ -902,20 +1192,26 @@ export class HubScene extends Phaser.Scene {
 
   private renderSubLevelChips(chips: SubLevelChipViewModel[], accentColor: number, topY: number): void {
     const count = chips.length;
-    const chipW = Math.floor((DR_LEFT_W - 8) / count);
+    // DR_LEFT_X, not a hardcoded 4: this row used to start inside the 20px mobile
+    // safe-zone its own sibling subscription rows already respect (B5) — which also
+    // made ensureMinTapTarget's edge-shift push chip 1's hit area into chip 2's.
+    const chipW = Math.floor((DR_LEFT_W - DR_LEFT_X - 4) / count);
     const chipH = 32;
     const chipCY = topY + chipH / 2;
 
     chips.forEach((chip, i) => {
       const isCurrent = chip.state === 'current';
       const dimmed = chip.state === 'locked' || chip.state === 'unaffordable';
-      const chipX = 4 + i * chipW + chipW / 2;
+      const chipX = DR_LEFT_X + i * chipW + chipW / 2;
 
       const rect = this.add.rectangle(px(chipX), px(chipCY), px(chipW - 3), px(chipH), isCurrent ? 0x0c1a2e : 0x0e0e1e).setOrigin(0.5);
       if (isCurrent) rect.setStrokeStyle(px(1), accentColor, 0.8);
       if (!isCurrent) {
         if (dimmed) { rect.setAlpha(0.35); } else {
-          rect.setInteractive({ useHandCursor: true });
+          // Same 44px tap-target floor as renderLevelChips above (B5) — see the
+          // comment there. Centered expansion is safe here: the subscription rows
+          // above end 9px clear of the expanded area and only inert text sits below.
+          ensureMinTapTarget(rect);
           rect.on('pointerdown', () => { this.onSubLevelChipTap(chip); });
           rect.on('pointerover', () => { rect.setFillStyle(0x151530); });
           rect.on('pointerout', () => { rect.setFillStyle(0x0e0e1e); });
@@ -1107,18 +1403,23 @@ export class HubScene extends Phaser.Scene {
     });
     this.addC(resetBtn);
 
-    // Right column: About
-    const rightColX = Math.round(LOGICAL_WIDTH / 2) + 20;
-    const rightColW = LOGICAL_WIDTH - rightColX - CONTENT_PAD;
-    this.addC(this.add.rectangle(px(Math.round(LOGICAL_WIDTH / 2)), px(CONTENT_TOP), px(1), px(LOGICAL_HEIGHT - CONTENT_TOP), 0x222244).setOrigin(0, 0));
-    this.addC(addLabel(this, { x: px(rightColX), y: px(CONTENT_TOP + 8), text: 'ABOUT', color: PALETTE.shieldBlue, size: 11 }));
-    this.addC(this.add.text(px(rightColX), px(CONTENT_TOP + 26), ABOUT_TEXT, {
-      fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`,
-      color: cssColor(0x8888aa), lineSpacing: px(3),
-      wordWrap: { width: px(rightColW) },
-    }));
-
     if (devOn) this.buildDevToolsSection(baseX);
+  }
+
+  /** The "Hi, I am Nesro..." developer note — moved out of Settings (2026-07-17,
+   * playtest feedback: "I think the message in settings should be somewhere else,
+   * maybe some credits menu") into its own nav panel, single centered column since
+   * there's nothing else on this screen to split against. */
+  private buildCreditsContent(): void {
+    this.lastViewModel = { panel: 'credits' };
+    const colX = Math.round(LOGICAL_WIDTH / 2) - 160;
+    const colW = 320;
+    this.addC(addLabel(this, { x: px(colX), y: px(CONTENT_TOP + 8), text: 'ABOUT', color: PALETTE.shieldBlue, size: 11 }));
+    this.addC(this.add.text(px(colX), px(CONTENT_TOP + 26), ABOUT_TEXT, {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(11))}px`,
+      color: cssColor(0x8888aa), lineSpacing: px(4),
+      wordWrap: { width: px(colW) },
+    }));
   }
 
   /** Save-mutating dev cheats — visually separated (own header, warning color) from

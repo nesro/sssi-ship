@@ -73,4 +73,14 @@ export class NarratorBar {
     this.label.setVisible(false);
   }
 
+  /** True iff a line is on screen and its typewriter reveal has finished — false both
+   * before any line has ever shown and after it's fully hidden again. Whichever line is
+   * CURRENTLY on the bar, not a specific one — fine today since no mission triggers two
+   * sequential bar lines, but a future one that does would need this call site-scoped,
+   * not just this flag polled blindly. Lets a caller (the screenshot harness) poll for
+   * "done revealing" instead of sleeping a fixed duration sized off today's longest line
+   * — see docs/known-issues.md's now-resolved NarratorBar reveal-timing entry. */
+  isFullyRevealed(): boolean {
+    return this.bg.visible && !this.active;
+  }
 }

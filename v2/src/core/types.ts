@@ -1,5 +1,7 @@
 // All core types. Pure data — no Phaser, no DOM, no Node.
 
+import type { SeededRng } from './rng';
+
 // ---------- Component specs (what the shop sells; what a loadout equips) ----------
 
 // y2010 is a secret, deliberately-unbalanced Easter egg weapon (Nesro's original 2010
@@ -151,6 +153,8 @@ export interface RunModifiers {
   lowHullDmgMult: number;           // LAST STAND: multiplier at hull < 30 %
   singleEnemyDmgBonus: number;      // FOCUS FIRE: additive bonus with 1 enemy on screen
   shieldActiveDmgBonus: number;     // SHIELD SYNC: additive bonus while shield > 0
+  shieldZeroDmgMult: number;        // ZERO BARRIER: multiplier while shield <= 0
+  shieldFullDmgBonus: number;       // PEAK CONDITION: additive bonus while shield is at capacity
   noShieldPierceAll: boolean;       // DESPERATE FIRE: pierce all enemies while shield = 0
   manyEnemiesExtraTargets: number;  // SWARM SENSE: extra hit targets when 6+ enemies present
   earlyBirdDmgBonus: number;        // EARLY BIRD: additive bonus in first 25 % of mission
@@ -363,15 +367,20 @@ export interface EnemyState {
   holdChargeTicks: number;
   /** Ticks this enemy has been alive on the conveyor, unconditionally (F3). Only a
    * `boss` reads this — to drive its approach/stall cycle (see conveyor.ts's
-   * `bossEffectiveSpeed`) — but it's simplest to track for every enemy uniformly. */
+   * `effectiveSpeed`) — but it's simplest to track for every enemy uniformly. */
   aliveTicks: number;
 }
 
-export type ShotEventKind = 'player-crit' | 'player-miss' | 'enemy-crit' | 'enemy-miss';
+export type ShotEventKind = 'player-crit' | 'player-miss' | 'enemy-crit' | 'enemy-miss' | 'enemy-killed';
 
 export interface ShotEvent {
   kind: ShotEventKind;
   enemyId?: number;
+  /** 'enemy-killed' only — the coins actually credited for this kill (post shipCoinMult/
+   * blockerCoinMult). The view uses this instead of the enemy's raw spec coinReward so a
+   * collision self-death (never credited, see applyEnemyDeathEffects) never shows a coin
+   * popup for money the player didn't actually receive. */
+  coins?: number;
 }
 
 export interface ShipState {
@@ -422,7 +431,7 @@ export interface CoreState {
   ship: ShipState;
   enemies: EnemyState[];
   stats: RunStats;
-  rng: () => number;
+  rng: SeededRng;
   loadout: LoadoutSnapshot;
   mission: MissionSpec;
   abilityPool: AbilityDefinition[];

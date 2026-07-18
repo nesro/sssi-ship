@@ -1,5 +1,5 @@
 import { BOSS_APPROACH_TICKS, BOSS_STALL_TICKS, COLLISION_DAMAGE_MULTIPLIER, SHIELD_BURST_RETURN } from './constants';
-import { damageShip } from './combat';
+import { damageShip, removeDeadEnemies } from './combat';
 import type { EffectiveStats } from './stats';
 import type { CoreState, EnemyState } from './types';
 
@@ -43,4 +43,10 @@ export function advanceEnemies(state: CoreState, stats: EffectiveStats): void {
     for (const s of survivors) s.hp -= totalBurst;
   }
   state.enemies = survivors;
+  // A burst-killed enemy (hp driven <= 0 above) must go through the same death
+  // pipeline as a weapon kill — kill credit, coins, blocker bonus calls, on-kill
+  // chains — not just vanish. Without this, a burst-killed enemy stayed in
+  // state.enemies until some later weapon shot happened to prune it, meanwhile still
+  // shooting the player, regenerating, and blocking victory (found 2026-07-18).
+  if (totalBurst > 0) removeDeadEnemies(state, stats);
 }

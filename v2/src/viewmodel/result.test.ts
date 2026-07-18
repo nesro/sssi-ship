@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { MissionResult } from '../core/result';
+import { DAILY_MISSION_ID, generateDailyMission } from '../data/dailyMission';
+import { setDailyMission } from '../data/missions';
 import { computeResultViewModel } from './result';
+
+setDailyMission(generateDailyMission(1));
 
 function victoryResult(overrides: Partial<MissionResult> = {}): MissionResult {
   return {
@@ -71,6 +75,21 @@ describe('computeResultViewModel', () => {
     expect(() => computeResultViewModel(victoryResult({ status: 'running' }), [])).toThrow(/still running/);
   });
 
+  it('outcome mirrors status for a real victory (wasAbandoned has no effect)', () => {
+    const vm = computeResultViewModel(victoryResult(), [], undefined, true);
+    expect(vm.outcome).toBe('victory');
+  });
+
+  it('outcome mirrors status for a real defeat when wasAbandoned is not set', () => {
+    const vm = computeResultViewModel(victoryResult({ status: 'defeat' }), []);
+    expect(vm.outcome).toBe('defeat');
+  });
+
+  it('outcome mirrors status for a real defeat even when wasAbandoned is explicitly false', () => {
+    const vm = computeResultViewModel(victoryResult({ status: 'defeat' }), [], undefined, false);
+    expect(vm.outcome).toBe('defeat');
+  });
+
   it('shortName describes the star\'s real requirement, not its raw id', () => {
     const result = victoryResult({ earnedStarIds: [] });
     const vm = computeResultViewModel(result, []);
@@ -80,5 +99,56 @@ describe('computeResultViewModel', () => {
     expect(byId('m1-all-kills')).toBe('ALL KILLS');
     expect(byId('m1-shield')).toBe('SHIELD UNBROKEN');
     expect(byId('m1-time-t1')).toMatch(/^UNDER \d+S$/);
+  });
+});
+
+describe('computeResultViewModel — daily mission', () => {
+  function dailyResult(overrides: Partial<MissionResult> = {}): MissionResult {
+    return victoryResult({
+      missionId: DAILY_MISSION_ID, status: 'defeat', earnedStarIds: [], coins: 400, ...overrides,
+    });
+  }
+
+  it('shows no stars — the daily mission spec always has an empty star list', () => {
+    const vm = computeResultViewModel(dailyResult(), []);
+    expect(vm.stars).toEqual([]);
+  });
+
+  it('uses buttons: daily (no RETRY), never w0-branch or standard', () => {
+    const vm = computeResultViewModel(dailyResult(), []);
+    expect(vm.buttons).toEqual({ kind: 'daily' });
+  });
+
+  it('without a dailyBonus, coinsEarned falls back to the raw result.coins', () => {
+    const vm = computeResultViewModel(dailyResult({ coins: 400 }), []);
+    expect(vm.coinsEarned).toBe(400);
+    expect(vm.daily).toBeUndefined();
+  });
+
+  it('with a dailyBonus, coinsEarned is the actual wallet deposit, not the raw score', () => {
+    const vm = computeResultViewModel(dailyResult({ coins: 400 }), [], { coinsAwarded: 600, isNewBest: true });
+    expect(vm.coinsEarned).toBe(600);
+    expect(vm.daily).toEqual({ isNewBest: true });
+  });
+
+  it('isNewBest false is preserved (not coerced to undefined/truthy)', () => {
+    const vm = computeResultViewModel(dailyResult(), [], { coinsAwarded: 100, isNewBest: false });
+    expect(vm.daily).toEqual({ isNewBest: false });
+  });
+
+  it('outcome is "abandoned" for a voluntary quit — status stays "defeat" (scoring truth unchanged)', () => {
+    const vm = computeResultViewModel(dailyResult(), [], undefined, true);
+    expect(vm.status).toBe('defeat');
+    expect(vm.outcome).toBe('abandoned');
+  });
+
+  it('outcome is "defeat" (not "abandoned") for a real hull-zero daily defeat', () => {
+    const vm = computeResultViewModel(dailyResult(), [], undefined, false);
+    expect(vm.outcome).toBe('defeat');
+  });
+
+  it('outcome is "defeat" when wasAbandoned is omitted entirely, same as a real defeat', () => {
+    const vm = computeResultViewModel(dailyResult(), []);
+    expect(vm.outcome).toBe('defeat');
   });
 });

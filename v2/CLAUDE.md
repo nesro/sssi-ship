@@ -8,10 +8,12 @@ and the rules for working in it.
 
 ## What this is
 
-Nesro Nova is a mobile idle/roguelite space shooter for Google Play (app id
-`com.nesro.nova`, landscape, free, offline). v2 is a clean rebuild; the old `../phaser/`
-tree is a **read-only reference corpus** — port knowledge, never code (except
-`rng.ts`, ported verbatim by instruction).
+Nesro Nova is a mobile arcade roguelite space shooter for Google Play (app id
+`com.nesro.nova`, landscape, free, offline) — corrected 2026-07-18 to match
+[Game Identity](../docs/design/01-identity.md); "idle" was dropped project-wide
+2026-07-15 (no away-progression mechanics exist). v2 is a clean rebuild; the old
+`../phaser/` tree is a **read-only reference corpus** — port knowledge, never code
+(except `rng.ts`, ported verbatim by instruction).
 
 ## Constitutional rules (violations broke v1 — never bend these)
 
@@ -47,11 +49,19 @@ pnpm test           # Vitest (colocated *.test.ts — the chosen convention, sta
 pnpm lint           # ESLint flat config, type-checked rules
 pnpm build:dry      # tsc --noEmit
 pnpm build          # typecheck + production bundle
-pnpm sim -- --mission smoke-1 --runs 1000   # headless balance runs (real core)
+pnpm sim -- --mission m1 --runs 1000        # headless balance runs (real core)
+pnpm campaign       # full-campaign sim; expect 100%/100% completion
+pnpm balance        # star-reachability sweep (writes tools/balance-report.md)
+pnpm tune           # per-mission loadout recommendation + dominant-kind report
+pnpm pacing         # SLOW_START/IDLE_STRETCH/MONOTONY flags (writes tools/pacing-report.md)
+pnpm audit-taps     # headless tap-target audit (44px min, 20px edge margin)
+pnpm screenshot     # full visual-verification batch (writes v2/screenshots/*.png)
 npx cap sync android && npx cap open android  # Capacitor → Android Studio
 ```
 
 Run `pnpm lint` and `pnpm build:dry` after every edit; fix warnings immediately.
+`pnpm dlx fallow` (dead-code/consistency checker, config `v2/.fallowrc.json`) is also run
+before closing out any nontrivial change.
 
 ## Visual verification rule (mandatory)
 
@@ -59,22 +69,45 @@ After **any** change to `src/view/` — renderers, textures, layout, HUD, shop p
 
 ## Layout
 
+Rewritten 2026-07-18 — the previous version referenced a `MenuScene`/`ShopScene` scene
+graph and a "week-1 skeleton" `tools/` that no longer match the shipped code.
+
 ```
 v2/
   src/
     core/        # pure simulation: rng, types, constants, state, energy (brownout),
-                 # combat, conveyor, timeline, tick (orchestrator), replay (+hash)
-                 # tests are colocated *.test.ts
+                 # combat, conveyor, timeline, tick (orchestrator), replay (+hash),
+                 # cards, supplies, stats, stars, narrator, result — colocated *.test.ts
     data/        # typed TS data files: missions.ts, items.ts, cards.ts, story.ts,
-                 # loadouts.ts (STARTER_LOADOUT + resolveForcedLoadout — shared by view,
-                 # sim, and tests; never resolve forced loadouts in the view layer)
-    view/        # Phaser: main.ts (dpr-sharp config), BootScene (preloads audio →
-                 # MenuScene), CombatScene, CombatHud, ShopScene + ShopPreviewPanel,
-                 # textures.ts (baked glow), palette.ts, layout.ts (px()/DPR helpers)
+                 # abilities.ts, subscriptions.ts, dailyMission.ts (date-seeded daily
+                 # generator), loadouts.ts (STARTER_LOADOUT + resolveForcedLoadout —
+                 # shared by view, sim, and tests; never resolve forced loadouts in
+                 # the view layer)
+    viewmodel/   # pure-TS view logic, zero Phaser imports — computeGalaxyMap/
+                 # computeMissionDetail (hub.ts), computeCombatHudViewModel (combat.ts),
+                 # computeResultViewModel (result.ts), shop preview + shop-tab config
+                 # (preview.ts, shopSystems.ts). Scenes read these, never recompute
+                 # game logic inline — this is what lets Phase C's viewmodel tests run
+                 # with zero Phaser/DOM dependency.
+    view/        # Phaser scenes only (5 total): main.ts (dpr-sharp config, scene list,
+                 # __cheat dev console), BootScene, AlphaNoticeScene (every-launch
+                 # dev-build notice), HubScene (galaxy map + shop/dispatch/settings/
+                 # credits as nav panels inside this one scene, not separate scenes),
+                 # CombatScene, ResultScene. Plus CombatHud, CardOverlay, HubTour,
+                 # NarratorBar, SupplyButtons, ShopPreviewPanel, textures.ts (baked
+                 # glow), palette.ts, layout.ts (px()/DPR helpers), widgets.ts
+                 # (addTextButton/ensureMinTapTarget — the 44px tap-target floor).
+    save/        # SaveManager.ts — load/persist/migrate SaveData, purchase/switch-cost
+                 # logic, mission-unlock checks. Single source of truth for save state;
+                 # view and viewmodel both read/write through this, never localStorage
+                 # directly.
     audio/       # SoundManager.ts — game-level singleton over Phaser sound: looping music
                  # + SFX (fire/kill/shield-pulse/boost/victory) + persisted mute. Assets
                  # are copied into v2/public/audio/ (source files live in ../sounds)
-  tools/         # simulate.ts CLI — week-1 skeleton; balance:ci + --sweep + campaign in week 2
+  tools/         # simulate.ts (headless sim CLI), campaign-simulate.ts, balance-sweep.ts,
+                 # tune-loadouts.ts, pacing-report.ts, loadoutPresets.ts (named reference
+                 # loadouts for time-star anchoring), playwrightHarness.ts (shared
+                 # __cheat-driving plumbing), screenshot.ts, tap-target-audit.ts
   android/       # Capacitor-generated; never hand-edit, regenerate via cap sync
 ```
 
@@ -96,16 +129,18 @@ v2/
 - Functions ≤100 lines, ≤5 params (ESLint-enforced). Named constants over magic numbers —
   tunables live in `src/core/constants.ts` or the typed specs in `src/data/`.
 
-## Week-1 state and open items
+## Current state and open items
 
-Done: toolchain, deterministic core (conveyor, energy budget, brownout, blockers,
-timeline, replay records + hash verification) with full test coverage, dpr-sharp Phaser
-view with baked-glow renderer, simulator skeleton, Capacitor android platform.
+**Removed 2026-07-18** — this file used to carry an inline "Week-1 state" status list
+(toolchain/core/renderer done, a "Next:" queue) that had long since all shipped, plus a
+"flagged for Tomáš" question (shield-first collision routing) that was answered and
+implemented (shield-first is the shipped, intentional behavior — see
+[Combat](../docs/design/06-combat.md)). Keeping a second, inline copy of project status
+here just gives it a second place to drift out of sync with reality — read
+[Status — What's Built vs What's Planned](../docs/design/14-status.md) instead; it's the
+one place this is tracked now.
 
-Flagged for Tomáš:
-- Collision damage currently routes **shield-first** ("through the shield" reading);
-  one-line change in `conveyor.ts` if it should bypass shields.
-- **On-device smoke test** of the additive renderer + text sharpness on a real Android
-  phone is a week-1 exit criterion that needs a human with a phone.
-
-Next: landscape revert (960×540, three-panel layout), rear weapon slot, subscriptions system, WelcomeScene.
+**On-device smoke test** (additive renderer + text sharpness on a real Android phone) is
+still genuinely outstanding and needs a human with a phone — not something an agent
+session can close out; check 14-status.md for its current state before assuming it's
+been done.

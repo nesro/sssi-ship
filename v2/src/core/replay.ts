@@ -202,23 +202,50 @@ function replayTargetPolicy(record: ReplayRecord): TargetPolicy {
   };
 }
 
-/** FNV-1a over the determinism-relevant fields of the final state. */
+/**
+ * FNV-1a over the determinism-relevant fields of the final state — every field that can
+ * affect a FUTURE tick's outcome. Deliberately excludes: `loadout`/`mission`/`seed`/
+ * `abilityPool` (run INPUTS, not evolving state — already pinned by the replay record
+ * itself); `abilityActions`/`boostTaps`/`sideWeaponTaps`/`priorityTargetTaps` (the
+ * recorded action LOG replayed to reproduce the run, not state to verify against);
+ * `pendingOffer`/`pendingNarrator`/`pendingVisualEvents` (transient pause/view-only
+ * state, explicitly not meaningful once a run has finished).
+ *
+ * Broadened 2026-07-18 (Fable's review): the RNG cursor, `modifiers`, `activeEffects`,
+ * `rerollsLeft`, supply `chargesLeft`, `shotCounter`, `consecutiveKills`,
+ * `wavesClearedThisRun`, `nextEventIndex`, `nextEnemyId`, `supportCallsDone`, and
+ * `bonusCallsPending` were all live, run-evolving state that a divergence could hide
+ * behind — e.g. two runs disagreeing only on `rerollsLeft` or `modifiers` (a card-effect
+ * bug) previously still hashed identically as long as `ship`/`stats`/`enemies` happened
+ * to match.
+ */
 export function hashCoreState(state: CoreState): string {
   const snapshot = JSON.stringify({
     tick: state.tick,
     timelineTick: state.timelineTick,
+    nextEventIndex: state.nextEventIndex,
+    nextEnemyId: state.nextEnemyId,
     status: state.status,
     ship: state.ship,
     stats: state.stats,
+    rngCursor: state.rng.cursor,
+    modifiers: state.modifiers,
     pickedAbilityIds: state.pickedAbilityIds,
     autoFireEnabled: state.autoFireEnabled,
     rearWeaponEnabled: state.rearWeaponEnabled,
     autoShieldEnabled: state.autoShieldEnabled,
     priorityTargetId: state.priorityTargetId,
     equippedAbilities: state.equippedAbilities,
+    rerollsLeft: state.rerollsLeft,
+    supportCallsDone: state.supportCallsDone,
+    bonusCallsPending: state.bonusCallsPending,
+    shotCounter: state.shotCounter,
+    supplies: state.supplies.map((s) => ({ id: s.spec.id, chargesLeft: s.chargesLeft })),
+    activeEffects: state.activeEffects,
     shieldBroke: state.shieldBroke,
-    bossKillTick: state.bossKillTick,
     spawnedCount: state.spawnedCount,
+    consecutiveKills: state.consecutiveKills,
+    wavesClearedThisRun: state.wavesClearedThisRun,
     firedNarratorTicks: state.firedNarratorTicks,
     enemies: state.enemies.map((e) => ({
       id: e.id, distance: e.distance, hp: e.hp, holdChargeTicks: e.holdChargeTicks, aliveTicks: e.aliveTicks,
