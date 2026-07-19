@@ -46,10 +46,8 @@ export function computePreviewStatic(current: LoadoutSnapshot, prospective: Load
 }
 
 /** Resolves the prospective (not-yet-purchased) loadout for the currently selected shop
- * kind — moved here from HubScene.ts (Phase C, fable-review-fixes-2026-07-18.md): a
- * pure function belongs next to computePreviewStatic above, which already resolves
- * `prospective ?? current`, not in the scene. Returns null when there's nothing to
- * preview (unknown tab, or the previewed kind/level is already what's equipped). */
+ * kind. Returns null when there's nothing to preview (unknown tab, or the previewed
+ * kind/level is already what's equipped). */
 export function applyProspectiveKind(
   tab: ShopTab, kind: string, previewLevel: number, current: LoadoutSnapshot, save: SaveData,
 ): LoadoutSnapshot | null {

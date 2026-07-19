@@ -118,17 +118,13 @@ if (import.meta.env.DEV) {
      * Navigate to a shop tab without clicking.
      * Usage: __cheat.navShop('motor')   // weapon | rear-weapon | side-weapon | shield | generator | motor | ship | supplies | loadout
      *
-     * Routes through callHubCheat's isActive() gate (Phase C, fable-review-fixes-
-     * 2026-07-18.md) — this used to look the scene up with a bare `game.scene.
-     * getScene('HubScene')` plus a "does this method exist" check, which is true even
+     * Must route through callHubCheat's isActive() gate, not a bare `game.scene.
+     * getScene('HubScene')` plus a "does this method exist" check — that's true even
      * while HubScene.create() is still mid-execution (Phaser instantiates every
      * registered scene at Game construction; getScene() finds it long before create()
      * ever runs — see callCombatCheat's own comment for the same reasoning). Calling
-     * this cheat in that window hit `rebuildContent()` reading `this.save`/
-     * `this.uiState` before `create()` had assigned them, throwing and — because the
-     * crash happened partway through `destroyAll()` — leaving `contentObjects`
-     * poisoned across scene restarts until a page reload. `create()` itself was
-     * already reset defensively (belt-and-braces) before this fix.
+     * this cheat in that window hits `rebuildContent()` reading `this.save`/
+     * `this.uiState` before `create()` has assigned them.
      */
     navShop: (tab: string) => {
       if (game.scene.isActive('HubScene')) {

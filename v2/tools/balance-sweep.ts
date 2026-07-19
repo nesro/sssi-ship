@@ -13,9 +13,9 @@
 //
 // The process exits non-zero if anything is flagged, so a caller can check `$?`
 // instead of reading the report — only load the full report when something actually
-// flags. Run anything past the quick default (500 runs) in the background
-// (docs/plans/mission-design-and-testing.md item 5) rather than waiting on it
-// synchronously; then read tools/balance-report.md (or .json) once it's done.
+// flags. Run anything past the quick default (500 runs) in the background rather than
+// waiting on it synchronously; then read tools/balance-report.md (or .json) once it's
+// done.
 
 import { writeFileSync } from 'fs';
 import { TICKS_PER_SECOND } from '../src/core/constants';
@@ -95,12 +95,11 @@ const LOADOUTS: Record<string, LoadoutSnapshot> = {
   // Branched into the second weapon kind — represents having upgraded off the starter.
   full: { ...starterKindLoadoutAtLevel(3), weapon: weaponAtKindIndex(1, 4) },
 };
-// t2/t3/t4 are the fixed reference loadouts for the T2/T3/T4 time-star tiers (F4
-// 2026-07-15 for t3/t4; B1 2026-07-18 for t2) — swept so their own stars can be
-// checked for reachability against the loadout they're actually designed for, not
-// against `intended` (which measured 0% for every T3/T4 star once those tiers stopped
-// being a synthetic ±1s spread on the intended loadout and started requiring genuinely
-// better gear).
+// t2/t3/t4 are the fixed reference loadouts for the T2/T3/T4 time-star tiers — swept so
+// their own stars can be checked for reachability against the loadout they're actually
+// designed for, not against `intended` (which would measure 0% for every T3/T4 star,
+// since those tiers require genuinely better gear, not a percentile spread on the
+// intended loadout).
 const LOADOUT_KEYS = [...Object.keys(LOADOUTS), 'intended', 't2', 't3', 't4'];
 
 /** `intended`/`t2`/`t3`/`t4` resolve per-mission or fixed (loadoutPresets.ts); the rest
@@ -135,12 +134,12 @@ function randomPolicies(seed: number, loadout: LoadoutSnapshot): RunPolicies {
   return { abilityPool: abilityPoolForLoadout(loadout), pickAbility: () => Math.floor(rng() * 3) };
 }
 
-// chooseTarget added 2026-07-15 (Item 7) — a realistic-player proxy who reads the
-// in-game "tap to target it" hint (docs/design/08-enemies.md) also acts on it, not just
-// optimizes cards. No measurable effect on m4/m6 (single-target pulse weapon + a
-// stationary turret that becomes front-most on its own — see Item 4's verify notes),
-// but on m3b it's load-bearing: a booster left un-prioritized keeps out-healing the
-// tank ahead of it, making a collision structurally guaranteed regardless of DPS.
+// chooseTarget models a realistic-player proxy who reads the in-game "tap to target
+// it" hint (docs/design/08-enemies.md) and acts on it, not just optimizes cards. No
+// measurable effect on m4/m6 (single-target pulse weapon + a stationary turret that
+// becomes front-most on its own), but on m3b it's load-bearing: a booster left
+// un-prioritized keeps out-healing the tank ahead of it, making a collision
+// structurally guaranteed regardless of DPS.
 function greedyPolicies(loadout: LoadoutSnapshot): RunPolicies {
   const priorities: Record<string, number> = { nexus: 0, quantum: 1, aegis: 2, comet: 3 };
   const pickAbility = (_state: CoreState, offer: AbilityOffer): number => {

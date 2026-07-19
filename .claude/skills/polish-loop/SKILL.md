@@ -59,7 +59,7 @@ Two directory roots matter and are easy to mix up:
   against the code and/or a screenshot taken with a wealthier save before calling it a
   bug, the same way the side-weapon "low contrast" flag turned out to be correct
   affordability dimming, not a defect.
-- **Enemy overlap**: `missions.ts`'s `MIN_VISUAL_SPACING` table (added 2026-07-17) is a
+- **Enemy overlap**: `missions.ts`'s `MIN_VISUAL_SPACING` table is a
   per-kind floor enforced by `missions.test.ts` — `pnpm test` already fails loudly if any
   mission event's `spacing` drops below it, so a same-kind overlap regression can't land
   silently. That floor only guarantees two enemies of the SAME kind in one spawn event
@@ -143,7 +143,12 @@ implementing.
 - Make the change. Prefer real, root-cause fixes over papering-over (this session's
   precedent: the BACK/DEBUG dead-zone was fixed by moving the button so its hit area
   needed no edge-clamp at all, not by just writing it up as a known trade-off).
-- After every change: `pnpm lint && pnpm build:dry && pnpm test` (must all pass clean).
+- After every change: `pnpm lint && pnpm lint:comments && pnpm build:dry && pnpm test`
+  (must all pass clean). Findings, reasoning, and review attributions belong in
+  `docs/known-issues.md`, `docs/plans/*.md`, and commit messages — never in source
+  comments; `pnpm lint:comments` enforces this (see `v2/CLAUDE.md`'s "Comment style"
+  rule) and a session that writes a dated/narrative comment will fail it, not just
+  drift the style.
 - Re-run `pnpm audit-taps` and the relevant `pnpm screenshot` shot(s); actually open the
   regenerated PNGs (see step 1's checklist) rather than trusting a clean exit code — a
   "0 failures" audit result only means the states/checks it runs found nothing, not that
@@ -186,8 +191,9 @@ Triage what comes back the same way this loop did the first time:
 
 ## 5. Wrap the round
 
-- Final full sweep, run from `v2/`: `pnpm lint && pnpm build:dry && pnpm test && pnpm
-  audit-taps && pnpm screenshot` (no shot filters — the whole batch). Then actually open
+- Final full sweep, run from `v2/`: `pnpm lint && pnpm lint:comments && pnpm build:dry
+  && pnpm test && pnpm audit-taps && pnpm screenshot` (no shot filters — the whole
+  batch). Then actually open
   the screenshots for every screen this round touched, plus a spot-check of a few others,
   to catch cross-screen regressions — the batch re-running clean is necessary but not
   sufficient; nothing in this harness diffs images automatically, a human/agent eye is

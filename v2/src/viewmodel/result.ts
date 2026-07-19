@@ -44,9 +44,7 @@ export interface ResultViewModel {
    * (SaveManager's applyDailyResult already applied DAILY_COIN_MULT to result.coins) so
    * `coinsEarned` above reflects reality, plus whether this run set a new personal best. */
   daily?: { isNewBest: boolean };
-  /** The mission a NEXT MISSION button should start, or null if none applies — moved
-   * here from ResultScene.ts (Phase C, fable-review-fixes-2026-07-18.md): untested
-   * scene logic scanning MISSION_UNLOCK_EDGES belongs in the viewmodel. Only
+  /** The mission a NEXT MISSION button should start, or null if none applies. Only
    * meaningful when `buttons.kind === 'standard'` (the view never renders a NEXT
    * MISSION button otherwise), but computed unconditionally here since it's cheap and
    * correct either way. A mission "completes" (unlocks its MISSION_UNLOCK_EDGES

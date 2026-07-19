@@ -9,6 +9,7 @@
     "build:dry": "tsc --noEmit",
     "preview": "vite preview",
     "lint": "eslint .",
+    "lint:comments": "tsx tools/lint-comments.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "sim": "tsx tools/simulate.ts",

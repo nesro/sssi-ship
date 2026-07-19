@@ -38,24 +38,16 @@ import { ManagedObjectGroup } from './ManagedObjectGroup';
 const SHIP_CENTER_X = GAME_X + Math.floor(GAME_WIDTH / 2); // 480 logical
 const SHIP_Y = LOGICAL_HEIGHT - 80;                         // 460 logical
 const GAME_TOP_Y = 30;                                      // top margin for progress bar
-// Boss-only floor for the overhead HP bar/label's Y position (2026-07-17/18,
-// polish-loop) — every enemy's sy equals exactly GAME_TOP_Y at spawn (laneToY(100,...)
-// reduces to topY for any kind), and the bar/label sit `sy - offset` above that. For
+// Boss-only floor for the overhead HP bar/label's Y position. Every enemy's sy equals
+// exactly GAME_TOP_Y at spawn, and the bar/label sit `sy - offset` above that. For
 // ordinary enemies (offset 34) that's a ~4px overshoot, gone within a tick of normal
-// movement — imperceptible. For the boss specifically (offset 58, speed 0.25, plus its
-// own deliberate APPROACH/STALL cycle — conveyor.ts's F3 anticlimax fix, not touched
-// here) it's a real, multi-second window where the bar/label render with a NEGATIVE Y,
-// clipped off-canvas entirely — confirmed via a live probe (computed label Y ~= -29 at
-// boss spawn) and a screenshot showing the boss sprite clearly on screen with no bar or
-// label above it. Deliberately boss-only, not a floor shared by every enemy: a shared
-// floor would pin ANY two closely-spawned regular enemies to the exact same Y for their
-// first ~50px of travel (single-lane game, sprite.x is always SHIP_CENTER_X), rendering
-// two overprinting, conflicting HP labels — a real regression the fix must not
-// introduce (caught in review, not shipped). +16 keeps the boss overlay clear of the
-// mission-title text's own row for probe/cheat/screenshot spawns and the daily
-// mission's early mini-boss — in real play the title's already faded (2.5s) well before
-// m6's own boss spawns at seconds(254), so this mostly matters for tooling, not
-// something a real player would otherwise see overlap.
+// movement. For the boss (offset 58, speed 0.25, plus its own APPROACH/STALL cycle —
+// conveyor.ts) it's a multi-second window where the bar/label render with a negative Y,
+// clipped off-canvas. Deliberately boss-only, not a floor shared by every enemy: a
+// shared floor would pin any two closely-spawned regular enemies to the exact same Y
+// for their first ~50px of travel (single-lane game, sprite.x is always
+// SHIP_CENTER_X), rendering two overprinting, conflicting HP labels. +16 keeps the
+// boss overlay clear of the mission-title text's own row.
 const MIN_BOSS_HP_OVERLAY_TOP_Y = GAME_TOP_Y + 16;
 // Half of the ship's baked 52px-tall texture (textures.ts's buildShipTextures) — used by
 // laneToY so a collision (core distance=0) reads as the enemy's edge touching the ship's
@@ -134,11 +126,10 @@ const BOOSTER_BUFF_GREEN = 0x22ee44;
 const HEAL_FLOAT_INTERVAL_MS = 700;
 
 // Which HUD row (if any) a tutorial's narrator line should point a live arrow at while
-// it's shown (2026-07-17, playtest feedback: "I want to explain the player how the
-// energy bar works... and how the shield absorbs"). Keyed by missionId, then line
-// index — a view-only presentation choice, deliberately NOT part of core's
-// NarratorEvent (src/core/types.ts stays plain text data). Keep in sync by hand with
-// T1_NARRATOR_EVENTS/T2_NARRATOR_EVENTS's line order (missions.ts).
+// it's shown. Keyed by missionId, then line index — a view-only presentation choice,
+// deliberately NOT part of core's NarratorEvent (src/core/types.ts stays plain text
+// data). Keep in sync by hand with T1_NARRATOR_EVENTS/T2_NARRATOR_EVENTS's line order
+// (missions.ts).
 const NARRATOR_ARROW_TARGETS: Record<string, Record<number, number>> = {
   t1: { 2: HUD_ROW_SHLD, 3: HUD_ROW_SHLD, 4: HUD_ROW_SHLD },
   t2: { 0: HUD_ROW_ENRG, 1: HUD_ROW_ENRG, 2: HUD_ROW_ENRG },
@@ -161,12 +152,12 @@ export interface CombatSceneData {
  * is pending the core pauses itself; this scene just shows the card overlay.
  */
 export class CombatScene extends Phaser.Scene {
-  core!: CoreState; // not private: CombatCheats.ts needs direct access (Phase C)
+  core!: CoreState; // not private: CombatCheats.ts needs direct access
   private save!: SaveData;
   private hud!: CombatHud;
   private cardOverlay!: CardOverlay;
   private supplyButtons!: SupplyButtons;
-  narrator!: NarratorBar; // not private: CombatCheats.ts needs direct access (Phase C)
+  narrator!: NarratorBar; // not private: CombatCheats.ts needs direct access
   private cheats!: CombatCheats;
   private shipSprite!: Phaser.GameObjects.Image;
   private thrusterGfx!: Phaser.GameObjects.Graphics;
@@ -175,11 +166,10 @@ export class CombatScene extends Phaser.Scene {
   private motorKindColor: number = 0xff44cc;
   private thrusterPhase = 0;
   private enemySprites = new Map<number, Phaser.GameObjects.Image>();
-  /** Current/max HP text over each enemy's bar (2026-07-17, playtest feedback: "I want
-   * to see number of max hp and current hp in the healthbar of each enemy"). A separate
-   * Text-object Map, not drawn on hpBarGfx — Graphics can't render text, and unlike the
-   * bar fill (redrawn from scratch every frame) these persist and reposition, same
-   * lifecycle as enemySprites. */
+  /** Current/max HP text over each enemy's bar. A separate Text-object Map, not drawn
+   * on hpBarGfx — Graphics can't render text, and unlike the bar fill (redrawn from
+   * scratch every frame) these persist and reposition, same lifecycle as
+   * enemySprites. */
   private hpLabels = new Map<number, Phaser.GameObjects.Text>();
   private targetMarkerGfx!: Phaser.GameObjects.Graphics;
   private targetMarkerPhase = 0;
@@ -256,9 +246,9 @@ export class CombatScene extends Phaser.Scene {
     nameText: Phaser.GameObjects.Text;
     cooldownText: Phaser.GameObjects.Text;
   }> = [];
-  exitConfirmObjects = new ManagedObjectGroup(); // not private: CombatCheats.ts needs direct access (Phase C)
+  exitConfirmObjects = new ManagedObjectGroup(); // not private: CombatCheats.ts needs direct access
   private narratorModalObjects = new ManagedObjectGroup();
-  narratorLineIdx = 0; // not private: CombatCheats.ts needs direct access (Phase C)
+  narratorLineIdx = 0; // not private: CombatCheats.ts needs direct access
   /** Reference to whichever narratorEvents.lines array is currently on screen — tick.ts
    * assigns a fresh array (`[...event.lines]`) each time a new event fires, so `!==`
    * reliably distinguishes "a new event replaced the one still showing" from "the same
@@ -272,8 +262,8 @@ export class CombatScene extends Phaser.Scene {
    * 'enemy-killed' visual event (detectHits(), every tick), consumed on death
    * (onEnemyDeath()). Deliberately NOT pre-populated from the enemy's raw spec
    * coinReward at spawn: a collision self-death never credits coins
-   * (applyEnemyDeathEffects, core/combat.ts) and must show no coin popup at all,
-   * not the enemy's nominal reward (found + fixed 2026-07-18). */
+   * (applyEnemyDeathEffects, core/combat.ts) and must show no coin popup at all, not
+   * the enemy's nominal reward. */
   private enemyCoinRewards = new Map<number, number>();
   /** HP snapshot from before the last tick — used to detect mid-tick hits for the hit burst. */
   private previousHps = new Map<number, number>();
@@ -372,10 +362,9 @@ export class CombatScene extends Phaser.Scene {
     // real bottom edge measured 10px from the screen edge (tools/tap-target-audit.ts).
     const exitX = px(BTN_X + BTN_PANEL_W / 2);
     const exitY = px(LOGICAL_HEIGHT - PANEL_BOTTOM_MARGIN - ROW_PITCH / 2);
-    // Brightened 2026-07-17 (playtest feedback: "looks disabled/buggy") — this button was
-    // always fully functional, just styled dark enough with no hover/press feedback of
-    // its own that it read as inert. Kept visually secondary to the toggles above it
-    // (still the dimmest interactive element in the panel), just no longer illegible.
+    // Kept visually secondary to the toggles above it (still the dimmest interactive
+    // element in the panel) while staying bright enough to read as functional, not
+    // disabled.
     const exitBg = this.add
       .rectangle(exitX, exitY, px(BTN_PANEL_W - 40), px(EXIT_VISUAL_H), 0x1a1020, 0.9)
       .setStrokeStyle(px(1), 0x6644aa)
@@ -588,11 +577,10 @@ export class CombatScene extends Phaser.Scene {
   }
 
   /** Fires for ANY hp drop detectHits() sees, weapon fire or the collision shield-burst
-   * alike (2026-07-17, playtest feedback: "when a damage is done (by a missile or
-   * shield contact) I want to see numbers too") — detectHits() itself is already
-   * source-agnostic (a plain hp-before/after comparison), so no separate tracking of
-   * "who caused this" is needed; conveyor.ts's advanceEnemies applies the shield-burst
-   * to survivors' `.hp` the same way core/combat.ts's weapon-fire path does. */
+   * alike — detectHits() itself is source-agnostic (a plain hp-before/after
+   * comparison), so no separate tracking of "who caused this" is needed;
+   * conveyor.ts's advanceEnemies applies the shield-burst to survivors' `.hp` the same
+   * way core/combat.ts's weapon-fire path does. */
   private spawnDamageFloat(x: number, y: number, amount: number): void {
     if (amount < 0.5) return;
     const txt = this.add.text(x, y - px(8), `-${amount.toFixed(0)}`, {
@@ -724,7 +712,7 @@ export class CombatScene extends Phaser.Scene {
     }
   }
 
-  handleCardAction(action: number): void { // not private: CombatCheats.ts needs direct access (Phase C)
+  handleCardAction(action: number): void { // not private: CombatCheats.ts needs direct access
     const prevCount = this.core.pickedAbilityIds.length;
     resolveAbilityAction(this.core, action);
     if (this.core.pickedAbilityIds.length > prevCount) {
@@ -846,7 +834,7 @@ export class CombatScene extends Phaser.Scene {
     // A permanent loadout choice (unlike ability slots, which fill in mid-run) — an
     // unowned system stays hidden rather than rendering a labeled "NO REAR WEAPON" row;
     // half the panel reading as placeholders-for-things-you-don't-have was its own
-    // legibility problem (2nd Fable pass). Its absence is what communicates absence.
+    // legibility problem. Its absence is what communicates absence.
     if (!rearEquipped) {
       this.rearBg.setVisible(false).removeInteractive();
       this.rearWeaponLabel.setVisible(false);
@@ -877,7 +865,7 @@ export class CombatScene extends Phaser.Scene {
     // A permanent loadout choice (unlike ability slots, which fill in mid-run) — an
     // unowned system stays hidden rather than rendering a labeled "NO SIDE WEAPON" row;
     // half the panel reading as placeholders-for-things-you-don't-have was its own
-    // legibility problem (2nd Fable pass). Its absence is what communicates absence.
+    // legibility problem. Its absence is what communicates absence.
     if (!sideEquipped) {
       this.sideWeaponBg.setVisible(false).removeInteractive();
       this.sideWeaponLabel.setVisible(false);
@@ -969,14 +957,14 @@ export class CombatScene extends Phaser.Scene {
     });
   }
 
-  handleBoostTap(slot: number): void { // not private: CombatCheats.ts needs direct access (Phase C)
+  handleBoostTap(slot: number): void { // not private: CombatCheats.ts needs direct access
     const supply = this.core.supplies[slot];
     if (supply === undefined || supply.chargesLeft <= 0 || this.core.status !== 'running') return;
     applyBoost(this.core, slot);
     Sound.boost();
   }
 
-  handleSideWeaponTap(): void { // not private: CombatCheats.ts needs direct access (Phase C)
+  handleSideWeaponTap(): void { // not private: CombatCheats.ts needs direct access
     if (!computeSideWeaponButtonViewModel(this.core).canFire) return;
     const sideWeapon = this.core.loadout.sideWeapon;
     if (sideWeapon === null) return;
@@ -1008,7 +996,7 @@ export class CombatScene extends Phaser.Scene {
     }
   }
 
-  showNarratorLine(lines: string[], idx: number): void { // not private: CombatCheats.ts needs direct access (Phase C)
+  showNarratorLine(lines: string[], idx: number): void { // not private: CombatCheats.ts needs direct access
     this.hideNarratorModal();
     const depth = 35;
     const panelW = 520;
@@ -1460,13 +1448,11 @@ export class CombatScene extends Phaser.Scene {
     }
   }
 
-  /** Persistent current/max HP text just above each enemy's bar (2026-07-17, playtest
-   * feedback: "I want to see number of max hp and current hp in the healthbar of each
-   * enemy. I want the player to see exact number"). Reuses drawEnemyHpBar's own bar-top
-   * offset and color-tier thresholds so the number always sits directly over its bar and
-   * matches its color, regardless of boss scaling. Current HP rounds up (ceil), not down
-   * — an enemy on a fractional sliver of hp (e.g. mid-regen) should never flash "0" while
-   * still alive. */
+  /** Persistent current/max HP text just above each enemy's bar. Reuses
+   * drawEnemyHpBar's own bar-top offset and color-tier thresholds so the number always
+   * sits directly over its bar and matches its color, regardless of boss scaling.
+   * Current HP rounds up (ceil), not down — an enemy on a fractional sliver of hp (e.g.
+   * mid-regen) should never flash "0" while still alive. */
   private updateEnemyHpLabel(enemy: EnemyState, sx: number, sy: number): void {
     const barTop = this.hpOverlayBarTop(sy, enemy.isBoss);
     const frac = enemy.hp / enemy.maxHp;
@@ -1487,8 +1473,8 @@ export class CombatScene extends Phaser.Scene {
     label.setText(`${String(Math.ceil(enemy.hp))}/${String(Math.round(enemy.maxHp))}`);
   }
 
-  /** Fable-fun-review-followup.md Item 6: the UI signal for "you're holding a blocker and
-   * charge is accruing/frozen" — a filling ring around the blocker. Hugs the sprite bounds
+  /** The UI signal for "you're holding a blocker and charge is accruing/frozen" — a
+   * filling ring around the blocker. Hugs the sprite bounds
    * tightly (not a big halo) since blockers commonly queue two-deep on the conveyor and a
    * wide ring produces an unreadable venn-diagram overlap between them. Color ramps
    * amber→red as charge builds (a "heat" reading, and distinct from the booster-buff
@@ -1612,7 +1598,7 @@ export class CombatScene extends Phaser.Scene {
     }
   }
 
-  showExitConfirm(): void { // not private: CombatCheats.ts needs direct access (Phase C)
+  showExitConfirm(): void { // not private: CombatCheats.ts needs direct access
     if (this.exitConfirmObjects.length > 0) return;
     const cx = px(LOGICAL_WIDTH / 2);
     const cy = px(LOGICAL_HEIGHT / 2);
@@ -1650,13 +1636,12 @@ export class CombatScene extends Phaser.Scene {
    * handleCardAction/cheatPickCard elsewhere in this class). Campaign missions keep
    * their existing behavior — abandon forfeits all progress, no result is ever built.
    * The daily banks its partial run instead (see showExitConfirm's subtitle above). */
-  confirmAbandon(): void { // not private: CombatCheats.ts needs direct access (Phase C)
-    // hideExitConfirm() (destroys + clears), not a bare array clear — the daily branch
+  confirmAbandon(): void { // not private: CombatCheats.ts needs direct access
+    // hideExitConfirm() (destroys + clears), not a bare array clear: the daily branch
     // below stays in this scene for maybeFinish()'s 600ms delayedCall before cutting to
     // ResultScene (unlike the campaign branch's immediate scene.start), so a bare clear
-    // left the backdrop/buttons fully rendered AND interactive for that whole window:
-    // CANCEL became a silent no-op (Fable's review caught this — screenshots never saw
-    // it, since the shot's own settle wait outlasts the 600ms).
+    // would leave the backdrop/buttons fully rendered and interactive for that whole
+    // window, making CANCEL a silent no-op.
     this.hideExitConfirm();
     if (this.core.mission.id === DAILY_MISSION_ID) {
       this.wasAbandoned = true;
@@ -1706,8 +1691,8 @@ export class CombatScene extends Phaser.Scene {
   }
 
   // ── Dev-only cheats (__cheat.combat.*, main.ts) — implementations live in
-  // CombatCheats.ts (Phase C, fable-review-fixes-2026-07-18.md); these are thin
-  // delegates so main.ts's `scene[method]` lookup convention still finds them by name.
+  // CombatCheats.ts; these are thin delegates so main.ts's `scene[method]` lookup
+  // convention still finds them by name.
 
   // fallow-ignore-next-line unused-class-member
   cheatFastForward(ticks: number): void { this.cheats.fastForward(ticks); }

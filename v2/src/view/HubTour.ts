@@ -22,12 +22,10 @@ const DEPTH_TARGET = 51;
 const DEPTH_UI = 52;
 const RING_PADDING = 8;
 
-// Popup-card style matching the tutorial narrator modal (2026-07-17, playtest
-// feedback: "the tutorial is better with the popup windows, I would like to have the
-// same style even in the main menu tutorial... maybe with arrows"), not the old plain-
-// caption-plus-ring look. Fixed position, not next-to-target: NAV_ITEMS' 5 main-menu
-// buttons (HubScene.ts) are stacked vertically 142-398, but only the first 4 are ever
-// tour targets (CREDITS, y=398, deliberately isn't — see HubScene.ts's HUB_TOUR_STEPS
+// Popup-card style matching the tutorial narrator modal, not a plain caption-plus-ring
+// look. Fixed position, not next-to-target: NAV_ITEMS' 5 main-menu buttons
+// (HubScene.ts) are stacked vertically 142-398, but only the first 4 are ever tour
+// targets (CREDITS, y=398, deliberately isn't — see HubScene.ts's HUB_TOUR_STEPS
 // comment) — so y=370-520 is clear of every real target's ring, at any step, without
 // needing to dynamically dodge whichever button is currently highlighted.
 const PANEL_W = 640;
@@ -45,26 +43,23 @@ type Targetable = Phaser.GameObjects.Text | Phaser.GameObjects.Shape | Phaser.Ga
  * Coach-mark tour: dims the screen, highlights the real, currently-on-screen UI
  * element(s) tagged for each step by temporarily raising their depth above the dim
  * backdrop (so they render un-obscured — no visual clone needed) and disabling their
- * input for the tour's duration (so tapping the spotlighted target can't navigate away
- * mid-explanation and destroy the very object(s) the tour is tracking — see
- * docs/plans/first-open-and-tutorial-tour.md's Part B for why this replaced the
- * originally-sketched "just raise the depth" approach). Targets are found at each step
- * by scanning the scene for every GameObject sharing a `.setData('tourId', ...)` tag and
- * reading real `getBounds()` (unioned across all of them for the ring), not by
- * recomputing layout math — one tourId can tag multiple sibling objects (a row's
- * background plus its separate label Text(s)), fixed 2026-07-17/18 after screenshots
- * showed shop/dispatch tour targets rendering as an empty highlighted box with no label
- * inside it, since only the background had ever been tagged. A fixed-position popup
- * card (below the button block, see PANEL_CY's comment) explains the step, connected to
- * the ring by an arrow (drawPointerArrow, widgets.ts) — same visual language as the
- * tutorial narrator modal (CombatScene.ts's showNarratorLine).
+ * input for the tour's duration, so tapping the spotlighted target can't navigate away
+ * mid-explanation and destroy the very object(s) the tour is tracking. Targets are
+ * found at each step by scanning the scene for every GameObject sharing a
+ * `.setData('tourId', ...)` tag and reading real `getBounds()` (unioned across all of
+ * them for the ring), not by recomputing layout math — one tourId can tag multiple
+ * sibling objects (a row's background plus its separate label Text(s)); every tagged
+ * sibling must be raised, or an untagged label renders hidden behind the dim backdrop.
+ * A fixed-position popup card (below the button block, see PANEL_CY's comment) explains
+ * the step, connected to the ring by an arrow (drawPointerArrow, widgets.ts) — same
+ * visual language as the tutorial narrator modal (CombatScene.ts's showNarratorLine).
  */
 export class HubTour {
   private readonly scene: Phaser.Scene;
   private readonly steps: TourStep[];
   private stepIndex = 0;
   private stepObjects = new ManagedObjectGroup();
-  // One tourId can tag MULTIPLE sibling GameObjects (2026-07-17/18 fix) — a shop tab or
+  // One tourId can tag MULTIPLE sibling GameObjects — a shop tab or
   // dispatch row is a background rectangle plus one-or-more separate label Texts, not a
   // single combined object like the main-menu buttons (addTextButton bakes its
   // background into the Text's own style, so it was never affected). Raising only the

@@ -96,21 +96,18 @@ export function intendedLoadoutForMission(missionId: string, shieldKindIndex = 0
 }
 
 /**
- * Fixed, mission-independent reference loadouts for the T3/T4 time-star tiers (F4,
- * docs/known-issues.md, decision 2026-07-15 + investigation). T1/T2 stay pinned to
- * each mission's own `intendedLoadoutForMission` (unchanged) — this is specifically
+ * Fixed, mission-independent reference loadouts for the T3/T4 time-star tiers. T1/T2
+ * stay pinned to each mission's own `intendedLoadoutForMission` — this is specifically
  * for T3/T4, which need to be objectively *faster* clears (via a compressed timeline),
  * not just a percentile spread of the same run.
  *
- * A first attempt pairing only the faster motor with a bumped generator (motor-2/3 +
- * everything else at the mission's own intended level) measured as still completely
- * unwinnable on m1/m3 even at max generator (0% at 300 runs) — motor level compresses
- * the *timeline* (2.0x/3.0x at motor-2/3), not just power draw, so the real requirement
- * is more DPS to keep pace with a 2-3x faster spawn schedule, not more energy. Sweeping
- * weapon level confirmed this: m1 needed weapon Lv5 (not just a higher generator) to
- * clear at motor-3. These two fixed tiers were verified at 500 runs/mission across all
- * 7 main missions: T3 ≥98%, T4 100% everywhere — a reliable, uniform "if you can afford
- * this gear, you can beat this tier" bar, independent of any one mission's own budget.
+ * Motor level compresses the *timeline* (2.0x/3.0x at motor-2/3), not just power draw,
+ * so clearing at a faster motor tier needs more DPS to keep pace with a 2-3x faster
+ * spawn schedule, not more energy — pairing a faster motor with only a bumped
+ * generator is unwinnable. These two fixed tiers are verified at 500 runs/mission
+ * across all 7 main missions: T3 ≥98%, T4 100% everywhere — a reliable, uniform "if
+ * you can afford this gear, you can beat this tier" bar, independent of any one
+ * mission's own budget.
  */
 export function timeStarT3Loadout(): LoadoutSnapshot {
   return {
@@ -127,21 +124,18 @@ export function timeStarT3Loadout(): LoadoutSnapshot {
 }
 
 /**
- * Fixed, mission-independent reference loadout for the T2 time-star tier (2026-07-18
- * fix, docs/plans/fable-review-fixes-2026-07-18.md's B1). Before this, T1 and T2 were
- * BOTH the 75th/50th percentile of the SAME `intendedLoadoutForMission` run — since a
- * greedy-strategy clear at one fixed loadout has almost no run-to-run duration
- * variance, T1 and T2 collapsed to the same number (or, on m6's boss-time family,
- * T1/T2/T3 all collapsed together) on every main mission, so two of the four time-stars
- * were never actually distinguishable. Mirrors the same fixed-tier pattern that already
- * fixed T3/T4 (F4, 2026-07-15): weapon3/shield3/gen4/motor2 — one weapon and one
- * generator level below `timeStarT3Loadout`, same motor tier. Sim-verified (2000
- * runs/mission, greedy) at 100% clear with a median duration strictly between each
- * mission's own T1 and T3 thresholds on m1/m2/m3/m3b/m4 — the five missions whose T2
- * this anchors. NOT used by m5 (its intended loadout already runs motor-2, so this
- * tier's duration ties T1 exactly — m5's T2 is a T1↔T3 midpoint instead) or m6 (its
- * boss-time family measures bossKillTick, not duration — see m6's stars comment in
- * missions.ts). Both exceptions are documented at their own star blocks.
+ * Fixed, mission-independent reference loadout for the T2 time-star tier. T1 and T2
+ * being both percentiles of the SAME `intendedLoadoutForMission` run collapses them to
+ * the same number: a greedy-strategy clear at one fixed loadout has almost no
+ * run-to-run duration variance. Mirrors the same fixed-tier pattern as T3/T4:
+ * weapon3/shield3/gen4/motor2 — one weapon and one generator level below
+ * `timeStarT3Loadout`, same motor tier. Sim-verified (2000 runs/mission, greedy) at
+ * 100% clear with a median duration strictly between each mission's own T1 and T3
+ * thresholds on m1/m2/m3/m3b/m4 — the five missions whose T2 this anchors. NOT used by
+ * m5 (its intended loadout already runs motor-2, so this tier's duration ties T1
+ * exactly — m5's T2 is a T1↔T3 midpoint instead) or m6 (its boss-time family measures
+ * bossKillTick, not duration — see m6's stars comment in missions.ts). Both exceptions
+ * are documented at their own star blocks.
  */
 export function timeStarT2Loadout(): LoadoutSnapshot {
   return {

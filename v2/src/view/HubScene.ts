@@ -50,11 +50,9 @@ const CONTENT_TOP = 70;
 const CONTENT_PAD = 20;       // mobile safe-area left/right margin
 
 // Settings panel's left-column row rhythm (buildSettingsContent/buildDevToolsSection).
-// Every row offset below is derived from these two, not hand-copied — a prior version
-// hardcoded each Y as its own magic number with a comment claiming they were "named,
-// computed values kept in sync," which was false (Fable's post-implementation review
-// caught the contradiction): they were literals that had to be manually re-typed in
-// lockstep on every insertion. MUSIC/SFX/DEV MODE/HOW TO PLAY sit on SETTINGS_ROW_PITCH;
+// Every row offset below must stay derived from these two, never hand-copied as its own
+// literal — that desyncs silently on the next row insertion. MUSIC/SFX/DEV MODE/HOW TO
+// PLAY sit on SETTINGS_ROW_PITCH;
 // the DEV TOOLS section (only shown when devOn) starts tighter below HOW TO PLAY (a
 // section header, not another full row) and then resumes the same pitch internally.
 const SETTINGS_ROW_PITCH = 52;
@@ -99,13 +97,11 @@ const NAV_ITEMS: { key: NavItem; label: string; color: number }[] = [
   { key: 'credits',                 label: 'CREDITS',                 color: 0x8888aa },
 ];
 
-// Main-menu button tour (docs/plans/first-open-and-tutorial-tour.md, Part B) — one step
-// per NAV_ITEMS key, matched at runtime via .setData('tourId', ...) in buildMainMenu.
-// Voice matches W0_NARRATOR_EVENTS's direct "Commander…" briefing tone (missions.ts).
-// Captions lengthened 2026-07-17 (playtest feedback: restyle to the popup-modal look
-// "and make it more detailed") — CREDITS (the 5th NAV_ITEMS entry) deliberately has no
-// step here: supplementary content, not core navigation, same call already made for
-// DAILY MISSION's galaxy-map node.
+// Main-menu button tour — one step per NAV_ITEMS key, matched at runtime via
+// .setData('tourId', ...) in buildMainMenu. Voice matches W0_NARRATOR_EVENTS's direct
+// "Commander…" briefing tone (missions.ts). CREDITS (the 5th NAV_ITEMS entry)
+// deliberately has no step here: supplementary content, not core navigation, same call
+// already made for DAILY MISSION's galaxy-map node.
 const HUB_TOUR_STEPS: TourStep[] = [
   {
     tourId: 'missions',
@@ -125,8 +121,7 @@ const HUB_TOUR_STEPS: TourStep[] = [
   },
 ];
 
-// Screen-specific coach-mark tours (2026-07-17, playtest feedback: "the shop and
-// dispatch needs tutorial as well") — each fires once, the first time its own screen
+// Screen-specific coach-mark tours — each fires once, the first time its own screen
 // opens (SaveData's shopTourSeen/dispatchTourSeen), independent of HUB_TOUR_STEPS
 // above and of each other. Targets are tagged onto SHOP_TABS' tab buttons and the
 // Dispatch subscription rows — both always rendered regardless of what's selected, so
@@ -247,8 +242,7 @@ export class HubScene extends Phaser.Scene {
    * CombatScene's exit-confirm, the settings panel's DEV MODE/ADD COINS/UNLOCK STARS
    * buttons — none of them pass data) keeps re-delivering this SAME retained object to
    * init() forever, replaying the tour (or re-landing on the shop tab) after every
-   * mission and every dev-tools restart for the rest of the session. Confirmed as a
-   * real, reproducible bug (Fable's post-implementation review), not a theoretical one.
+   * mission and every dev-tools restart for the rest of the session.
    * Setting `data.showTour = false`/`data.initialNav = null` mutates the retained object
    * itself, so the next bare start() sees both already cleared. */
   // fallow-ignore-next-line unused-class-member
@@ -393,8 +387,7 @@ export class HubScene extends Phaser.Scene {
     if (!skipScreenTour) this.maybeShowScreenTour(nav);
   }
 
-  /** Screen-specific coach-mark tours (2026-07-17, playtest feedback: "the shop and
-   * dispatch needs tutorial as well") — each fires once, the first time its own screen
+  /** Screen-specific coach-mark tours — each fires once, the first time its own screen
    * is opened (SHOP_TOUR_STEPS/DISPATCH_TOUR_STEPS' targets are tagged in
    * buildShopContent/renderDRLeftPanel, both already rendered by the rebuildContent()
    * call just above). Independent of HUB_TOUR_STEPS (the main-menu button tour) and of
@@ -655,9 +648,9 @@ export class HubScene extends Phaser.Scene {
     this.addC(this.add.rectangle(0, px(INFO_PANEL_TOP), px(LOGICAL_WIDTH), px(INFO_PANEL_H), 0x06060f, 0.92).setOrigin(0, 0));
 
     if (detail === null) {
-      // Onboarding lives here now, not a separate blocking scene (removed 2026-07-17,
-      // playtest feedback) — this is the very first thing a new player's eye lands on
-      // once they open the missions screen, and it's empty space otherwise.
+      // Onboarding lives here, not a separate blocking scene — this is the very first
+      // thing a new player's eye lands on once they open the missions screen, and it's
+      // empty space otherwise.
       const promptY = showSkipTutorialsHint ? INFO_PANEL_TOP + INFO_PANEL_H / 2 - 14 : INFO_PANEL_TOP + INFO_PANEL_H / 2;
       this.addC(this.add.text(px(LOGICAL_WIDTH / 2), px(promptY), 'Select a mission', {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(11))}px`, color: cssColor(0x445566),
@@ -678,21 +671,18 @@ export class HubScene extends Phaser.Scene {
 
     // Checked before the generic canStart/"LOCKED" branch below. When `daily` is
     // present the node has passed its m1-completion gate (computeMissionDetail omits
-    // the field entirely while locked, falling through to the generic LOCKED panel —
-    // 2026-07-18, B2), so detail.canStart here means "available today," which needs
-    // its own copy (best score + reset countdown), not the campaign's bare "LOCKED"
-    // message.
+    // the field entirely while locked, falling through to the generic LOCKED panel), so
+    // detail.canStart here means "available today," which needs its own copy (best
+    // score + reset countdown), not the campaign's bare "LOCKED" message.
     if (detail.daily !== undefined) {
       this.renderDailyInfoPanel(detail, detail.daily);
       return;
     }
 
     // Same defense-in-depth as the START button below (only cheat-reachable — real taps
-    // can't select a locked node, HubScene.ts's renderMissionNode) — the panel used to
-    // print the real name, duration, and full star list for a locked mission regardless,
-    // which is the exact information the "???" galaxy-map label exists to hide. Found in
-    // the same screenshot (`hub-mission-detail-locked`) that closed the START-button gap;
-    // missed at the time (docs/known-issues.md's coverage-sweep entry, Fable's review).
+    // can't select a locked node, HubScene.ts's renderMissionNode): never print the real
+    // name, duration, or full star list for a locked mission — that's exactly the
+    // information the "???" galaxy-map label exists to hide.
     if (!detail.canStart) {
       this.addC(this.add.text(px(LOGICAL_WIDTH / 2), px(INFO_PANEL_TOP + INFO_PANEL_H / 2), 'LOCKED', {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(11))}px`, color: cssColor(0x445566),
@@ -823,8 +813,8 @@ export class HubScene extends Phaser.Scene {
           align: 'center',
         }).setOrigin(0.5).setAlpha(active ? 1 : 0.8)
           // Same tourId as this tab's own bg rectangle above — HubTour.ts raises every
-          // GameObject sharing a tourId, not just one; tagging only the bg left this
-          // label hidden behind the tour's dim backdrop (fixed 2026-07-17/18).
+          // GameObject sharing a tourId, not just one; tagging only the bg leaves this
+          // label hidden behind the tour's dim backdrop.
           .setData('tourId', `shop-tab-${tab.key}`),
       );
     });
@@ -963,11 +953,10 @@ export class HubScene extends Phaser.Scene {
     return handler(this.save, mutation.itemId);
   }
 
-  /** Shared cell renderer for renderLevelChips/renderSubLevelChips below (B5 leftover
-   * dedup, fable-review-fixes-2026-07-18.md) — the background rectangle + label +
-   * sub-label skeleton is identical between the two; everything genuinely different
-   * (hit-area strategy, dimmed/interactive logic, tap handler) has its own documented
-   * bug history — see each caller's own comments — and stays there, not merged in here.
+  /** Shared cell renderer for renderLevelChips/renderSubLevelChips below — the
+   * background rectangle + label + sub-label skeleton is identical between the two.
+   * Everything genuinely different (hit-area strategy, dimmed/interactive logic, tap
+   * handler) stays in each caller, not merged in here — see each caller's own comments.
    * Returns the rectangle so the caller can still attach its own interactivity. */
   private renderChipCell(opts: {
     x: number; y: number; width: number; height: number;
@@ -991,11 +980,9 @@ export class HubScene extends Phaser.Scene {
     if (count === 0) return;
     const chipW = Math.floor(SHOP_ITEM_W / count);
     const chipH = 32;
-    // +28, not the original +20: a 6-row kind list (rear weapon always; weapon once
-    // y2010 unlocks) bottoms out at y=438 — CONTENT_TOP+22+6*SHOP_ROW_H — which
-    // overlapped the old chip top (436) by 2px, so the last row's tap area swallowed
-    // the chips' top edge (B5; found by tools/tap-target-audit.ts once the chips
-    // became interactive-with-coins there). 444 clears it.
+    // A 6-row kind list (rear weapon always; weapon once y2010 unlocks) bottoms out at
+    // y=438 (CONTENT_TOP+22+6*SHOP_ROW_H) — the +28 offset here keeps the chip top
+    // clear of that row's tap area.
     const chipCY = SHOP_ACTION_Y + 28;
     const accent = accentColorFor(config.systemKey);
 
@@ -1014,14 +1001,11 @@ export class HubScene extends Phaser.Scene {
       const dimmed = chip.state === 'locked' || chip.state === 'unaffordable';
       if (!isCurrent) {
         if (dimmed) { rect.setAlpha(0.35); } else {
-          // 44px-tall hit area (B5, docs/plans/fable-review-fixes-2026-07-18.md): the
-          // 32px chip visual is below the mobile tap-target floor. Extended DOWNWARD
-          // only (hitArea local (0,0) = the rect's top-left), not centered via
-          // ensureMinTapTarget: a 6-row kind list (rear weapon always; weapon once
-          // y2010 unlocks) ends 2px above the chip visual, so a centered expansion
-          // overlapped the last kind row's own tap area — below the chips there's
-          // nothing interactive until well past the expansion. Width (≥55px at the
-          // widest chip count) already clears the floor.
+          // 44px-tall hit area: the 32px chip visual is below the mobile tap-target
+          // floor. Extended DOWNWARD only (hitArea local (0,0) = the rect's top-left),
+          // not centered via ensureMinTapTarget — a centered expansion would overlap the
+          // kind-row list directly above the chips. Width (≥55px at the widest chip
+          // count) already clears the floor.
           rect.setInteractive({
             hitArea: new Phaser.Geom.Rectangle(0, 0, rect.width, Math.max(rect.height, px(44))),
             hitAreaCallback: (r: Phaser.Geom.Rectangle, x: number, y: number) => Phaser.Geom.Rectangle.Contains(r, x, y),
@@ -1165,10 +1149,10 @@ export class HubScene extends Phaser.Scene {
       });
       // Same tourId as this row's own bg rectangle above, on all three label Texts —
       // HubTour.ts raises every GameObject sharing a tourId, not just one; tagging only
-      // the bg left these labels hidden behind the tour's dim backdrop (fixed
-      // 2026-07-17/18). Tagged on every row (not just the two DISPATCH_TOUR_STEPS
-      // actually target), matching the bg's own existing tagging — harmless, since
-      // HubTour only ever searches for tourIds its current steps list mentions.
+      // the bg leaves these labels hidden behind the tour's dim backdrop. Tagged on
+      // every row (not just the two DISPATCH_TOUR_STEPS actually target), matching the
+      // bg's own tagging — harmless, since HubTour only ever searches for tourIds its
+      // current steps list mentions.
       const rowTourId = `dispatch-sub-${String(i)}`;
       this.addC(this.add.text(px(DR_LEFT_X + 8), px(midY - 10), sub.name, {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(12))}px`,
@@ -1386,10 +1370,8 @@ export class HubScene extends Phaser.Scene {
     this.addC(howToPlayBtn);
 
     // devOff: one row-pitch below HOW TO PLAY. devOn: two row-pitches below the dev
-    // tools section's first button (coins, stars, then reset) — both derived from
-    // SETTINGS_ROW_PITCH, not hand-copied (a prior version hardcoded +362/+244 as
-    // literals with a comment claiming they were "computed" when they weren't —
-    // Fable's post-implementation review caught the contradiction).
+    // tools section's first button (coins, stars, then reset) — both must stay derived
+    // from SETTINGS_ROW_PITCH, never hand-copied as their own literal.
     const resetY = devOn ? CONTENT_TOP + DEV_TOOLS_START_Y + 2 * SETTINGS_ROW_PITCH : CONTENT_TOP + SETTINGS_HOW_TO_PLAY_Y + SETTINGS_ROW_PITCH;
     let resetPending = false;
     const resetLabel = (): string => resetPending ? '▸ CONFIRM RESET' : 'RESET PROGRESS';
@@ -1412,10 +1394,8 @@ export class HubScene extends Phaser.Scene {
     if (devOn) this.buildDevToolsSection(baseX);
   }
 
-  /** The "Hi, I am Nesro..." developer note — moved out of Settings (2026-07-17,
-   * playtest feedback: "I think the message in settings should be somewhere else,
-   * maybe some credits menu") into its own nav panel, single centered column since
-   * there's nothing else on this screen to split against. */
+  /** The "Hi, I am Nesro..." developer note lives in its own nav panel, single centered
+   * column since there's nothing else on this screen to split against. */
   private buildCreditsContent(): void {
     this.lastViewModel = { panel: 'credits' };
     const colX = Math.round(LOGICAL_WIDTH / 2) - 160;

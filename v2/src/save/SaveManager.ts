@@ -40,28 +40,24 @@ export interface SaveData {
   ownedSubscriptions: Record<string, number>;
   /** Absent or true = dev border visible; explicit false = hidden. */
   devMode?: boolean;
-  /** Set after completing the welcome mission (w0). Corrected 2026-07-18: this field
-   * does not actually gate anything today — nothing reads it. `w0` itself currently has
-   * no unlock edge and no launcher, so it's unreachable in real play; see
-   * `docs/known-issues.md`'s `w0`/`firstBranchChoice` entry for the full picture. */
+  /** Set after completing the welcome mission (w0). Nothing reads this field today —
+   * `w0` has no unlock edge and no launcher, so it's unreachable in real play; see
+   * `docs/known-issues.md`'s `w0` entry. */
   w0Completed?: boolean;
-  /** Player's branch pick at the end of w0. Corrected 2026-07-18: nothing reads this
-   * either, despite the field still being written by `ResultScene.ts`'s w0-branch
-   * buttons — see the same `docs/known-issues.md` entry above. */
+  /** Player's branch pick at the end of w0. Nothing reads this either, despite the
+   * field still being written by `ResultScene.ts`'s w0-branch buttons. */
   firstBranchChoice?: 'tutorial' | 'missions';
   /** Set by BootScene the moment a save's first-ever hub visit happens — absent/
    * undefined on every pre-existing save means "hasn't launched yet", the correct
    * default with no migration needed. Deliberately distinct from a "fresh save" check
    * (completedMissionIds.length === 0 && ...): gates only the one-time hub button tour
-   * now (the tutorials-or-skip choice moved onto the galaxy screen itself, 2026-07-17 —
-   * see HubScene's missions-screen "skip tutorials" link), so without this field the
-   * tour would replay on every launch until the player finished a mission or earned a
-   * coin. */
+   * (the tutorials-or-skip choice lives on the galaxy screen itself, HubScene's
+   * missions-screen "skip tutorials" link), so without this field the tour would replay
+   * on every launch until the player finished a mission or earned a coin. */
   onboardingSeen?: boolean;
   /** Set the first time the player ever opens the Shop / Dispatch Reinforcements panel
    * — same absent-means-unset precedent as `onboardingSeen` above, no migration needed.
-   * Gates HubScene's screen-specific coach-mark tours (2026-07-17, playtest feedback:
-   * "the shop and dispatch needs tutorial as well") — each fires once, the first time
+   * Gates HubScene's screen-specific coach-mark tours — each fires once, the first time
    * its screen is opened, independent of the main-menu button tour and of each other. */
   shopTourSeen?: boolean;
   dispatchTourSeen?: boolean;
@@ -125,14 +121,9 @@ type ParsedSave = Record<string, unknown>;
 /**
  * Loads the save; any version other than the current `SAVE_VERSION` resets to
  * `defaultSave()` — no migration path. Per the project's early-dev save-data policy
- * (docs/design/12-architecture-and-tooling.md: "bumping SAVE_VERSION and falling back
- * to defaultSave() is sufficient until closer to release"), migration functions for
- * v2–v11 (renaming legacy item ids, adding new equipped-slot fields as they shipped)
- * used to accumulate here instead — removed 2026-07-18 (D8 of
- * fable-review-fixes-2026-07-18.md) once that policy was applied for real: this also
- * closes the "no migrateV12 case" gap docs/known-issues.md had flagged (a version that
- * fell through to `defaultSave()` by accident, not decision) since there is now
- * deliberately no migration switch at all to have a gap in.
+ * (docs/design/12-architecture-and-tooling.md), bumping SAVE_VERSION and falling back
+ * to defaultSave() is sufficient until closer to release; do not add a migration
+ * switch here.
  */
 export function loadSave(): SaveData {
   const raw = localStorage.getItem(STORAGE_KEY);

@@ -1,7 +1,6 @@
 // Shared simulation policies — side-weapon-fire and supply-usage rules reused across
 // tools/simulate.ts, tools/campaign-simulate.ts, and tools/tune-loadouts.ts. Extracted
-// here instead of duplicated (docs/plans/expert-average-campaign-tuning.md) since two+
-// real call sites now need identical logic.
+// here rather than duplicated, since two+ real call sites need identical logic.
 
 import { toggleAutoFire, toggleRearWeapon } from '../src/core/combat';
 import type { BoostPolicy, PickPolicy, SideWeaponPolicy, TargetPolicy, TogglePolicy } from '../src/core/replay';
@@ -59,10 +58,9 @@ export const tapSuppliesReactively: BoostPolicy = (state) => {
 
 // ── Side weapon usage ─────────────────────────────────────────────────────────
 // `useSideWeapon` is checked every tick (src/core/replay.ts), so any trigger without a
-// cooldown fires on every qualifying tick — draining every charge into the first
-// lingering target/wave instead of saving them (found during the 2026-07-11
-// expert/average design review, docs/plans/expert-average-campaign-tuning.md). Both
-// policies below are cooldown-gated for exactly this reason.
+// cooldown fires on every qualifying tick, draining every charge into the first
+// lingering target/wave instead of saving them. Both policies below are
+// cooldown-gated for exactly this reason.
 
 const SIDE_WEAPON_COOLDOWN_TICKS = 30; // ~3s between taps — never drain all charges into one encounter
 const HIGH_VALUE_ENEMY_KINDS = new Set(['blocker', 'tank', 'boss']);
@@ -162,7 +160,7 @@ export const prioritizeHighValueTargets: TargetPolicy = (state) => {
  * pair: on swarm-heavy waves, ignoring the front-most enemies to chase something deep
  * should sometimes cost more (front-most enemies reaching collision range) than it
  * gains — if it never does, "free and instant" targeting is a reflex tax with no real
- * decision in it, and that's a real finding worth re-checking before Phase B ships. */
+ * decision in it. */
 export const alwaysMarkFarthestEnemy: TargetPolicy = (state) => {
   if (state.enemies.length === 0) return null;
   const farthest = state.enemies.reduce((a, b) => (b.distance > a.distance ? b : a));

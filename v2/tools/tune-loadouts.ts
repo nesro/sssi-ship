@@ -1,15 +1,13 @@
 // pnpm tune — kind-ranking tool for the campaign sim's `expert` archetype.
-// docs/plans/expert-average-campaign-tuning.md
 //
 // Answers: "which kind, per system, actually performs best on this mission?" — not a
 // budget/price question (every kind within a system already shares one identical
-// price/star ladder, 2026-07-10 repricing), purely a combat-stats question. Ranks
-// weapon×generator *jointly* (their interaction via brownout/energy is real — see the
-// nova/campaign-tension review's energy findings) at the level GAME_DESIGN.md §13's own
+// price/star ladder), purely a combat-stats question. Ranks weapon×generator *jointly*
+// (their interaction via brownout/energy is real) at the level GAME_DESIGN.md §13's own
 // `INTENDED_LOADOUT_LEVELS` table specifies for that mission, not a generic
-// "representative level" — an earlier version of this design assumed kind ranking was
-// level-independent, which Fable's review proved false (motor-1 is a literal 3-way tie;
-// scatter's maxTargets grows with level; hand-authored per-level tables diverge per kind).
+// "representative level": kind ranking is NOT level-independent (motor-1 is a literal
+// 3-way tie; scatter's maxTargets grows with level; hand-authored per-level tables
+// diverge per kind).
 //
 // Output: tools/tune-report.md/json (balance-report.md/json convention) plus
 // tools/recommendedKinds.generated.ts (auto-generated — do not hand-edit, re-run `pnpm
@@ -20,7 +18,7 @@
 // Every tuning run searches fresh (never refines the previous table) and diffs against
 // whatever table already exists, so a stale or accidentally-regressed table is reported
 // rather than silently kept — deltas below the batch's own noise floor are suppressed so
-// back-to-back runs don't cry wolf over binomial noise (Fable's review, finding 2).
+// back-to-back runs don't cry wolf over binomial noise.
 
 import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -46,13 +44,10 @@ const MISSIONS = ['m1', 'm2', 'm3', 'm3b', 'm4', 'm5', 'm6'];
 // y2010 (items.ts) is a deliberately unbalanced, campaign-completion-gated Easter egg
 // (500 dmg/2 ticks, hits every enemy on screen) — no real first-time player can equip
 // it, so including it in this tournament doesn't surface a real "no single best build"
-// balance problem when it wins; it just proves the Easter egg is intentionally strong
-// (E-2, fable-review-fixes-2026-07-18.md — found while building this sweep: y2010 was
-// winning m3/m6 outright, both flagging "dominant kind" for a reason that has nothing
-// to do with the ion-dominance/pulse-weakness question this tool exists to answer, and
-// silently feeding that recommendation into RECOMMENDED_KIND_PER_MISSION, which
+// balance problem when it wins; it just proves the Easter egg is intentionally strong,
+// while silently feeding that recommendation into RECOMMENDED_KIND_PER_MISSION, which
 // campaign-simulate.ts's expert archetype then acts on as if it were a realistic
-// first-playthrough purchase).
+// first-playthrough purchase.
 const REAL_WEAPON_KINDS = WEAPON_KINDS.filter((k) => k !== 'y2010');
 const RUNS_PER_CANDIDATE = 400; // search precision, not the 2000-run pnpm balance/final-verification precision
 // A representative level for optional slots (rear weapon, side weapon, ship) — these
@@ -74,7 +69,7 @@ interface CandidateResult {
 
 /** clear rate dominates the score; median hull fraction only breaks near-ties — this
  * avoids picking on pure simulation noise when clear rate has already saturated near
- * 100% (Fable's review, finding 2: "objective saturation"). */
+ * 100%. */
 function scoreOf(clearRatePct: number, medianHullFraction: number): number {
   return clearRatePct * 1000 + medianHullFraction;
 }
@@ -225,7 +220,7 @@ function tuneMission(missionId: string): MissionTuningResult {
   spreadReport.push({ system: 'rearWeapon', spreadPp: spread(rearTournament.results), dominant: spread(rearTournament.results) > DOMINANT_KIND_SPREAD_PP });
 
   // Step 5: side weapon — manual-fire, so it must be simmed WITH a real firing policy
-  // or it "proves" the slot worthless by construction (Fable's review, finding 2).
+  // or it "proves" the slot worthless by construction.
   const sideTournament = tournament(
     SIDE_WEAPON_KINDS,
     (kind) => ({
@@ -297,15 +292,12 @@ ${entries}
 }
 
 /** Cross-mission view of the same per-system spreads writeReport's per-mission
- * sections already contain — E-2 of fable-review-fixes-2026-07-18.md ("ion weapon
- * dominance / pulse worst-in-class on m1-m2" needed a sweep artifact before any
- * rebalance could be trusted). Per-mission sections answer "which systems are
- * imbalanced on THIS mission"; this table answers "is any ONE system imbalanced
- * across MANY missions" — a pattern easy to miss hunting through 7 separate sections,
- * and exactly the shape the ion/pulse finding described. Kept as "weapon×generator"
- * (not decomposed to weapon alone) deliberately — this file's own header explains why
- * an earlier version's weapon-in-isolation assumption was wrong (their interaction via
- * brownout/energy is real); a same-system table must respect that, not re-litigate it. */
+ * sections already contain. Per-mission sections answer "which systems are imbalanced
+ * on THIS mission"; this table answers "is any ONE system imbalanced across MANY
+ * missions" — a pattern easy to miss hunting through 7 separate sections. Kept as
+ * "weapon×generator" (not decomposed to weapon alone) deliberately — this file's own
+ * header explains why weapon-in-isolation is the wrong unit (their interaction via
+ * brownout/energy is real). */
 function writeCrossMissionSummary(results: MissionTuningResult[]): string[] {
   const systems = results[0]?.spreadReport.map((s) => s.system) ?? [];
   const lines: string[] = [
@@ -361,11 +353,9 @@ function main(): void {
       console.log(`⚠️  ${r.missionId}: dominant-kind signal on ${dominant.join(', ')} — see tune-report.md`);
     }
   }
-  // CI-style threshold (E-2, fable-review-fixes-2026-07-18.md) — matches pnpm balance/
-  // pnpm pacing's own convention of a non-zero exit on a real flag, rather than only a
-  // console warning a human has to notice. This is reporting only: no items.ts/
-  // missions.ts numbers are touched by this tool, and a nonzero exit here is not (yet)
-  // wired into any CI pipeline — it just makes "did this run come back clean" scriptable.
+  // Matches pnpm balance/pnpm pacing's own convention of a non-zero exit on a real
+  // flag, rather than only a console warning a human has to notice. This is reporting
+  // only: no items.ts/missions.ts numbers are touched by this tool.
   if (anyDominant) process.exitCode = 1;
 }
 

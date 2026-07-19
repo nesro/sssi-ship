@@ -1,7 +1,5 @@
 // Narrator lines (V2_HANDOFF.md §3.10): typewriter text bar, ~20 scripted lines.
-// Triggers fire in CombatScene only (corrected 2026-07-18 — MenuScene never existed in
-// this codebase's actual scene graph; see docs/design/04-screens-and-layout.md). No
-// branching, no portraits.
+// Triggers fire in CombatScene only. No branching, no portraits.
 
 export type NarratorTrigger =
   | 'mission-start'
@@ -16,14 +14,11 @@ interface NarratorLine {
 
 /** Lines keyed by mission id. A mission may have lines for multiple triggers. */
 const STORY_LINES: Record<string, NarratorLine[]> = {
-  // t1-t4's 'mission-start' lines (corrected 2026-07-17, then REMOVED the same day) —
-  // moved from this passive bottom-bar system to the blocking modal (missions.ts's
-  // T1-T4_NARRATOR_EVENTS) per playtest feedback: "I would prefer the game pause and a
-  // popup window show up rather than the bottom screen." Showing both would be
-  // duplicate, conflicting UI, so the bottom-bar 'mission-start' entries are gone —
-  // each tutorial's opening line lives in exactly one place now. 'first-support-call'
-  // stays here (that beat is a non-blocking aside while the card overlay is already the
-  // main focus, not a "here's what's about to happen" moment that needs a full pause).
+  // t1-t4's opening lines live in the blocking modal instead (missions.ts's
+  // T1-T4_NARRATOR_EVENTS), not here — showing both would be duplicate, conflicting UI.
+  // 'first-support-call' stays here: that beat is a non-blocking aside while the card
+  // overlay is already the main focus, not a "here's what's about to happen" moment
+  // that needs a full pause.
   t2: [
     {
       trigger: 'first-support-call',

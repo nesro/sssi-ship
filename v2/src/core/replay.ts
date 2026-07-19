@@ -211,13 +211,12 @@ function replayTargetPolicy(record: ReplayRecord): TargetPolicy {
  * `pendingOffer`/`pendingNarrator`/`pendingVisualEvents` (transient pause/view-only
  * state, explicitly not meaningful once a run has finished).
  *
- * Broadened 2026-07-18 (Fable's review): the RNG cursor, `modifiers`, `activeEffects`,
- * `rerollsLeft`, supply `chargesLeft`, `shotCounter`, `consecutiveKills`,
- * `wavesClearedThisRun`, `nextEventIndex`, `nextEnemyId`, `supportCallsDone`, and
- * `bonusCallsPending` were all live, run-evolving state that a divergence could hide
- * behind — e.g. two runs disagreeing only on `rerollsLeft` or `modifiers` (a card-effect
- * bug) previously still hashed identically as long as `ship`/`stats`/`enemies` happened
- * to match.
+ * Also covers the RNG cursor, `modifiers`, `activeEffects`, `rerollsLeft`, supply
+ * `chargesLeft`, `shotCounter`, `consecutiveKills`, `wavesClearedThisRun`,
+ * `nextEventIndex`, `nextEnemyId`, `supportCallsDone`, and `bonusCallsPending` — all
+ * live, run-evolving state that a divergence could otherwise hide behind (e.g. two runs
+ * disagreeing only on `rerollsLeft` or `modifiers` would hash identically if only
+ * `ship`/`stats`/`enemies` were checked).
  */
 export function hashCoreState(state: CoreState): string {
   const snapshot = JSON.stringify({

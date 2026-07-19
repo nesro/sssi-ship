@@ -1,19 +1,17 @@
 # Nesro Nova v2 — Agent orientation guide
 
 Read `../GAME_DESIGN.md` **first** — it's a short index into `../docs/design/`, the single
-source of truth for all design decisions (confirmed by Tomáš on 2026-07-01, restructured into
-topic files 2026-07-15). Read the topic file(s) relevant to what you're working on; do not
-re-litigate anything settled there. This file covers how the v2 codebase itself is organized
-and the rules for working in it.
+source of truth for all design decisions. Read the topic file(s) relevant to what you're
+working on; do not re-litigate anything settled there. This file covers how the v2 codebase
+itself is organized and the rules for working in it.
 
 ## What this is
 
 Nesro Nova is a mobile arcade roguelite space shooter for Google Play (app id
-`com.nesro.nova`, landscape, free, offline) — corrected 2026-07-18 to match
-[Game Identity](../docs/design/01-identity.md); "idle" was dropped project-wide
-2026-07-15 (no away-progression mechanics exist). v2 is a clean rebuild; the old
-`../phaser/` tree is a **read-only reference corpus** — port knowledge, never code
-(except `rng.ts`, ported verbatim by instruction).
+`com.nesro.nova`, landscape, free, offline) — see
+[Game Identity](../docs/design/01-identity.md). No away-progression/idle mechanics exist.
+v2 is a clean rebuild; the old `../phaser/` tree is a **read-only reference corpus** — port
+knowledge, never code (except `rng.ts`, ported verbatim by instruction).
 
 ## Constitutional rules (violations broke v1 — never bend these)
 
@@ -47,6 +45,7 @@ pnpm install        # first time only
 pnpm dev            # Vite dev server
 pnpm test           # Vitest (colocated *.test.ts — the chosen convention, stay consistent)
 pnpm lint           # ESLint flat config, type-checked rules
+pnpm lint:comments  # fails on dated/narrative comments — see "Comment style" below
 pnpm build:dry      # tsc --noEmit
 pnpm build          # typecheck + production bundle
 pnpm sim -- --mission m1 --runs 1000        # headless balance runs (real core)
@@ -59,18 +58,15 @@ pnpm screenshot     # full visual-verification batch (writes v2/screenshots/*.pn
 npx cap sync android && npx cap open android  # Capacitor → Android Studio
 ```
 
-Run `pnpm lint` and `pnpm build:dry` after every edit; fix warnings immediately.
-`pnpm dlx fallow` (dead-code/consistency checker, config `v2/.fallowrc.json`) is also run
-before closing out any nontrivial change.
+Run `pnpm lint`, `pnpm lint:comments`, and `pnpm build:dry` after every edit; fix
+warnings immediately. `pnpm dlx fallow` (dead-code/consistency checker, config
+`v2/.fallowrc.json`) is also run before closing out any nontrivial change.
 
 ## Visual verification rule (mandatory)
 
 After **any** change to `src/view/` — renderers, textures, layout, HUD, shop preview — take a `preview_screenshot` before reporting the task done. Never trust code logic alone to verify rendering output. Use `__cheat.equip(id)` and `__cheat.navShop(tab)` to reach the right state fast.
 
 ## Layout
-
-Rewritten 2026-07-18 — the previous version referenced a `MenuScene`/`ShopScene` scene
-graph and a "week-1 skeleton" `tools/` that no longer match the shipped code.
 
 ```
 v2/
@@ -131,16 +127,29 @@ v2/
 
 ## Current state and open items
 
-**Removed 2026-07-18** — this file used to carry an inline "Week-1 state" status list
-(toolchain/core/renderer done, a "Next:" queue) that had long since all shipped, plus a
-"flagged for Tomáš" question (shield-first collision routing) that was answered and
-implemented (shield-first is the shipped, intentional behavior — see
-[Combat](../docs/design/06-combat.md)). Keeping a second, inline copy of project status
-here just gives it a second place to drift out of sync with reality — read
-[Status — What's Built vs What's Planned](../docs/design/14-status.md) instead; it's the
-one place this is tracked now.
+Project status (what's built vs. planned) is tracked in one place:
+[Status — What's Built vs What's Planned](../docs/design/14-status.md). Don't keep a
+second copy here — it will drift.
 
-**On-device smoke test** (additive renderer + text sharpness on a real Android phone) is
-still genuinely outstanding and needs a human with a phone — not something an agent
-session can close out; check 14-status.md for its current state before assuming it's
-been done.
+The on-device smoke test (additive renderer + text sharpness on a real Android phone)
+needs a human with a phone; check 14-status.md for its current state before assuming
+it's been done.
+
+## Comment style (mandatory)
+
+Comments describe the *current* code, in present tense, for a reader with no knowledge
+of project history.
+
+- **Never** put in a source comment: dates, forensic bookkeeping IDs ("B5", "Phase C",
+  "Item 7"), review attributions ("Fable's review caught..."), verbatim playtest
+  quotes, before/after values, or narration of how something was found. That history
+  belongs in git commits, `../docs/known-issues.md`, and `../docs/plans/` — only there.
+  A bare pointer ("see docs/plans/x.md for the full sim sweep") is fine; repeating the
+  story inline is not.
+- A comment earns its place only by stating something the code cannot: a non-obvious
+  invariant, a cross-file coupling that must be kept in sync by hand, a determinism
+  contract obligation, or the formula behind a magic number.
+- Length: 1-3 lines normally; ~6 max for a genuinely subtle invariant. If it needs more,
+  put the explanation in `docs/` and leave one line plus a pointer.
+- Litmus test: would this comment be identically correct if the code had been written
+  this way on day one? If not, it's history, not documentation — move it or delete it.

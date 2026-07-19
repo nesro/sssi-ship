@@ -106,8 +106,8 @@ export class ResultScene extends Phaser.Scene {
       return;
     }
 
-    // nextMissionId is computed in computeResultViewModel (Phase C, moved out of this
-    // scene — the graph-walking logic is now tested there, see result.test.ts).
+    // nextMissionId is computed in computeResultViewModel, not here — the
+    // graph-walking logic is tested there, see result.test.ts.
     const buttons: { label: string; color: number; onClick: () => void }[] = [];
     if (vm.nextMissionId !== null) {
       const nextMissionId = vm.nextMissionId;

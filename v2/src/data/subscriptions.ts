@@ -41,8 +41,8 @@ export const SUBSCRIPTIONS: Record<string, SubscriptionSpec> = {
           'm-over-20',        // OVERDRIVE
           'm-eff-50',         // FRICTIONLESS HUB
           'meta-reroll-cache', // REROLL CACHE
-          'g-hull-02',        // RECYCLED PLATING (added 2026-07-10, decision 3)
-          'm-eco-01',         // SCRAP CONVERTER (added 2026-07-10, decision 3)
+          'g-hull-02',        // RECYCLED PLATING
+          'm-eco-01',         // SCRAP CONVERTER
         ],
       },
       {
@@ -92,9 +92,9 @@ export const SUBSCRIPTIONS: Record<string, SubscriptionSpec> = {
           'sit-demolisher',         // DEMOLISHER
           'quantum-efficiency-core', // EFFICIENCY CORE (energy cost ×0.8)
           'comet-early-assault',    // EARLY ASSAULT
-          // Chain enablers moved here from Lv2 2026-07-15 (fable-fun-review-followup.md
-          // Item 5) — at Lv2 (950 coins cumulative) they were unreachable for most of a
-          // campaign that only earns 4,000-8,000 coins total; payoff cards stay at Lv2.
+          // Chain enablers live here, not Lv2 — at Lv2 (950 coins cumulative) they'd be
+          // unreachable for most of a campaign that only earns 4,000-8,000 coins total;
+          // payoff cards stay at Lv2.
           'oc-core',                // OVERCHARGE
           'pierce-lance',           // PIERCE LANCE
         ],
@@ -158,8 +158,8 @@ export const SUBSCRIPTIONS: Record<string, SubscriptionSpec> = {
           'cond-high-hull-gen',   // PRISTINE HULL
           'aegis-shield-resonance', // SHIELD RESONANCE (+40% pulse)
           'quantum-pulse-amplifier', // PULSE AMPLIFIER
-          // Chain enabler moved here from Lv2 2026-07-15 (fable-fun-review-followup.md
-          // Item 5) — same reasoning as sub-offensive's oc-core/pierce-lance move.
+          // Chain enabler lives here, not Lv2 — same reasoning as sub-offensive's
+          // oc-core/pierce-lance placement above.
           'res-sync',             // SHIELD SYNC
         ],
       },

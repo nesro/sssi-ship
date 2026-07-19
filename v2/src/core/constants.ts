@@ -13,7 +13,7 @@ export const BROWNOUT_MAX_STRETCH = 2;
  * — see items.ts). Deliberately NOT `Infinity`: `ReplayRecord` embeds the full loadout
  * spec, and `JSON.stringify(Infinity) === "null"` — a persisted/shared replay would
  * reload with `maxTargets: null`, and `null + extraPierce` evaluates to a real number
- * (0 + extraPierce) instead of "all", silently breaking the weapon (found 2026-07-18).
+ * (0 + extraPierce) instead of "all", silently breaking the weapon.
  * `Number.MAX_SAFE_INTEGER` behaves identically to Infinity for every real enemy count
  * (`.slice(0, n)`, comparisons) and survives a JSON round-trip unchanged. */
 export const HIT_ALL_TARGETS = Number.MAX_SAFE_INTEGER;

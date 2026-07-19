@@ -6,20 +6,18 @@ import { advanceTick } from '../core/tick';
 import type { CombatScene } from './CombatScene';
 
 /**
- * Dev-only `__cheat.combat.*` implementations (main.ts) — extracted from CombatScene.ts
- * (Phase C, fable-review-fixes-2026-07-18.md), a screenshot/test harness needs to reach
- * any point in a mission instantly rather than waiting through it or clicking. Sprite
- * sync happens for free: renderEnemies() (called every real frame from
+ * Dev-only `__cheat.combat.*` implementations (main.ts) — a screenshot/test harness
+ * needs to reach any point in a mission instantly rather than waiting through it or
+ * clicking. Sprite sync happens for free: renderEnemies() (called every real frame from
  * CombatScene.update()) rebuilds its sprite map purely by diffing `scene.core.enemies`
  * against what's already on screen, so it's safe to call these mid-fast-forward and let
  * the next natural frame catch the view up — no manual re-sync needed.
  *
  * Holds a plain reference to the owning scene rather than duplicating its state — every
  * method here reads/writes `this.scene.core` (and a handful of other scene members
- * widened from `private` specifically so this class can reach them) exactly as the
- * original in-class methods did. CombatScene.ts's own `cheatXxx` methods are now thin
- * one-line delegates to this class, so `main.ts`'s `scene[method]` lookup convention
- * (unchanged) still finds them.
+ * widened from `private` specifically so this class can reach them). CombatScene.ts's
+ * own `cheatXxx` methods are thin one-line delegates to this class, so `main.ts`'s
+ * `scene[method]` lookup convention still finds them.
  */
 export class CombatCheats {
   constructor(private readonly scene: CombatScene) {}
@@ -151,7 +149,7 @@ export class CombatCheats {
    * the real click handler uses (not resolveAbilityAction directly), so the picked-
    * ability sidebar and overlay hide/show stay in sync exactly like a real pick would —
    * calling the core function directly here would silently desync the view the same way
-   * fastForward's auto-pick-0 already does (docs/plans/comprehensive-coverage-sweep.md). */
+   * fastForward's auto-pick-0 already does. */
   pickCard(index: number): void {
     this.scene.handleCardAction(index);
   }
@@ -190,14 +188,11 @@ export class CombatCheats {
     return {
       missionId: core.mission.id,
       tick: core.tick,
-      // Added 2026-07-17/18 (polish-loop, Fable's review of the advanceUntil silent-
-      // timeout fix) — `tick` alone can't distinguish "genuinely still early in the
-      // mission" from "stuck behind a blocksConveyor freeze": timeline.ts's
-      // advanceTimeline stalls timelineTick entirely while any blocker/turret/boss/
-      // booster is alive, so `tick` (the real per-advance counter) keeps climbing while
-      // `timelineTick` (what wave-spawn schedules are checked against) doesn't move at
-      // all — exactly the gap that made combat-m6-boss's advanceUntil predicate never
-      // fire within its tick budget. Surfaced in advanceUntil's timeout error message.
+      // `tick` alone can't distinguish "genuinely still early in the mission" from
+      // "stuck behind a blocksConveyor freeze": timeline.ts's advanceTimeline stalls
+      // timelineTick entirely while any blocker/turret/boss/booster is alive, so `tick`
+      // (the real per-advance counter) keeps climbing while `timelineTick` (what
+      // wave-spawn schedules are checked against) doesn't move at all.
       timelineTick: core.timelineTick,
       status: core.status,
       priorityTargetId: core.priorityTargetId,

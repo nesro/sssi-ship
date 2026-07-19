@@ -1,6 +1,5 @@
 // Pacing/fun report — measures mission pacing directly instead of relying on a human
-// reading missions.ts prose (which is how every finding in docs/plans/mission-fun-review.md
-// was originally found). Two layers:
+// reading missions.ts prose. Two layers:
 //
 //   static  — computed straight from MissionSpec.events + EnemySpec.speed, no simulation
 //             needed: each event's "aggression tier" via the time-to-impact = LANE_LENGTH/
@@ -37,9 +36,9 @@ import { intendedLoadoutForMission } from './loadoutPresets';
 import { greedyPick } from './policies';
 
 // ── Flag thresholds ──────────────────────────────────────────────────────────
-// Tuned against m2 ("Picket Line") as the known-good reference — GAME_DESIGN.md and
-// docs/plans/mission-fun-review.md both call it the best-paced mission in the game, so
-// it must never flag. See the tuning notes inline with each constant.
+// Tuned against m2 ("Picket Line") as the known-good reference — GAME_DESIGN.md calls
+// it the best-paced mission in the game, so it must never flag. See the tuning notes
+// inline with each constant.
 
 const AGGRESSION_TIER_PATIENT_MIN_SECONDS = 8; // time-to-impact ≥ 8s = Patient
 const AGGRESSION_TIER_ESCALATING_MIN_SECONDS = 4; // 4-8s = Escalating, <4s = Aggressive
@@ -57,16 +56,15 @@ const LONGEST_IDLE_STRETCH_THRESHOLD_SECONDS = 17;
 
 // Share of boss-mission victories where the boss actually died to weapon fire
 // (CoreState.bossKillTick !== null) rather than being collision-tanked at full/near-full
-// hull. mission-fun-review.md F3 measured today's m6 at ~30% — well under half.
+// hull.
 const ANTICLIMAX_WEAPON_KILL_SHARE_THRESHOLD = 0.5;
 
 // First tick (state.tick, the real per-advance counter — not timelineTick, which can
 // freeze behind a blocksConveyor enemy) at which the player's ship has done SOMETHING
 // to or with an enemy — fired a shot or taken a collision — "how long until something
-// actually happens." 30 ticks = 3s, the upper bound of the "2-3 seconds" rule from
-// direct playtest feedback (2026-07-17: "If nothing is happening for more than 2-3
-// seconds, it's bad"), the same feedback that drove t1's guardian-speed fix
-// (missions.ts's GUARDIAN_SLOW).
+// actually happens." 30 ticks = 3s, the same "nothing happening for more than 2-3
+// seconds is bad" rule that drove t1's guardian-speed fix (missions.ts's
+// GUARDIAN_SLOW).
 //
 // Deliberately shotsFired, not kills: an early draft used kills+collisions and
 // falsely flagged t3 at 36s — t3's guardian is a stationary blocksConveyor enemy the

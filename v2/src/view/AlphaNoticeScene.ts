@@ -6,14 +6,11 @@ import { addTextButton, UI_FONT } from './widgets';
 
 /**
  * Shown on EVERY launch — no save-flag gate, unlike the one-time hub button tour. A
- * standing reminder that this is an early/alpha build while it's being actively shared
- * with testers, with three independent actions (2026-07-17 playtest feedback: "the
- * startup page should have these buttons: continue with last save, erase progress and
- * start over, unlock dev mode"): CONTINUE, ERASE PROGRESS (two-tap, as destructive as
- * Settings' own reset button), and a DEV MODE toggle — previously only reachable via
- * Settings, once already past this screen. Settings keeps its own reset + dev-mode
- * toggle too (`HubScene.ts`, unchanged) — this is an additional, more visible surface
- * before the player even reaches the hub, not a replacement.
+ * standing reminder that this is an early/alpha build, with three independent actions:
+ * CONTINUE, ERASE PROGRESS (two-tap, as destructive as Settings' own reset button), and
+ * a DEV MODE toggle. Settings keeps its own reset + dev-mode toggle too (`HubScene.ts`,
+ * unchanged) — this is an additional, more visible surface before the player even
+ * reaches the hub, not a replacement.
  *
  * Forwards whatever `data` BootScene passed it straight through to HubScene on
  * CONTINUE, so the one-time hub tour (`{ showTour: true }` on a genuinely fresh save)

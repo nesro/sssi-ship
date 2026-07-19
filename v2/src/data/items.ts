@@ -43,26 +43,16 @@ const WEAPON_BASE: Record<WeaponKind, {
   // WEAPON_SYSTEM.isKindVisible below). Deliberately absurd, not tuned: it exists purely
   // as a nostalgia nod to the 2010 original, not as a real balance option.
   y2010:   { displayName: '2010 ORIGINAL', blurb: "Looks terrible. Feels like 2010. Somehow still destroys everything.", damage: 500, ticks: 2, energy: 1, targets: HIT_ALL_TARGETS, falloff: 1.0 },
-  // Rebalanced 2026-07-11 (docs/plans/nova-weapon-and-campaign-tension-review.md) — old
-  // base (damage 3 / ticks 9 / energy 16) cleared 0% on m1/m2/m3/m4 at the intended
-  // loadout's own level: its energy cost sat nova permanently in brownout (energy.ts's
-  // trough-sampling), and its base damage was too low to matter even with energy fixed.
-  // New base fixes the energy trough problem across the board and raises damage/fire
-  // rate enough to make nova viable on fodder/swarm missions (m1/m2/m5/m6) and on m4's
-  // mixed composition, while leaving it deliberately weak on m3 — the campaign's
-  // hardest pure-blocker gauntlet — mirroring ion's own accepted collapse on m5's
-  // swarm. See the plan doc's sim sweep for the full grid this was picked from.
+  // Nova's energy cost is tuned to stay out of brownout (energy.ts's trough-sampling)
+  // and its damage/fire rate makes it viable on fodder/swarm missions (m1/m2/m5/m6) and
+  // m4's mixed composition, while staying deliberately weak on m3 — the campaign's
+  // hardest pure-blocker gauntlet — mirroring ion's accepted collapse on m5's swarm.
 };
 
-// Redesigned 2026-07-10 (docs/plans/game-identity-and-design-review-followup.md):
-// kinds are situational sidegrades, not a tier ladder — every kind costs the same
-// coins/stars to reach a given level. Price reuses pulse's own already-tuned ladder
-// (11,200 top end, ~15.6x cheaper than the old 175,000 nova-only ceiling) rather than
-// inventing new numbers; the old design priced nova ~15x higher than pulse for the
-// exact same level, which is a late-game reward structure, not a sidegrade one.
-// Stars stay a separate, deliberately modest gate (not reused from pulse's near-zero
-// curve) so performance-based progression still means something even as coin cost
-// compresses — 26 stars for the ceiling item, not 44 (all mission stars) as before.
+// Weapon kinds are situational sidegrades, not a tier ladder — every kind costs the
+// same coins/stars to reach a given level. Stars are a separate, deliberately modest
+// gate so performance-based progression still means something even as coin cost
+// compresses across kinds.
 
 /** Stars required per weapon level (index = level − 1) — identical across every kind. */
 const WEAPON_STARS_BY_LEVEL: [number, number, number, number, number] = [0, 3, 8, 16, 26];
@@ -163,10 +153,9 @@ const REAR_WEAPON_BASE: Record<RearWeaponKind, {
   cluster: { displayName: 'Cluster Bomb',     blurb: 'Submunition scatter. Max spread, thin per-target damage.', damage:  3, ticks:  7, energy: 11, targets: 6, falloff: 0.65 },
 };
 
-// Redesigned 2026-07-10 — kinds are situational sidegrades, not a tier ladder; see
-// WEAPON_STARS's comment above for the full reasoning. Price reuses grenade's own
-// already-tuned ladder (3,350 top end, ~38.8x cheaper than the old 130,000 plasma-only
-// ceiling). Stars are a separate, modest gate — 15 for the ceiling item.
+// Rear weapon kinds are situational sidegrades, not a tier ladder; see WEAPON_STARS's
+// comment above. Price reuses grenade's own tuned ladder for every kind. Stars are a
+// separate, modest gate — 15 for the ceiling item.
 
 /** Stars required per rear weapon level (index = level − 1) — identical across every kind. */
 const REAR_WEAPON_STARS_BY_LEVEL: [number, number, number, number, number] = [0, 2, 4, 8, 15];
@@ -268,10 +257,9 @@ const SIDE_WEAPON_BASE: Record<SideWeaponKind, {
   orbital:   { displayName: 'Orbital Strike',  blurb: 'Calls down damage on every enemy on screen. Rare and huge.', damage: 12, targets: HIT_ALL_TARGETS, falloff: 1.0,  charges: [1, 2, 2, 3, 3] },
 };
 
-// Redesigned 2026-07-10 — kinds are situational sidegrades, not a tier ladder; see
-// WEAPON_STARS's comment above for the full reasoning. Price reuses focus's own
-// already-tuned ladder (8,300 top end, ~15.7x cheaper than the old 130,000
-// orbital-only ceiling). Stars are a separate, modest gate — 15 for the ceiling item.
+// Side weapon kinds are situational sidegrades, not a tier ladder; see WEAPON_STARS's
+// comment above. Price reuses focus's own tuned ladder for every kind. Stars are a
+// separate, modest gate — 15 for the ceiling item.
 
 /** Stars required per side weapon level (index = level − 1) — identical across every kind. */
 const SIDE_WEAPON_STARS_BY_LEVEL: [number, number, number, number, number] = [0, 2, 4, 8, 15];
@@ -350,12 +338,11 @@ const SHIELD_BASE: Record<ShieldKind, {
   fractions: [number, number, number, number, number];
   prices: [number, number, number, number, number];
   stars: [number, number, number, number, number];
-// Redesigned 2026-07-10 — kinds are situational sidegrades, not a tier ladder; see
-// WEAPON_STARS's comment (in the weapon section above) for the full reasoning. Price
-// reuses wall's own already-tuned ladder (8,300 top end, ~15.7x cheaper than the old
-// 130,000 bulwark-only ceiling) for every kind; caps/fractions (the actual combat
-// stats making each kind situational) are untouched. Stars are a separate, modest
-// gate shared with generator/motor/rear-weapon/side-weapon — 15 for the ceiling item.
+// Shield kinds are situational sidegrades, not a tier ladder; see WEAPON_STARS's
+// comment (in the weapon section above). Price reuses wall's tuned ladder for every
+// kind; caps/fractions (the actual combat stats making each kind situational) are
+// untouched. Stars are a separate, modest gate shared with generator/motor/rear-weapon/
+// side-weapon — 15 for the ceiling item.
 }> = {
   // Shield has a NONE option, so wall level 1 (mandatory starter) is priced low but never 0,
   // or it would be indistinguishable from NONE.
@@ -403,32 +390,18 @@ const GENERATOR_BASE: Record<GeneratorKind, {
   drains: [number, number, number, number, number];
   prices: [number, number, number, number, number];
   stars: [number, number, number, number, number];
-// Redesigned 2026-07-10 — kinds are situational sidegrades, not a tier ladder; see
-// WEAPON_STARS's comment (in the weapon section above) for the full reasoning. Price
-// reuses torrent's own already-tuned ladder (8,300 top end, ~15.7x cheaper than the
-// old 130,000 surge-only ceiling) for every kind; outputs/caps/drains (the actual
-// combat stats making each kind situational) are untouched. Stars share the same
-// modest gate as shield/motor/rear-weapon/side-weapon — 15 for the ceiling item.
+// Generator kinds are situational sidegrades, not a tier ladder; see WEAPON_STARS's
+// comment (in the weapon section above). Price reuses torrent's tuned ladder for every
+// kind; outputs/caps/drains (the actual combat stats making each kind situational) are
+// untouched. Stars share the same modest gate as shield/motor/rear-weapon/side-weapon —
+// 15 for the ceiling item.
 }> = {
   torrent: { displayName: 'Torrent', blurb: 'High output, small buffer. Feeds fast-cycling weapons.',        outputs: [ 2,  4,  7, 11, 16], caps: [50, 45, 40, 38, 35], drains: [0.50, 0.55, 0.60, 0.65, 0.70], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
-  // Blurb rewritten 2026-07-11 (docs/plans/overdrive-and-reserve-trap-fixes.md) — old
-  // text ("Charge then unleash") recommended pairing Reserve with expensive-per-shot
-  // weapons (ion/nova), but the trough-sampled brownout (energy.ts) punishes exactly
-  // that pairing hardest — reserve+nova measured 0.0% clear this session. New text is
-  // honest about the actual niche: low-drain weapons and burst-ability/supply synergy
-  // with the huge capacity, not "charge up for a big weapon hit."
-  // Outputs rebalanced 2026-07-15 (docs/known-issues.md, `pnpm tune`'s "dominant kind"
-  // check, flagged on every run this session and never chased) — the 2026-07-11 pass
-  // above only fixed the *text*, not the stats: reserve+pulse still cleared m1 at 13%
-  // (vs. 87-100% for every other generator) and reserve+scatter cleared m3 at 0.0%,
-  // a real trap, not a situational tradeoff. +30% output at every level keeps the
-  // "vast tank, slow trickle" identity (still meaningfully behind torrent's output at
-  // every level, caps/drains untouched) while turning a near-guaranteed loss into a
-  // real but survivable disadvantage — m1 pulse+reserve 13%→73%, m5 scatter+reserve
-  // 13%→87.8%. Cases that stayed weak after the buff (e.g. m3+nova, m3+scatter) were
-  // confirmed to already be weak *weapon-vs-mission* pairings even with a full-output
-  // generator (nova clears m3 at only 18-21% with torrent/steady/surge) — a situational
-  // weapon weakness this fix doesn't touch, not a remaining generator trap.
+  // Reserve pairs with low-drain weapons and burst-ability/supply synergy, not
+  // expensive-per-shot weapons (ion/nova) — the trough-sampled brownout (energy.ts)
+  // punishes that pairing hardest despite Reserve's huge capacity. Output is +30% at
+  // every level (still meaningfully behind torrent's output; caps/drains untouched) to
+  // keep the "vast tank, slow trickle" identity survivable rather than a trap.
   reserve: { displayName: 'Reserve', blurb: 'Vast tank, slow trickle. Feeds efficient weapons.',             outputs: [1.95, 3.25, 4.55, 6.5, 9.1], caps: [100, 160, 240, 340, 480], drains: [0.28, 0.24, 0.20, 0.17, 0.14], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
   steady:  { displayName: 'Steady',  blurb: 'Reliable mid-range. Pairs well with any loadout.',              outputs: [2.5,  4,  6,  9, 13], caps: [70, 82, 95, 110, 128], drains: [0.38, 0.34, 0.30, 0.26, 0.22], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
   surge:   { displayName: 'Surge',   blurb: 'Maximum output, tiny battery. Ion and nova goldmine.',          outputs: [ 3,  5,  9, 14, 20], caps: [30, 28, 26, 25, 25], drains: [0.72, 0.78, 0.83, 0.88, 0.92], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
@@ -473,30 +446,23 @@ const MOTOR_BASE: Record<MotorKind, {
   stars: [number, number, number, number, number];
   bonusCards?: [number, number, number, number, number];
   bonusRerolls?: [number, number, number, number, number];
-// Redesigned 2026-07-10 — kinds are situational sidegrades, not a tier ladder; see
-// WEAPON_STARS's comment (in the weapon section above) for the full reasoning. Price
-// reuses rush's own already-tuned ladder (8,300 top end, ~15.7x cheaper than the old
-// 130,000 overdrive-only ceiling) for every kind; mults/draws/bonusCards/bonusRerolls
-// (the actual combat stats making each kind situational) are untouched. Stars share
-// the same modest gate as shield/generator/rear-weapon/side-weapon — 15 for the
-// ceiling item (down from tactical/overdrive's old 27/30 starting points).
+// Motor kinds are situational sidegrades, not a tier ladder; see WEAPON_STARS's
+// comment (in the weapon section above). Price reuses rush's tuned ladder for every
+// kind; mults/draws/bonusCards/bonusRerolls (the actual combat stats making each kind
+// situational) are untouched. Stars share the same modest gate as shield/generator/
+// rear-weapon/side-weapon — 15 for the ceiling item.
 }> = {
   rush:      { displayName: 'Rush',      blurb: 'Fast timeline, high draw. Time-star goldmine.',                     mults: [1.0, 2.0, 3.0, 4.2, 5.8], draws: [0.30, 1.20, 2.20, 3.80,  6.0], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
   sentinel:  { displayName: 'Sentinel',  blurb: 'Slow timeline — enemies crawl. Very low energy draw.',             mults: [1.0, 0.7, 0.55, 0.45, 0.35], draws: [0.30, 0.08, 0.05, 0.03, 0.01], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
   tactical:  { displayName: 'Tactical',  blurb: 'Normal speed, extra card draws each support call.',                 mults: [1.0, 1.0, 1.1, 1.1, 1.2], draws: [0.30, 0.10, 0.12, 0.15, 0.18], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15], bonusCards: [0, 1, 2, 3, 4], bonusRerolls: [0, 0, 1, 2, 3] },
   overdrive: { displayName: 'Overdrive', blurb: 'Fastest timeline, heaviest draw. Maximum coins/minute for players who can feed it.', mults: [1.0, 2.6, 4.0, 5.6, 7.5], draws: [0.30, 2.00, 3.50, 6.0, 9.0], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
-  // Rebalanced 2026-07-11 (docs/plans/overdrive-and-reserve-trap-fixes.md) — old base
-  // (mults [3,5,7.5,10.5,14] / draws [3.5,7,12,18,26]) was a free (price 0, stars 0),
-  // unmarked trap: its draw exceeded every generator's max output (surge tops out at
-  // 20/tick) at every level, so a new player switching for free went from ~90% clear to
-  // 0% — permanent brownout lock (2x stretch) plus a shield that never pulses (energy.ts's
-  // pulseShield only fires at full capacity). New base gives overdrive Lv1 the same
-  // safe stats as rush/sentinel/tactical's own Lv1 (mult 1.0, draw 0.30 — the
-  // established "free tap is always safe" pattern), then scales to a real speed/coin
-  // premium over rush at every level ≥2 while keeping draws below torrent's output
-  // (2/4/7/11/16) at every level, so overdrive is brutal-but-survivable, never
-  // mathematically dead. `pnpm tune`'s tuning-report.md flagged the old values via its
-  // dominant-kind check (100pp spread, m1-m5) — this fixes that finding.
+  // Overdrive Lv1 uses the same safe stats as rush/sentinel/tactical's own Lv1 (mult
+  // 1.0, draw 0.30 — the established "free tap is always safe" pattern), then scales to
+  // a real speed/coin premium over rush at every level ≥2 while keeping draws below
+  // every generator's max output at every level — brutal-but-survivable, never
+  // mathematically dead (a draw exceeding max generator output means permanent brownout
+  // lock plus a shield that never pulses, since energy.ts's pulseShield only fires at
+  // full capacity).
 };
 
 export function motorKindDisplayName(kind: MotorKind): string { return MOTOR_BASE[kind].displayName; }
@@ -625,13 +591,10 @@ const SHIP_BLURBS: Record<ShipKind, string> = {
   warship: 'Stripped gunship built around one big gun.',
 };
 
-// Redesigned 2026-07-10 — kinds are situational sidegrades, not a tier ladder; see
-// WEAPON_STARS's comment above for the full reasoning. Price reuses interceptor's own
-// already-tuned ladder (4,500 top end, ~38.9x cheaper than the old 175,000
-// warship-only ceiling) for every kind; hull and each kind's passive (the actual
-// combat stats making each kind situational) are untouched. Stars reuse weapon's
-// "premium" ladder (0/3/8/16/26), since ship and weapon were the two systems anchored
-// to the old 175,000 ceiling.
+// Ship kinds are situational sidegrades, not a tier ladder; see WEAPON_STARS's comment
+// above. Price reuses interceptor's tuned ladder for every kind; hull and each kind's
+// passive (the actual combat stats making each kind situational) are untouched. Stars
+// reuse weapon's "premium" ladder (0/3/8/16/26).
 export const SHIPS: Record<string, ShipSpec> = {
   'ship-interceptor-1': { id: 'ship-interceptor-1', kind: 'interceptor', level: 1, name: 'Interceptor', hull: 80,  price: 0,    starsRequired: 0, passiveKind: 'enemy-miss-bonus',        passiveValue: 0.10, passiveDescription: 'Enemies miss +10% more often', blurb: SHIP_BLURBS.interceptor },
   'ship-interceptor-2': { id: 'ship-interceptor-2', kind: 'interceptor', level: 2, name: 'Interceptor', hull: 96,  price: 420,  starsRequired: 3, passiveKind: 'enemy-miss-bonus',        passiveValue: 0.12, passiveDescription: 'Enemies miss +12% more often', blurb: SHIP_BLURBS.interceptor },

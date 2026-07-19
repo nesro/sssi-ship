@@ -99,10 +99,9 @@ function standardIconScale(displayLevel: number): number {
  * on single-target weapons. */
 function targetsLabel(maxTargets: number): string {
   // >=, not === : HIT_ALL_TARGETS (core/constants.ts) is Number.MAX_SAFE_INTEGER, not
-  // Infinity (JSON-safety fix, 2026-07-18) — a pierce card's extraPierce still adds on
-  // top of it (computeWeaponStats), which floating-point rounding can nudge away from
-  // exact equality. Infinity itself saturated under addition; a finite sentinel needs
-  // a range check instead.
+  // Infinity (a JSON-safe sentinel) — a pierce card's extraPierce still adds on top of
+  // it (computeWeaponStats), which floating-point rounding can nudge away from exact
+  // equality. A finite sentinel needs a range check instead of exact equality.
   if (maxTargets >= HIT_ALL_TARGETS) return '∞ targets';
   return `${String(maxTargets)} target${maxTargets === 1 ? '' : 's'}`;
 }

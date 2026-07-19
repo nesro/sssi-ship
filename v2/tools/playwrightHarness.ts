@@ -1,8 +1,8 @@
 // Shared Playwright plumbing for every headless view-layer tool (screenshot.ts,
-// tap-target-audit.ts, and whatever else the polish-loop needs next) — drives the game
-// entirely through __cheat (main.ts), never real clicks or hardcoded pixel coordinates.
-// One copy of this logic so every tool in the loop stays consistent and a fix (like the
-// scene-transition race condition below) only needs to land once.
+// tap-target-audit.ts, and whatever else needs it next) — drives the game entirely
+// through __cheat (main.ts), never real clicks or hardcoded pixel coordinates. One copy
+// of this logic so every tool stays consistent and a fix (like the scene-transition
+// race condition below) only needs to land once.
 
 import type { Page } from 'playwright';
 
@@ -11,14 +11,13 @@ export const VIEWPORT = { width: 960, height: 540 }; // LOGICAL_WIDTH/HEIGHT, sr
 export const BOOT_TIMEOUT_MS = 20_000; // BootScene fetches a ~9MB music track on first load
 export const SETTLE_MS = 150; // let one real Phaser frame run after a state change before capture
 
-/** Playwright's default deviceScaleFactor is 1 — every prior run of these tools has
- * therefore only ever exercised src/view/layout.ts's DPR=1 code path, never the
- * dpr-sharp rendering (`zoom: 1/DPR`, `px()`/`fontPx()` device-pixel rounding) the whole
- * canvas-sizing scheme exists to protect, and never actually exercised
- * tap-target-audit.ts's `world-px / DPR` conversion at a real non-1 value (it's
- * algebraically DPR-agnostic, but "algebraically correct" and "actually verified" are
- * different claims). Set DPR_SCALE_FACTOR=2 (or any value) to run a real pass at that
- * scale — docs/plans/comprehensive-coverage-sweep.md's Phase 0. */
+/** Playwright's default deviceScaleFactor is 1, so a default run only ever exercises
+ * src/view/layout.ts's DPR=1 code path, never the dpr-sharp rendering (`zoom: 1/DPR`,
+ * `px()`/`fontPx()` device-pixel rounding) the whole canvas-sizing scheme exists to
+ * protect, nor tap-target-audit.ts's `world-px / DPR` conversion at a real non-1 value
+ * (it's algebraically DPR-agnostic, but "algebraically correct" and "actually verified"
+ * are different claims). Set DPR_SCALE_FACTOR=2 (or any value) to run a real pass at
+ * that scale. */
 export const DEVICE_SCALE_FACTOR = Number(process.env.DPR_SCALE_FACTOR ?? '1');
 
 export interface EnemySnapshot {
@@ -119,20 +118,16 @@ export async function waitForNarratorFullyRevealed(page: Page, timeoutMs = 15_00
  * is true or `maxTicks` is exhausted — the "read state back and adapt" alternative to
  * a hardcoded tick number that may drift the moment mission data changes again.
  *
- * THROWS if the predicate never becomes true — added 2026-07-17/18 (polish-loop,
- * Fable's review) after this used to silently RETURN the best-effort snapshot on both
- * a mission ending early and a timeout, with no way for a caller to tell success from
- * failure short of re-checking the predicate themselves. None of this file's 17 real
- * call sites (tools/screenshot.ts) did that check — `combat-m6-boss`'s shot had been
- * silently capturing a boss-less frame for who knows how long, reported as a clean "0
- * failures" the whole time. The predicate is still checked FIRST, before the
- * mission-ended guard — load-bearing for combat-low-hull-vignette's own setup, which
- * deliberately wants a hull=0 defeat snapshot to still count as success (its own
- * threshold, hull/maxHull < 0.15, is still true at hull=0). `timelineTick` is included
- * because it's often the actual smoking gun (CombatSnapshot's own field, added
- * alongside this fix) — a blocksConveyor enemy freezes it entirely while `tick` (real
- * per-advance count) keeps climbing, so a predicate waiting on a timeline-scheduled
- * spawn can time out on `tick` while `timelineTick` shows it never got anywhere close. */
+ * THROWS if the predicate never becomes true, rather than returning the best-effort
+ * snapshot on both a mission ending early and a timeout — a caller must be able to
+ * tell success from failure without re-checking the predicate itself. The predicate is
+ * still checked FIRST, before the mission-ended guard — load-bearing for
+ * combat-low-hull-vignette's own setup, which deliberately wants a hull=0 defeat
+ * snapshot to still count as success (its own threshold, hull/maxHull < 0.15, is still
+ * true at hull=0). `timelineTick` is included because it's often the actual smoking
+ * gun: a blocksConveyor enemy freezes it entirely while `tick` (real per-advance count)
+ * keeps climbing, so a predicate waiting on a timeline-scheduled spawn can time out on
+ * `tick` while `timelineTick` shows it never got anywhere close. */
 export async function advanceUntil(
   page: Page,
   predicate: (snap: CombatSnapshot) => boolean,
@@ -186,9 +181,9 @@ export function hasKind(snap: CombatSnapshot, kind: string): boolean {
 
 /** Drives through every screen BootScene puts in front of HubScene, so every caller can
  * keep assuming "after this, HubScene is active with no overlay dimming everything."
- * Two steps today: (1) `AlphaNoticeScene` (added 2026-07-17) — shown on EVERY launch,
- * no save-flag gate, so this always has to be dismissed via `alpha.continue()` before
- * HubScene ever becomes active at all; (2) the one-time hub button tour, dismissed via
+ * Two steps today: (1) `AlphaNoticeScene` — shown on EVERY launch, no save-flag gate,
+ * so this always has to be dismissed via `alpha.continue()` before HubScene ever
+ * becomes active at all; (2) the one-time hub button tour, dismissed via
  * `hub.tourSkip()` (a safe no-op when no tour is active — HubScene.ts's
  * `cheatTourSkip`) in case a fresh save's first launch triggered it. Shared by
  * bootToHub() (first page load) and any tool that calls __cheat.reset() mid-run, which

@@ -45,8 +45,8 @@ export function advanceEnemies(state: CoreState, stats: EffectiveStats): void {
   state.enemies = survivors;
   // A burst-killed enemy (hp driven <= 0 above) must go through the same death
   // pipeline as a weapon kill — kill credit, coins, blocker bonus calls, on-kill
-  // chains — not just vanish. Without this, a burst-killed enemy stayed in
+  // chains — not just vanish. Without this call, a burst-killed enemy would stay in
   // state.enemies until some later weapon shot happened to prune it, meanwhile still
-  // shooting the player, regenerating, and blocking victory (found 2026-07-18).
+  // shooting the player, regenerating, and blocking victory.
   if (totalBurst > 0) removeDeadEnemies(state, stats);
 }

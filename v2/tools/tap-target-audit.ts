@@ -1,8 +1,8 @@
 // Runtime touch-target auditor — checks every interactive element on a given screen
 // against docs/design/04-screens-and-layout.md's mobile safe-zone rule: minimum 44×44
 // logical-px tap area, and never closer than 20px to any screen edge. Also checks that
-// no two hit areas overlap (a bigger box tapped at the wrong moment is a worse bug than
-// a small one — see docs/plans/touch-target-and-polish-pass.md).
+// no two hit areas overlap — a bigger box tapped at the wrong moment is a worse bug
+// than a small one.
 //
 // Usage: pnpm audit-taps                      # every STATE below
 //        pnpm audit-taps "Combat: m1 early"   # only the named state(s)
@@ -177,10 +177,8 @@ const STATES: AuditState[] = [
   {
     // reset() wipes the save — must run last, same convention this file has always
     // used for its one reset()-based state (every state above assumes unlockAll()'s
-    // baseline). The tutorials-or-skip choice moved from a separate OnboardingScene
-    // onto this exact screen (2026-07-17, playtest feedback) — this audits the new
-    // "skip tutorials" link's tap target on a genuinely fresh save, not the previous
-    // separate scene's two buttons.
+    // baseline). Audits the "skip tutorials" link's tap target on a genuinely fresh
+    // save.
     name: 'Hub: missions map, fresh save (skip-tutorials link)',
     sceneKey: 'HubScene',
     setup: async (p) => {
@@ -190,10 +188,9 @@ const STATES: AuditState[] = [
     },
   },
   {
-    // AlphaNoticeScene's own CONTINUE/RESET PROGRESS buttons (added 2026-07-17) — a
-    // second, self-contained reset()-based state, safe to run in any order relative to
-    // the one above since both wipe the save themselves rather than depending on a
-    // prior state's baseline.
+    // AlphaNoticeScene's own CONTINUE/RESET PROGRESS buttons — a second, self-contained
+    // reset()-based state, safe to run in any order relative to the one above since
+    // both wipe the save themselves rather than depending on a prior state's baseline.
     name: 'Alpha/dev-build notice screen',
     sceneKey: 'AlphaNoticeScene',
     setup: async (p) => {
@@ -354,19 +351,16 @@ async function main(): Promise<void> {
   await cheat(page, 'unlockAll');
   // Coins too, not just unlockAll's stars/completions: with 0 coins every shop/dispatch
   // level chip renders 'unaffordable' → dimmed → never setInteractive — so the chip
-  // grids were structurally invisible to this audit and their sub-44px hit areas went
-  // unflagged for the feature's whole life (B5, docs/plans/
-  // fable-review-fixes-2026-07-18.md, which found them by reading the code instead).
-  // A rich save makes the chips purchasable and therefore audited.
+  // grids would be structurally invisible to this audit and their sub-44px hit areas
+  // would go unflagged. A rich save makes the chips purchasable and therefore audited.
   await cheat(page, 'setCoins', 999999);
 
   let totalFailures = 0;
   let previousStateName = 'boot';
   for (const state of states) {
     // Checked, not blindly cleared: an error landing after the PREVIOUS state's own
-    // check used to be silently discarded right here and attributed to nobody (same gap
-    // Fable's review found in screenshot.ts). Surfaced against the state it actually
-    // happened after, instead.
+    // check must be surfaced against the state it actually happened after, not
+    // silently discarded and attributed to nobody.
     const strayError = takePageError();
     if (strayError !== null) {
       totalFailures += 1;

@@ -64,11 +64,9 @@ const FLAT_BOOSTS: AbilityDefinition[] = [
     (m) => ({ ...m, motorTimelineMult: m.motorTimelineMult * 1.35 })),
   flat('m-eff-50', 'comet', 'FRICTIONLESS HUB', 'Motor draws 50% less power',
     (m) => ({ ...m, motorDrawMult: m.motorDrawMult * 0.5 })),
-  // Added 2026-07-10 (docs/plans/game-identity-and-design-review-followup.md,
-  // decision 3) — sub-basic's Lv1 pool was 5 cards with zero real draft variance for
-  // most of the early campaign. These two round it out with a survivability and an
-  // economy option, at half the magnitude of their nearest existing card, matching
-  // sub-basic's entry-tier identity rather than power-creeping it.
+  // These two round out sub-basic's Lv1 pool with a survivability and an economy
+  // option, at half the magnitude of their nearest existing card, matching sub-basic's
+  // entry-tier identity rather than power-creeping it.
   flat('g-hull-02', 'quantum', 'RECYCLED PLATING', '+0.03 hull restored per kill',
     (m) => ({ ...m, hullPerKill: m.hullPerKill + 0.03 })),
   flat('m-eco-01', 'comet', 'SCRAP CONVERTER', '+0.01 energy restored per coin earned',

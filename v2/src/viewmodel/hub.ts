@@ -478,12 +478,11 @@ export function computeLoadoutRows(save: SaveData): LoadoutViewModel {
 
 // ── Galaxy map ─────────────────────────────────────────────────────────────
 
-// m3b added 2026-07-15 (fable-fun-review-followup.md Item 7) — placed on the m3→m4
-// path per its mandatory unlock edge (MISSION_UNLOCK_EDGES), roughly at the midpoint
-// of m3/m4's own coordinates so its connecting lines read as "between" them rather
-// than crossing the map. Was missing entirely until this fix — computeGalaxyMap()
-// silently skips any mission without a GALAXY_NODES entry, so the node (and its
-// unlock-edge lines) just never rendered.
+// Every mission needs an entry here — computeGalaxyMap() silently skips any mission
+// without a GALAXY_NODES entry, so a missing node (and its unlock-edge lines) just
+// never renders. m3b sits on the m3→m4 path per its mandatory unlock edge
+// (MISSION_UNLOCK_EDGES), roughly at the midpoint of m3/m4's own coordinates so its
+// connecting lines read as "between" them rather than crossing the map.
 const GALAXY_NODES: Record<string, { x: number; y: number }> = {
   t1: { x: 62, y: 130 }, t2: { x: 133, y: 200 }, t3: { x: 87, y: 285 }, t4: { x: 172, y: 330 },
   m1: { x: 253, y: 100 }, m2: { x: 315, y: 185 }, m3: { x: 369, y: 115 },
@@ -516,14 +515,13 @@ export function computeGalaxyMap(save: SaveData, selectedMissionId: string | nul
   }
   // The daily isn't in ALL_MISSIONS (it's generated fresh per calendar day, not
   // authored — see dailyMission.ts), so it's added here from the explicit `daily`
-  // input rather than falling out of the loop above. Locked until m1 is completed
-  // (2026-07-18, B2 of docs/plans/fable-review-fixes-2026-07-18.md): on a fresh save
-  // the always-unlocked daily marker was the brightest, most salient node on the whole
-  // map — more prominent than t1, the actual starting point — and a curious new player
-  // tapping the shiniest node burns the one-attempt-per-day on a mode that ends in
-  // guaranteed defeat. Presentation gate only: isDailyAvailable/save.daily are
-  // untouched, and "already played today" stays a separate gate the detail panel
-  // surfaces once this one is passed.
+  // input rather than falling out of the loop above. Locked until m1 is completed: an
+  // always-unlocked daily marker would be the brightest, most salient node on the whole
+  // map — more prominent than t1, the actual starting point — tempting a new player to
+  // burn the one-attempt-per-day on a mode that ends in guaranteed defeat.
+  // Presentation gate only: isDailyAvailable/save.daily are untouched, and "already
+  // played today" stays a separate gate the detail panel surfaces once this one is
+  // passed.
   if (daily !== null) {
     const pos = GALAXY_NODES[DAILY_MISSION_ID];
     if (pos !== undefined) {
@@ -569,10 +567,9 @@ export function computeMissionDetail(
   if (selectedMissionId === DAILY_MISSION_ID) {
     if (daily === null) return null;
     // Defense-in-depth mirror of the galaxy-node gate above (real taps can't select a
-    // locked node, but __cheat.selectMission can — same reasoning as the campaign
-    // missions' own LOCKED-panel fix, docs/known-issues.md): while m1-locked, omit the
-    // `daily` field so HubScene falls through to its generic LOCKED panel instead of
-    // rendering the daily panel with best-score copy and a live START.
+    // locked node, but __cheat.selectMission can): while m1-locked, omit the `daily`
+    // field so HubScene falls through to its generic LOCKED panel instead of rendering
+    // the daily panel with best-score copy and a live START.
     if (!isDailyGalaxyNodeUnlocked(save)) {
       return { name: '???', duration: '', isTutorial: false, stars: [], canStart: false };
     }

@@ -4,12 +4,9 @@ import Phaser from 'phaser';
  * A small, destroy-safe collection for the "batch of GameObjects rebuilt from scratch
  * on every state change" lifecycle that recurs across this codebase's overlays and
  * panels (CombatScene's exit-confirm modal and narrator modal, CardOverlay, HubTour,
- * HubScene's content panels — Phase C, fable-review-fixes-2026-07-18.md, replacing
- * five hand-rolled `forEach(o => { o.removeInteractive(); o.destroy(); })` copies of
- * this exact pattern). `removeInteractive()` before `destroy()` matters: a destroyed
- * but still-registered-interactive object can keep swallowing taps meant for whatever
- * gets built in its place (the same class of bug HubTour's own restore-interactivity
- * fix guarded against elsewhere).
+ * HubScene's content panels). `removeInteractive()` before `destroy()` matters: a
+ * destroyed but still-registered-interactive object can keep swallowing taps meant for
+ * whatever gets built in its place.
  */
 export class ManagedObjectGroup {
   private objects: Phaser.GameObjects.GameObject[] = [];

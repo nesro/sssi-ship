@@ -6,9 +6,8 @@ import Phaser from 'phaser';
  * Phaser's `scene.sound` is shared across every scene, so a single module-level
  * instance is the right model: SFX are fire-and-forget; the music track is created
  * once and keeps playing across scene transitions. All assets are preloaded by
- * BootScene before AlphaNoticeScene/HubScene start (corrected 2026-07-18 — MenuScene
- * never existed in this codebase's actual scene graph), so `play()` here never blocks
- * on a load.
+ * BootScene before AlphaNoticeScene/HubScene start, so `play()` here never blocks on a
+ * load.
  *
  * Browser autoplay policy: audio stays locked until the first user gesture. Phaser
  * unlocks automatically on the first pointer/key event, after which queued music

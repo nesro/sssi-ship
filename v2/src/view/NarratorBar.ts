@@ -78,11 +78,11 @@ export class NarratorBar {
    * CURRENTLY on the bar, not a specific one — fine today since no mission triggers two
    * sequential bar lines, but a future one that does would need this call site-scoped,
    * not just this flag polled blindly. Lets a caller (the screenshot harness) poll for
-   * "done revealing" instead of sleeping a fixed duration sized off today's longest line
-   * — see docs/known-issues.md's now-resolved NarratorBar reveal-timing entry. */
-  // Called from CombatCheats.ts's inspect() via `scene.narrator` (Phase C extraction);
-  // fallow's cross-file analysis doesn't follow the call through CombatScene's
-  // type-only import boundary, so it flags this as dead without the line below.
+   * "done revealing" instead of sleeping a fixed duration sized off today's longest
+   * line. */
+  // Called from CombatCheats.ts's inspect() via `scene.narrator`; fallow's cross-file
+  // analysis doesn't follow the call through CombatScene's type-only import boundary,
+  // so it flags this as dead without the line below.
   // fallow-ignore-next-line unused-class-member
   isFullyRevealed(): boolean {
     return this.bg.visible && !this.active;

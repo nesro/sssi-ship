@@ -194,8 +194,7 @@ export function fireSideWeapon(state: CoreState): void {
 
   // Fold active timed boosts (e.g. Rage Protocol) exactly like advanceTick does
   // (tick.ts) — a manual-fire side weapon must feel the same active damage-mult
-  // window an auto-firing weapon does (found 2026-07-18: this call used to omit the
-  // boost args entirely, so a damage boost silently never applied to side-weapon hits).
+  // window an auto-firing weapon does.
   const stats = computeEffectiveStats(
     state.loadout, state.modifiers, activeDamageMult(state), activeFireRateMult(state), activeGeneratorMult(state),
   );
@@ -396,7 +395,7 @@ function applyEnemyDeathEffects(
   state.stats.coinsEarned += coinReward;
   // View-facing only: lets the coin popup show real credited coins instead of the
   // enemy's raw spec coinReward, which a collision self-death (never routed through
-  // this function) would otherwise wrongly imply was paid (found 2026-07-18).
+  // this function) would otherwise wrongly imply was paid.
   state.pendingVisualEvents.push({ kind: 'enemy-killed', enemyId: enemy.id, coins: coinReward });
 
   if (mods.coinsEnergyRestore > 0) {

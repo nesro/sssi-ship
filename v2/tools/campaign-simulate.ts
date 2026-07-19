@@ -1,5 +1,4 @@
-// Campaign playthrough simulator — docs/plans/campaign-playthrough-simulator.md,
-// docs/plans/expert-average-campaign-tuning.md.
+// Campaign playthrough simulator.
 //
 // Answers a different question than `pnpm sim`/`pnpm balance`: not "is mission X
 // winnable at a hand-picked loadout" (already covered) but "does a simulated new
@@ -11,40 +10,32 @@
 //        pnpm campaign -- --runs 5000         # thorough pass (run via run_in_background)
 //        pnpm campaign -- --seed 7
 //
-// Confirmed design decisions (docs/plans/campaign-playthrough-simulator.md, updated
-// 2026-07-11 per docs/plans/expert-average-campaign-tuning.md):
-//   1. Two archetypes: `expert`, `average` — replacing the original `informed-saver`/
-//      `impulse-spender` naming. NOT a smart-vs-dumb split — both are genuinely
-//      competent players, differing only in optimization depth (Tomáš, 2026-07-11
-//      `/grill-me`: "don't ever try to dumb them down... real people will outsmart
-//      this"). `expert` rebuilds the best affordable build for every mission from a
-//      tuned per-mission kind table (`tools/recommendedKinds.generated.ts`, produced by
-//      `pnpm tune`) — exploiting §5's "100% sell-back, always" rule to its logical
-//      conclusion, per-slot diff-to-target rather than literal liquidation (same net
-//      cost either way — Fable's review). `average` commits to the free starter kind
-//      (pulse/wall/torrent/rush) for weapon/shield/generator/motor for the whole
+// Design decisions:
+//   1. Two archetypes: `expert`, `average` — NOT a smart-vs-dumb split, both are
+//      genuinely competent players differing only in optimization depth. `expert`
+//      rebuilds the best affordable build for every mission from a tuned per-mission
+//      kind table (`tools/recommendedKinds.generated.ts`, produced by `pnpm tune`),
+//      exploiting §5's "100% sell-back, always" rule via a per-slot diff-to-target
+//      (same net cost as literal liquidation). `average` commits to the free starter
+//      kind (pulse/wall/torrent/rush) for weapon/shield/generator/motor for the whole
 //      campaign and never switches — a completely normal way to play, not a mistake —
 //      making only incremental level-up purchases.
 //   2. Card-picks fixed to `greedy` (this project's realistic-player proxy).
 //   3. No farming in v1 (reported stuck-rate is an upper bound, not the real rate).
 //      Tutorials cleared before m1.
 //   4. Patience cap: 8 consecutive losses on one mission = stuck.
-//   5. Both archetypes actually use every slot they buy — added 2026-07-11 after
-//      finding neither ever fired a side weapon or tapped a supply charge in any
-//      simulator (`src/core/replay.ts`'s `useSideWeapon`/`useBoost` policies default to
-//      "never"). `expert` uses a high-value-target-only side-weapon trigger and a
-//      reactive supply policy; `average` uses a simpler "enemies on screen" trigger and
-//      a naive "use it the instant it's charged" supply policy — both cooldown-gated
-//      (`tools/policies.ts`) so neither dumps every charge into the first wave.
+//   5. Both archetypes actually use every slot they buy: `expert` uses a
+//      high-value-target-only side-weapon trigger and a reactive supply policy;
+//      `average` uses a simpler "enemies on screen" trigger and a naive "use it the
+//      instant it's charged" supply policy — both cooldown-gated (`tools/policies.ts`)
+//      so neither dumps every charge into the first wave.
 //   6. Seven report metrics (completion rate, retry distribution, churn histogram,
 //      playtime vs. the ~50min combat-only subtotal, coin/star trajectory, margin at
-//      clear). Margin (median hull% at clear + near-miss rate) added 2026-07-11 —
-//      docs/plans/nova-weapon-and-campaign-tension-review.md's campaign-tension
-//      finding: retry count can't show a gradual m1-m5 ramp because it's a threshold
-//      metric (reads ~1.00 until per-attempt clear drops below ~90%, then jumps), and
-//      GAME_DESIGN.md §3/§1 ("never stuck", "no single best build") argue against
-//      forcing real retries as the m1-m5 tension currency anyway. Margin is the
-//      metric that can actually show a gradual campaign-long ramp instead.
+//      clear). Margin (median hull% at clear + near-miss rate) exists because retry
+//      count can't show a gradual m1-m5 ramp — it's a threshold metric (reads ~1.00
+//      until per-attempt clear drops below ~90%, then jumps) — and GAME_DESIGN.md
+//      §3/§1 ("never stuck", "no single best build") argue against forcing real
+//      retries as the m1-m5 tension currency anyway.
 //   7. Default N = 500/archetype quick, 5000/archetype thorough.
 
 import './localStorageShim';
@@ -79,8 +70,6 @@ import {
 import { RECOMMENDED_KIND_PER_MISSION } from './recommendedKinds.generated';
 
 // ── Constants ────────────────────────────────────────────────────────────────
-// Confirmed 2026-07-10 (grill-me pass) — see the plan doc for the reasoning behind
-// each of these.
 
 const PATIENCE_CAP = 8;
 const DEFAULT_QUICK_N = 500;
@@ -91,18 +80,18 @@ const NEAR_MISS_HULL_THRESHOLD = 0.2;
 const COMBAT_MINUTES_TARGET = 50; // GAME_DESIGN.md §13: ~50min combat + ~20min shop/planning
 
 // ── "One hour of fun" score ─────────────────────────────────────────────────────
-// Composite score confirmed with Tomáš 2026-07-15: three sub-scores (completion,
-// time-fit, pacing-shape) combined via geometric mean — one weak dimension tanks the
-// total, since "one hour of FUN" is a compound goal, not an average of parts. Reuses
-// data summarizeArchetype already collects; runs no extra simulations. Failing
-// individual missions is explicitly NOT penalized (the player still nets coins and
-// keeps progressing, per §3's "never stuck" principle) — only permanently getting
-// stuck (patience-cap exhaustion) counts against the completion sub-score.
+// Three sub-scores (completion, time-fit, pacing-shape) combined via geometric mean —
+// one weak dimension tanks the total, since "one hour of FUN" is a compound goal, not
+// an average of parts. Reuses data summarizeArchetype already collects; runs no extra
+// simulations. Failing individual missions is explicitly NOT penalized (the player
+// still nets coins and keeps progressing, per §3's "never stuck" principle) — only
+// permanently getting stuck (patience-cap exhaustion) counts against the completion
+// sub-score.
 
 // Aspirational full-experience target (combat + shop/planning), not the combat-only
 // COMBAT_MINUTES_TARGET above — deliberately scores against the real ~60-75min goal
-// now rather than the current honest ~30min baseline, so the score visibly improves
-// as real content (e.g. the follow-up plan's new mid-campaign mission) lands.
+// now rather than the current honest ~30min baseline, so the score visibly improves as
+// real content lands.
 const TARGET_TOTAL_MINUTES_MIN = 60;
 const TARGET_TOTAL_MINUTES_MAX = 75;
 // Estimated shop/planning time per mission — no live UI to measure, so this is a
@@ -179,13 +168,11 @@ function cheapestPricierThan<T extends { price: number }>(items: T[], currentPri
 }
 
 /** `average`'s upgrade path: stays within the currently-equipped kind (the next level
- * up) *forever* — never switches kind, even once the current kind is maxed (Tomáš,
- * 2026-07-11: `average` commits to one path and never leaves it). `average` always
- * starts on the free starter kind (`defaultSave()`'s `pulse-1`/`shield-wall-1`/
+ * up) *forever* — never switches kind, even once the current kind is maxed. `average`
+ * always starts on the free starter kind (`defaultSave()`'s `pulse-1`/`shield-wall-1`/
  * `generator-torrent-1`/`motor-rush-1`), so in practice this only ever climbs that
- * kind's own ladder. Returns null once maxed rather than falling back to a different
- * kind's Lv1 — the earlier `informed-saver`/`impulse-spender` version of this function
- * fell back to a kind switch here, which is exactly the behavior `average` must not
+ * kind's own ladder. Must return null once maxed rather than falling back to a
+ * different kind's Lv1 — that fallback is exactly the behavior `average` must not
  * have. */
 function nextCatalogUpgradeSameKindOnly(save: SaveData, system: EquipSlotSystem): PurchaseCandidate | null {
   const config = CATALOG_SYSTEMS[system];
@@ -204,8 +191,8 @@ function nextCatalogUpgradeSameKindOnly(save: SaveData, system: EquipSlotSystem)
 /** `expert`'s upgrade path: a candidate that jumps straight to a specific kind+level —
  * `tools/recommendedKinds.generated.ts`'s tuned recommendation, not the currently-
  * equipped kind. Net-cost trade-in (via `switchItem`) makes this economically identical
- * to selling everything and rebuilding from scratch (Fable's review) — implemented as
- * a diff, not a literal liquidation. */
+ * to selling everything and rebuilding from scratch, implemented as a diff rather than
+ * a literal liquidation. */
 function targetCandidateForKind(save: SaveData, system: EquipSlotSystem, kind: string, level: number): PurchaseCandidate | null {
   const config = CATALOG_SYSTEMS[system];
   const targetId = config.idAt(kind, level);
@@ -302,8 +289,8 @@ function affordableAndUnlocked(save: SaveData, candidates: (PurchaseCandidate | 
   return candidates
     .filter((c): c is PurchaseCandidate => c !== null)
     // >= 0, not > 0: a same-level kind switch costs exactly 0 (every kind within a
-    // system shares one price ladder, 2026-07-10 repricing) — `expert`'s whole premise
-    // is taking those free sidegrades, so they must not be filtered out as "no-ops".
+    // system shares one price ladder) — `expert`'s whole premise is taking those free
+    // sidegrades, so they must not be filtered out as "no-ops".
     .filter((c) => c.cost >= 0 && c.cost <= save.coins && !isStarLocked(c.starsRequired, save));
 }
 
@@ -501,9 +488,9 @@ function manageTogglesPolicyFor(archetype: Archetype): TogglePolicy {
   return archetype === 'expert' ? brownoutAwareToggles : alwaysOnToggles;
 }
 
-/** `expert` taps enemies the game flags "must be prioritized" (turret/booster/boss —
- * added 2026-07-15 for Item 7's booster); `average` fires on default front-most
- * targeting, same as every archetype did before tap-to-target existed. */
+/** `expert` taps enemies the game flags "must be prioritized" (turret/booster/boss);
+ * `average` fires on default front-most targeting, same as every archetype did before
+ * tap-to-target existed. */
 function chooseTargetPolicyFor(archetype: Archetype): TargetPolicy | undefined {
   return archetype === 'expert' ? prioritizeHighValueTargets : undefined;
 }
@@ -611,8 +598,7 @@ function medianHullByMainMission(campaigns: CampaignRecord[]): { missionId: stri
 /** Rewards a real tension curve (spread across missions) instead of flat-then-cliff,
  * and requires the campaign's actual final main mission to be at or near the hardest
  * point — a mid-campaign spike that leaves the finale comparatively easy doesn't fully
- * solve "flat" (docs/plans/fable-fun-review-followup.md's Item 7 concern, generalized
- * into a standing metric instead of a one-off manual check). */
+ * solve "flat". */
 function pacingShapeScore(campaigns: CampaignRecord[]): number {
   const byMission = medianHullByMainMission(campaigns);
   if (byMission.length < 2) return 0; // not enough data to have a shape at all

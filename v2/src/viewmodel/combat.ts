@@ -15,12 +15,11 @@ import { PALETTE } from '../view/palette';
 // CombatHud.ts's static row-label color matches the bar's fill color exactly (one source).
 export const HULL_GREEN = 0x44ff66;
 const BROWNOUT_COLOR = 0xff4400;
-// Named 2026-07-18 (Phase C, fable-review-fixes-2026-07-18.md — was a bare `1.05`
-// duplicated in both this file and CombatScene.ts). A mission's last scheduled event
-// tick isn't quite the real end of the mission (enemies from that event still have to
-// reach the ship/die after it fires), so both the progress bar and the support-call
-// markers measure against a slightly padded denominator rather than the literal last
-// event tick — otherwise the bar would hit 100% before the mission actually ends.
+// A mission's last scheduled event tick isn't quite the real end of the mission
+// (enemies from that event still have to reach the ship/die after it fires), so both
+// the progress bar and the support-call markers measure against a slightly padded
+// denominator rather than the literal last event tick — otherwise the bar would hit
+// 100% before the mission actually ends.
 const TIMELINE_TAIL_FRACTION = 1.05;
 
 export interface BarViewModel {
@@ -61,8 +60,7 @@ export interface CombatHudViewModel {
   missionOrBoss: MissionOrBossBarViewModel;
   supportMarkers: SupportMarkerViewModel[]; // [] when mode === 'boss'
   /** "DPS 20.0  KILLS 5" — or just "KILLS 5" with no weapon equipped (t1's forced
-   * loadout): a permanent "DPS 0.0" read as a broken stat through the whole tutorial
-   * (B4, docs/plans/fable-review-fixes-2026-07-18.md), while KILLS stays live even
+   * loadout): a permanent "DPS 0.0" reads as a broken stat, while KILLS stays live even
    * weaponless — shield-burst kills are real credited kills (conveyor.ts). */
   dpsLine: string;
   timeLine: string; // "TIME 12.3s"
@@ -92,10 +90,9 @@ function paddedTotalTicks(state: CoreState): number {
   return lastEvent !== undefined ? lastEvent.atTimelineTick * TIMELINE_TAIL_FRACTION : 1;
 }
 
-/** Single source (Phase C — was duplicated in CombatScene.ts) for the mission-progress
- * bar's fraction: 0 while a boss is up (the bar switches to showing boss HP instead —
- * see computeMissionOrBossBar), else how far through the padded timeline the mission
- * currently is. */
+/** Single source for the mission-progress bar's fraction: 0 while a boss is up (the bar
+ * switches to showing boss HP instead — see computeMissionOrBossBar), else how far
+ * through the padded timeline the mission currently is. */
 function computeProgressFrac(state: CoreState, boss: EnemyState | null): number {
   if (boss !== null) return 0;
   return Math.min(1, state.timelineTick / paddedTotalTicks(state));

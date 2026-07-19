@@ -2,12 +2,11 @@ import Phaser from 'phaser';
 import { px } from './layout';
 
 /**
- * Pure per-frame tick functions for CombatScene's particle/floating-text effects —
- * extracted from CombatScene.ts (Phase C, fable-review-fixes-2026-07-18.md) to match
- * the same "pure function over an array + a Graphics object, returns survivors"
- * convention shipRenderers.ts's tickMuzzleFlashes/tickLaserBolts already established.
- * The scene still owns the arrays (spawning pushes to them directly, unchanged) — only
- * the per-frame advance/cull/redraw step moves here.
+ * Pure per-frame tick functions for CombatScene's particle/floating-text effects,
+ * matching the "pure function over an array + a Graphics object, returns survivors"
+ * convention shipRenderers.ts's tickMuzzleFlashes/tickLaserBolts already establish. The
+ * scene still owns the arrays (spawning pushes to them directly) — only the per-frame
+ * advance/cull/redraw step lives here.
  */
 
 export interface BurstParticle {
