@@ -372,16 +372,23 @@ SLOW_START metrics) — if Tomáš wants that, it's a separate item with sim swe
 
 **Verify:** `pnpm screenshot -- combat-t1` + read PNG.
 
-**Outcome (2026-07-18): partially fixed.** The 44px tap-target violation itself is
-fixed — both `renderLevelChips` and `renderSubLevelChips` (`HubScene.ts:971,1193`) now
-call `ensureMinTapTarget`, confirmed by the current `pnpm audit-taps` run (22/22 states
-pass, shop/dispatch tabs included). **Not done:** the two renderers were fixed
-independently, not de-duplicated into the one shared chip-grid helper this item
-recommended doing "while touching them" (C-territory work bundled into this item, not
-its own core ask) — `renderLevelChips`/`renderSubLevelChips` are still two separate,
-near-identical functions. Leaving this as a legitimate Phase C cleanup item rather than
-retroactively doing it now, since the 44px fix (this item's actual bug) is complete and
-verified.
+**Outcome (2026-07-18): fully fixed** (the leftover dedup landed in a later pass the
+same day). The 44px tap-target violation itself was fixed first — `renderLevelChips`'s
+own manual downward-extended hit area and `renderSubLevelChips`' `ensureMinTapTarget`
+call, confirmed by `pnpm audit-taps` (22/22, shop/dispatch tabs included). The
+de-duplication this item asked for "while touching them" was deferred at the time
+(logged as a legitimate leftover) and completed later the same session: both renderers
+now share a `renderChipCell` helper for the background-rectangle + label + sub-label
+skeleton, while each renderer keeps its OWN hit-area strategy untouched (manual
+downward-extension vs. `ensureMinTapTarget` — these two have their own, different,
+hard-won bug histories documented inline, so the shared helper deliberately stops short
+of merging that part). Verified with the full `pnpm audit-taps` (22/22) +
+`pnpm screenshot` (76/76) batch, plus direct PNG reads of the weapon shop, weapon-maxed,
+and dispatch-reinforcements chip grids. Found and fixed a real, unrelated pre-existing
+bug along the way: `hub-dispatch-reinforcements`'s screenshot was capturing the
+first-visit dispatch coach-mark tour instead of its own clean cards grid (same root
+cause already fixed for `hub-shop-weapon` — see `docs/known-issues.md`'s Resolved
+entry for the fix and full explanation).
 
 ### B5. Shop level chips are 32px tap targets (violates the 44px hard rule)
 
@@ -406,6 +413,12 @@ visuals expected).
 
 ## Phase C — view-layer structural cleanups (no behavior change intended)
 
+**Outcomes (2026-07-18) — all 6 items fixed this session, including the optional
+item 6 (Tomáš explicitly asked for it when consulted on scope).** Verified throughout
+with `pnpm test`/`lint`/`build:dry` plus full `pnpm audit-taps` (22/22) and
+`pnpm screenshot` (76/76) after each item, with PNG reads — zero visual diffs, exactly
+as this phase's own verification note below required.
+
 Lower priority than A/B/D. Each is independently shippable; do them in this order.
 
 1. **Move `applyProspectiveKind` into the viewmodel.** `HubScene.ts:1447-1486` — pure
@@ -414,20 +427,39 @@ Lower priority than A/B/D. Each is independently shippable; do them in this orde
    `prospective ?? current`. Move verbatim, add unit tests per branch (8 tabs +
    null/no-op path). This also de-duplicates kind→spec mapping already centralized in
    `viewmodel/shopSystems.ts`.
+   **Outcome: fixed.** Moved verbatim into `viewmodel/preview.ts`, exported. Added 13
+   tests (one per branch × current/no-op where applicable, plus the null-tab no-op
+   path) in `preview.test.ts`. `HubScene.ts` now only imports and calls it.
 2. **Move next-mission resolution into `ResultViewModel`.** `ResultScene.ts:111-135`
    scans `MISSION_UNLOCK_EDGES` + `completesOnDefeat` in the scene, untested. Add
    `nextMissionId: string | null` to the viewmodel (`viewmodel/result.ts`), test the
    graph logic (t1's two outgoing edges → t2 via find-order is a documented subtlety —
    pin it with a test), and make the scene dumb.
+   **Outcome: fixed.** `nextMissionId` computed inside `computeResultViewModel`,
+   `ResultScene.ts` reads `vm.nextMissionId` only. 5 new tests cover m1→m2, m1 defeat→
+   null, t1's two-edge find-order→t2, t1 defeat (completesOnDefeat)→t2, and m6 (leaf,
+   no outgoing edge)→null even on victory.
 3. **Single-source the progress fraction.** `CombatScene.ts:661` and
    `viewmodel/combat.ts:79` both compute `lastEvent.atTimelineTick * 1.05`. Compute
    `progressFrac` inside `computeCombatHudViewModel` from state, delete the scene copy,
    name the `1.05` (`TIMELINE_TAIL_FRACTION` or similar) in one place.
+   **Outcome: fixed.** `TIMELINE_TAIL_FRACTION` named in `viewmodel/combat.ts`;
+   `computeCombatHudViewModel`'s signature dropped the `progressFrac` parameter
+   entirely (now derives it internally via a new `computeProgressFrac` helper, shared
+   with `computeSupportMarkers`'s own padded-total-ticks calc). `CombatHud.update()`
+   and `CombatScene.ts`'s call site updated to match; the scene no longer computes this
+   at all. Existing tests rewritten to drive real `state.timelineTick` values instead
+   of injecting a mock `progressFrac`, plus a new clamp-to-1 test.
 4. **`ManagedObjectGroup` helper.** Five hand-rolled
    `forEach(o => { o.removeInteractive(); o.destroy(); })` lifecycles
    (`exitConfirmObjects`, `narratorModalObjects` in CombatScene; CardOverlay; HubTour;
    HubScene `contentObjects`). Small class: `add()`, `destroyAll()` (destroy-safe,
    idempotent). Migrate all five.
+   **Outcome: fixed.** New `view/ManagedObjectGroup.ts` (`add<T>`/`length`/
+   `destroyAll`); all 5 sites migrated, including HubTour's `stepObjects` (previously
+   the one site NOT calling `removeInteractive()` before `destroy()` — now
+   standardized on the safer pattern, verified via Phaser source that
+   `removeInteractive()` is a no-op-safe call even on a never-interactive object).
 5. **Guard the `__cheat` hub entry points against inactive scenes.** Verified live:
    calling `__cheat.navTo(...)` before `HubScene.create()` finishes crashes
    (`rebuildContent` on destroyed `contentObjects`; `get devMode` on unset `save`), and
@@ -437,10 +469,37 @@ Lower priority than A/B/D. Each is independently shippable; do them in this orde
    `contentObjects = []` before first use (belt-and-braces; item 4's group makes this
    trivial). This is dev-tooling robustness, but the screenshot harness runs on these
    cheats — a mid-batch crash corrupts every later shot.
+   **Outcome: fixed — half was already done, half was a real live gap.** `create()`'s
+   defensive reset and the `callHubCheat`/`callCombatCheat`/`callAlphaCheat`
+   `isActive()`-gated wrappers already existed (an earlier session's work, confirmed
+   correct against Phaser's real source: `isActive()` returns false for the *entire*
+   duration `create()` runs, only flipping true after it returns — verified in
+   `node_modules/phaser/src/scene/SceneManager.js`). But 4 top-level cheats
+   (`navShop`, `navTo`, `selectSubscription`, `selectMission` in `main.ts`) bypassed
+   that safe wrapper entirely, using a bare `game.scene.getScene('HubScene')` +
+   method-exists check — which is true even mid-`create()`, the exact race this item
+   describes. All 4 now route through `callHubCheat` (with `navShop`/`navTo` keeping
+   their pre-existing `goTo('HubScene')` fallback when the scene isn't active).
 6. **(Optional, largest)** Extract CombatScene's ~200 lines of `cheat*` methods
    (:1739-1934) into a `CombatCheats` helper, and the particle/floating-text subsystem
    (:541-633, :1111-1345) into an effects module. Only if time allows; pure mechanical
    moves.
+   **Outcome: fixed** (Tomáš explicitly opted in when asked about scope). New
+   `view/CombatCheats.ts` holds all 16 cheat implementations as plain methods on a
+   class constructed with `new CombatCheats(this)`; `CombatScene.ts`'s own `cheatXxx`
+   methods are now one-line delegates (preserving `main.ts`'s `scene[method]` name-
+   based lookup convention unchanged). Required widening ~9 `CombatScene` members from
+   `private` to package-visible (each commented `// not private: CombatCheats.ts needs
+   direct access`) — a deliberate, narrow encapsulation loosening, not a design
+   regression. New `view/combatEffects.ts` holds `tickBurstParticles`/
+   `tickFloatingTexts`/`tickShieldPulseRings` (mirroring `shipRenderers.ts`'s existing
+   `tickMuzzleFlashes`/`tickLaserBolts` convention, which had already covered the
+   laser/muzzle-flash half of this item before this session). This was the highest-
+   regression-risk change in the whole round (every `__cheat.combat.*` call the entire
+   screenshot/audit-taps harness depends on routes through it) — verified with the
+   full 76-shot/22-state batch plus targeted reads of side-weapon-fire, supply-
+   activate, and narrator-modal screenshots (three different cheat call paths) before
+   trusting it.
 
 Verification for all of C: `pnpm test` (new viewmodel tests), full
 `pnpm audit-taps` + `pnpm screenshot` with PNG reads — zero visual diffs expected.
@@ -589,6 +648,11 @@ PNG's pixel content should have changed at all).
 
 ## Phase E — decision-only items (no implementation in this plan)
 
+**Outcomes (2026-07-18) — all 4 items acted on, per Tomáš's own explicit direction on
+each when consulted (not a unilateral call on any of them).** Full detail in
+`docs/known-issues.md`'s Resolved/Open entries and `docs/design/13-balance-and-tuning.md`'s
+tuning log for each; short summary here.
+
 Each needs Tomáš's call, then its own scoped plan if approved:
 
 1. **y2010 × Daily Mission exploit** (known-issues, 2026-07-17): a campaign-completed
@@ -598,12 +662,31 @@ Each needs Tomáš's call, then its own scoped plan if approved:
    `DAILY_MAX_PAYOUT` keeps the perk fun without dwarfing the 100k completionist
    target); verify with `pnpm sim -- --daily-seed 1 --loadout <y2010 preset>` once a
    preset exists.
+   **Outcome: decided — accept as intended, no code change.** Tomáš's explicit call:
+   "Accept as intended — it's a post-campaign reward, not a bug." Closed in
+   `docs/known-issues.md`'s Resolved section with that rationale (already gated behind
+   real campaign completion, so the "exploit" only reaches a player who's already
+   finished the game's actual content).
 2. **Ion weapon dominance / pulse worst-in-class on m1-m2** (§13 workflow point 6
    documents this as found-but-unfixed, and the recommended standing kind×mission
    sweep artifact was never built). Recommendation: build the sweep artifact first
    (extend `pnpm tune`'s report with a same-system per-mission spread table + a CI-style
    threshold), then rebalance from data. Touches the game's core "no single best build"
    principle — genuinely owner-gated.
+   **Outcome: sweep artifact built, no rebalancing** (Tomáš's explicit call: build the
+   tool, defer the rebalance decision). `pnpm tune` now writes a cross-mission summary
+   table and exits non-zero on any dominant-kind flag, matching `pnpm balance`/
+   `pnpm pacing`'s convention. Building it found and fixed a real bug in the tool
+   itself: the campaign-completion-gated `y2010` Easter egg was in the weapon
+   tournament and winning m3/m6 outright, silently feeding a mechanically-impossible-
+   for-a-first-playthrough recommendation into `RECOMMENDED_KIND_PER_MISSION` (which
+   `campaign-simulate.ts`'s `expert` archetype then acts on) — excluded via a new
+   `REAL_WEAPON_KINDS`. Fresh, y2010-excluded data supersedes the 2026-07-11-era "pulse
+   worst on m1/m2" framing (both now recommend pulse, non-dominant spread — consistent
+   with fixes that landed after that finding and were never re-checked against it)
+   while confirming the broader pattern is real and current: m3 (ion), m3b (nova), m4
+   (ion), m5 (scatter), m6 (ion) each show a genuine dominant kind. Full data in
+   `docs/design/13-balance-and-tuning.md`'s point 6 and `docs/known-issues.md`.
 3. **Mid-campaign tension experiment (m2–m4).** Campaign sim shows median hull 100%,
    near-miss ≈0%, retries ≈1.0 through m1–m5 for both archetypes; the energy-triage
    skill loop is never *required* before m6. §13 accepts this pending playtest. The
@@ -611,9 +694,41 @@ Each needs Tomáš's call, then its own scoped plan if approved:
    moment each (e.g. a scripted generator-strain wave), hand-playtested, evaluated
    against the §13 clear-rate floors AND felt tension. This is design work — separate
    plan, after a real playtest session confirms or refutes the concern.
+   **Outcome: implemented ahead of a real playtest, explicitly on Tomáš's own
+   instruction** ("Make it as best as possible, I will get to it sooner or later") —
+   NOT settled design, provisional pending his own hands-on read. One new small
+   enemy wave per mission (m2/m3/m4, each mission's own already-tuned `striker` spec,
+   not a new enemy), planned with a Fable pre-implementation review first (per this
+   repo's own convention for `missions.ts` balance-data changes). Sizing needed real
+   iteration beyond the review's own estimate — m2's insert in particular measured a
+   larger-than-predicted clear-rate drop and was reduced twice (3→2→1 enemy) before
+   landing with real floor margin. `pnpm campaign` shows the intended effect: `average`
+   archetype's m2 margin-at-clear moved from 100% median hull/0% near-miss to
+   **59%/7.0%** — real, measured tension where none existed — while `expert` (strong
+   gear) stayed at 100%/0% on all three missions, unaffected. Both archetypes held
+   100%/100% completion. Also added a permanent regression test the review flagged as
+   missing: mission `events` arrays must stay sorted by `atTimelineTick`
+   (`missions.test.ts`) — nothing previously checked this cross-event invariant. Full
+   data, caveats (the sim structurally can't verify the "toggle now required" half of
+   the premise, only that it's safe and moves the margin metrics), and the exact revert
+   procedure (delete one commented line per mission) in `docs/known-issues.md`'s own
+   entry.
 4. **Daily motor-tier residual inversion** (known-issues): the proposed motor-only sweep
    (same gear, motor level varied, coins should stay ~flat) was never run. Cheap to
    run; do it as part of any daily follow-up and log results in §13.
+   **Outcome: run, confirmed real and larger than expected, not fixed** (Tomáš's
+   explicit call: run and log, no code change unless it finds something — it did).
+   Same weapon/shield/generator (pulse/wall/torrent, Lv2), only motor level varied
+   (`rush` 1/2/3), 500 runs each against a real daily seed (throwaway script, run then
+   deleted per convention): the slowest motor nets **~2× the fastest motor's coins**
+   (454.9 vs. 232.5 avg raw score) at identical everything-else — not a small residual,
+   the largest un-reconciled economy inversion found in this project's balance
+   history. Two candidate fixes identified (decouple flowing-wave timing from motor
+   speed; freeze motor draw during gate fights) — both are real mechanic changes to
+   `dailyMission.ts`/`core/timeline.ts`, not tuning-number tweaks, so this stays
+   owner-gated pending a deliberate call on which lever to pull. Full numbers in
+   `docs/known-issues.md` and `docs/design/13-balance-and-tuning.md`'s Daily Mission
+   tuning section.
 
 ---
 
@@ -664,13 +779,13 @@ test exists and passes.
 - [x] conveyor: non-lethal burst leaves survivor untouched (regression)
 - [x] cards: ZERO BARRIER applies exactly at shield ≤ 0, not at hull < 30% (both directions)
 - [x] cards: PEAK CONDITION applies exactly at full shield, not at shield > 0
-- [ ] cards: no double-stacking with lowHullDmgMult family — **not ticked**: the fix
-      itself is structurally correct (each modifier gates its own independent `mult *=`
-      factor in `combat.ts`'s `computeStateDmgMult`, verified by reading the code — there
-      is no way for one to double-apply or interact wrongly with another), but no test
-      exercises the specific combined scenario (low hull AND zero shield at once) this
-      checkbox describes. Existing tests (`combat.test.ts:268,299,310,319`) each cover
-      one modifier's own boundary in isolation, not the combination.
+- [x] cards: no double-stacking with lowHullDmgMult family — **fixed 2026-07-18**, the
+      one gap this test-plan itself had flagged as missing. 3 new tests in
+      `combat.test.ts`: both modifiers active with both trigger conditions true compose
+      multiplicatively (1.4 × 2 = 2.8×, not 3.4× additive or one silently overriding the
+      other), plus two isolation checks (only-hull-condition, only-shield-condition)
+      confirming each stays inert when its own condition doesn't hold even while the
+      other modifier is present.
 - [x] combat: fireSideWeapon respects active damage-mult ×2 (seeded, exact value)
 - [x] combat: `enemy-killed` visual event emitted on weapon kill with coin amount; absent on collision self-death
 - [x] items/replay: no `Infinity` in any spec; JSON round-trip of a ReplayRecord reproduces `resultHash`
@@ -681,18 +796,41 @@ test exists and passes.
 - [x] viewmodel/result (with C2) or Playwright probe: SHOP lands on shop panel; subsequent bare HubScene start does NOT re-open shop — via Playwright probe (documented in known-issues.md's Resolved entry), not a viewmodel test; Phase C's own `nextMissionId` viewmodel move (below) was never done, so "(with C2)" doesn't apply
 - [x] missions data test: no two time-star thresholds within 1s of each other on any mission (locks in B1's fix)
 
-**Phase C** — not implemented this pass (out of scope: this session covered Phase D only, plus verifying A/B). Confirmed still not done by reading the code: `applyProspectiveKind` is still in `HubScene.ts` (not moved), `result.ts` has no `nextMissionId` field, `progressFrac` is still computed in `CombatScene.ts` (not moved into `computeCombatHudViewModel`).
-- [ ] viewmodel/preview: applyProspectiveKind — one test per shop tab + no-op path
-- [ ] viewmodel/result: nextMissionId graph resolution incl. t1→t2 edge order
-- [ ] viewmodel/combat: progressFrac derived in viewmodel matches old scene formula
+**Phase C** — fully implemented in a later session the same day (all 6 items, see
+Phase C's own outcome notes above for detail on each).
+- [x] viewmodel/preview: applyProspectiveKind — one test per shop tab + no-op path
+- [x] viewmodel/result: nextMissionId graph resolution incl. t1→t2 edge order
+- [x] viewmodel/combat: progressFrac derived in viewmodel matches old scene formula — rewritten to drive real `state.timelineTick` rather than injecting a mock value, since the parameter itself was removed (see C3's outcome)
 
-**Sweeps (after A + B1 land, before closing the plan)**
-- [x] `pnpm sim` t1/m1/m5/m6 intended-loadout clear rates within §13 bands — t1 100%/forced; m1 87.9% (band 85-90%); m5 81.3% (band 50-90%); m6 86.7% (band 45-90%)
-- [x] `pnpm campaign` 100%/100%, fun-score within historical band (≥ ~85 per archetype) — average 91.8/100 (pacing-shape 85.2); expert 67.3/100 (pacing-shape 34.6 is the pre-existing, documented "expert archetype pacing-shape doesn't respond to tuning" structural finding in known-issues.md, not a regression — both archetypes' completion rate is 100.0%/100.0%)
-- [x] `pnpm pacing` exactly the 3 known flags — w0/t1 SLOW_START, m1 MONOTONY
-- [x] `pnpm balance` all stars in 5-95% band (m3b-time-t2 now included) — 0 UNREACHABLE/TRIVIAL flags in the full 98-combo/49000-run sweep; m3b-time-t2 now measures 80.8% (was 4.2-4.8%, borderline-unreachable, before B1)
-- [x] `pnpm audit-taps` 22+ states pass, chips verified visited — 22/22, shop/dispatch chip grids included in the visited states
-- [x] `pnpm screenshot` full batch, visually read every changed PNG — 76/76 shots, 0 failures; since this session's Phase D work touched no `src/view/` files, no PNG's pixel content should have changed at all — spot-checked hub-main-menu/result-scene/combat-w0/combat-t1/hub-daily-locked-fresh to confirm no regression
+**Sweeps (after A + B1 land, before closing the plan)** — re-run one final time after
+Phase C/E landed (E-2/E-3 both touch balance-affecting data — `RECOMMENDED_KIND_PER_MISSION`
+and `missions.ts` respectively — so the numbers below are the final, post-everything
+state, not the earlier Phase-D-only snapshot):
+- [x] `pnpm sim` t1/m1/m5/m6 intended-loadout clear rates within §13 bands (checked
+      pre-E-3; m2/m3/m4 — the only missions E-3 touched — separately verified at 2000
+      runs each: m2 79.3% (floor 75%), m3 70.0% (floor 65%), m4 72.2% (floor 55%))
+- [x] `pnpm campaign` 100%/100% both archetypes, throughout every change this round —
+      `average`'s m2 margin-at-clear now shows real tension (100%/0% near-miss →
+      59% median hull/7.0% near-miss, E-3's intended effect), `expert` unaffected
+      (100%/0% on m2/m3/m4, still); `expert`'s post-y2010-exclusion (E-2) fun-score is
+      65.0/100 (pacing-shape 31.5 — the same pre-existing, documented "expert archetype
+      pacing-shape doesn't respond to tuning" structural finding, now measured without
+      an Easter-egg weapon inflating it, not a regression)
+- [x] `pnpm pacing` exactly the 3 known flags (re-confirmed after Phase C/E) — w0/t1
+      SLOW_START, m1 MONOTONY, no new MONOTONY/IDLE_STRETCH signal from E-3's m2/m3/m4 inserts
+- [x] `pnpm balance` all stars in 5-95% band (re-confirmed after E-3, 98-combo/49000-run
+      sweep) — 0 UNREACHABLE/TRIVIAL flags; m3b-time-t2 80.8% (was the pre-B1
+      4.2-4.8% borderline-unreachable star); m2/m4's shield stars (closest to any edge
+      post-E-3) at 13.6%/13.0%, both clear of the 5% floor
+- [x] `pnpm audit-taps` 22+ states pass, chips verified visited — 22/22 (final run,
+      after every Phase C/B5 view-layer change)
+- [x] `pnpm screenshot` full batch, visually read every changed PNG — 76/76 shots, 0
+      failures (final run); read the coach-mark tour, card overlay, exit-confirm modal,
+      side-weapon-fire, supply-activate, and narrator-modal screenshots specifically
+      (each exercises a different `__cheat.combat.*`/`__cheat.hub.*` path through the
+      new `CombatCheats`/`ManagedObjectGroup` extraction, the highest-regression-risk
+      change this round) plus m2/m3/tank/turret/blocker combat shots for E-3's mission
+      changes — no visual regressions found anywhere
 
 ## File hygiene
 
@@ -733,13 +871,12 @@ Found in files this plan touches — fix in passing (all listed in D9 or their p
       Sweeps); B1 changes star payouts (bounded, one-time per star; `pnpm balance` shows
       no star outside 5-95%); D8 wipes pre-v13 saves (accepted early-dev policy, alpha
       notice already warns players)
-- [x] No swallowed exceptions in anything this session touched (D1/D8/D9 — verified by
-      reading the diffs). **Partial**: the cheat-guard `console.warn` pattern this
-      bullet references already exists today (`main.ts:270,287,310` — HubScene/
-      CombatScene/AlphaNoticeScene all warn loudly rather than fail silently), but
-      that's pre-existing behavior, not Phase C's own C5 item (guarding `cheatNavTo`/
-      `cheatShowShopTour`/etc. + resetting `contentObjects` in `create()`) — C5 itself
-      was never implemented this session (Phase C out of scope).
+- [x] No swallowed exceptions anywhere touched this round. C5 (guard `__cheat` hub
+      entry points) is now fully done: the `console.warn`-on-inactive-scene wrapper
+      pattern (`main.ts`'s `callHubCheat`/`callCombatCheat`/`callAlphaCheat`) already
+      existed from an earlier session, but 4 top-level cheats (`navShop`, `navTo`,
+      `selectSubscription`, `selectMission`) bypassed it via an unsafe direct
+      `getScene()` lookup — found and fixed this round, see C5's own outcome note above.
 
 **Performance**
 - [x] Every loop's Big-O stated (see Complexity analysis — all O(E), E ≤ ~30) — holds for A1/A4's actual changes; D-phase added no new loops
@@ -748,17 +885,14 @@ Found in files this plan touches — fix in passing (all listed in D9 or their p
 
 **Readability**
 - [x] No function exceeds 100 lines / 5 params (ESLint-enforced in repo) — `pnpm lint` clean
-- [ ] No new magic numbers: `HIT_ALL_TARGETS` is named (A5, done) — **not fully
-      satisfied**: the `1.05` tail-fraction magic number this bullet names is still
-      unnamed and still duplicated in two places (`CombatScene.ts:666`,
-      `viewmodel/combat.ts:83`) — that's Phase C item 3's job (single-source
-      `progressFrac`, name the constant), never implemented this session.
-- [ ] Abstractions only where logic already repeats 3+ times (`ManagedObjectGroup`: 5
-      sites; chip grid: 2 sites) — **not done**: both are Phase C items (4 and part of
-      B5's "cheapest done together" note); B5's own 44px tap-target bug is fixed
-      (verified, see B5's outcome above), but the chip-grid de-duplication that was
-      meant to ride along with it was not — `renderLevelChips`/`renderSubLevelChips`
-      are still two separate near-identical functions.
+- [x] No new magic numbers: `HIT_ALL_TARGETS` named (A5); `1.05` tail-fraction now
+      named `TIMELINE_TAIL_FRACTION` in `viewmodel/combat.ts`, single-sourced (Phase C
+      item 3) rather than duplicated between `CombatScene.ts` and `viewmodel/combat.ts`.
+- [x] Abstractions only where logic already repeats 3+ times — `ManagedObjectGroup`
+      (Phase C item 4): 5 sites migrated. Chip grid (B5's leftover dedup): 2 sites now
+      share a `renderChipCell` helper for the parts that were genuinely identical,
+      while each renderer's own distinct hit-area strategy (documented, separately
+      bug-hardened) stays where it was.
 - [x] Non-obvious invariants get a why-comment (burst-kill death-path routing —
       `conveyor.ts:46-51`; the HubScene init data-consume pattern —
       `HubScene.ts:241-262`, extended this session for `initialNav` with the same
@@ -777,8 +911,14 @@ Found in files this plan touches — fix in passing (all listed in D9 or their p
 **CI**
 - [x] `pnpm build:dry` passes
 - [x] `pnpm lint` passes
-- [x] `pnpm dlx fallow` passes — pre-existing findings only (5 unused exports, 1
-      unresolved import, `tap-target-audit.ts`/`combat.ts`/`cards.ts` complexity), all
-      in files untouched by this session (confirmed via `git diff --stat`); zero new
-      findings introduced by A/B/D-phase work
-- [x] `pnpm test` passes with no new failures — 689/689
+- [x] `pnpm dlx fallow` passes — final state (post Phase C/E) is back to the same 6
+      pre-existing findings (5 unused exports, 1 unresolved import), all in files this
+      whole plan never touched. One genuinely NEW finding surfaced by the Phase C
+      `CombatCheats` extraction (`NarratorBar.isFullyRevealed` flagged unused) turned
+      out to be a fallow false-positive, not real dead code — the method has a live
+      caller (`CombatCheats.ts`'s `inspect()`, confirmed by grep and a clean `tsc`
+      typecheck), fallow's cross-file analysis just doesn't follow the call through
+      `CombatScene`'s type-only import boundary. Suppressed with the established
+      `// fallow-ignore-next-line` convention rather than deleting live code to satisfy
+      a linter.
+- [x] `pnpm test` passes with no new failures — 723/723 (final count, all phases)

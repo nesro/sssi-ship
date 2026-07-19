@@ -117,11 +117,22 @@ if (import.meta.env.DEV) {
     /**
      * Navigate to a shop tab without clicking.
      * Usage: __cheat.navShop('motor')   // weapon | rear-weapon | side-weapon | shield | generator | motor | ship | supplies | loadout
+     *
+     * Routes through callHubCheat's isActive() gate (Phase C, fable-review-fixes-
+     * 2026-07-18.md) — this used to look the scene up with a bare `game.scene.
+     * getScene('HubScene')` plus a "does this method exist" check, which is true even
+     * while HubScene.create() is still mid-execution (Phaser instantiates every
+     * registered scene at Game construction; getScene() finds it long before create()
+     * ever runs — see callCombatCheat's own comment for the same reasoning). Calling
+     * this cheat in that window hit `rebuildContent()` reading `this.save`/
+     * `this.uiState` before `create()` had assigned them, throwing and — because the
+     * crash happened partway through `destroyAll()` — leaving `contentObjects`
+     * poisoned across scene restarts until a page reload. `create()` itself was
+     * already reset defensively (belt-and-braces) before this fix.
      */
     navShop: (tab: string) => {
-      const scene = game.scene.getScene('HubScene') as unknown as Record<string, unknown> | null;
-      if (scene && typeof scene['cheatNavShop'] === 'function') {
-        (scene['cheatNavShop'] as (t: string) => void)(tab);
+      if (game.scene.isActive('HubScene')) {
+        callHubCheat('cheatNavShop', tab);
       } else {
         goTo('HubScene');
       }
@@ -132,9 +143,8 @@ if (import.meta.env.DEV) {
      * Usage: __cheat.navTo('dispatch-reinforcements')  // missions | shop | dispatch-reinforcements | settings | null
      */
     navTo: (nav: string | null) => {
-      const scene = game.scene.getScene('HubScene') as unknown as Record<string, unknown> | null;
-      if (scene && typeof scene['cheatNavTo'] === 'function') {
-        (scene['cheatNavTo'] as (n: string | null) => void)(nav);
+      if (game.scene.isActive('HubScene')) {
+        callHubCheat('cheatNavTo', nav);
       } else {
         goTo('HubScene');
       }
@@ -144,23 +154,13 @@ if (import.meta.env.DEV) {
      * grid only renders once one is selected, which navTo alone can't reach.
      * Usage: __cheat.selectSubscription('sub-offensive')
      */
-    selectSubscription: (id: string) => {
-      const scene = game.scene.getScene('HubScene') as unknown as Record<string, unknown> | null;
-      if (scene && typeof scene['cheatSelectSubscription'] === 'function') {
-        (scene['cheatSelectSubscription'] as (i: string) => void)(id);
-      }
-    },
+    selectSubscription: (id: string) => { callHubCheat('cheatSelectSubscription', id); },
     /**
      * Select a galaxy-map mission node without clicking — the mission info panel
      * (name, star benchmarks, START button) only renders once a node is selected.
      * Usage: __cheat.selectMission('m1')
      */
-    selectMission: (id: string) => {
-      const scene = game.scene.getScene('HubScene') as unknown as Record<string, unknown> | null;
-      if (scene && typeof scene['cheatSelectMission'] === 'function') {
-        (scene['cheatSelectMission'] as (i: string) => void)(id);
-      }
-    },
+    selectMission: (id: string) => { callHubCheat('cheatSelectMission', id); },
     /**
      * Jump straight into combat for any mission id, bypassing hub navigation entirely.
      * Usage: __cheat.startMission('m3b')

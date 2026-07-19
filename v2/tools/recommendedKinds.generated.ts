@@ -18,10 +18,10 @@ export interface RecommendedKinds {
 
 export const RECOMMENDED_KIND_PER_MISSION: Record<string, RecommendedKinds> = {
   m1: { weapon: 'pulse', generator: 'surge', shield: 'wall', motor: 'rush', rearWeapon: 'grenade', sideWeapon: 'focus', ship: 'interceptor' },
-  m2: { weapon: 'ion', generator: 'steady', shield: 'wall', motor: 'rush', rearWeapon: 'grenade', sideWeapon: 'focus', ship: 'interceptor' },
+  m2: { weapon: 'pulse', generator: 'surge', shield: 'wall', motor: 'rush', rearWeapon: 'grenade', sideWeapon: 'focus', ship: 'interceptor' },
   m3: { weapon: 'ion', generator: 'torrent', shield: 'flux', motor: 'rush', rearWeapon: 'grenade', sideWeapon: 'focus', ship: 'interceptor' },
   m3b: { weapon: 'nova', generator: 'torrent', shield: 'wall', motor: 'rush', rearWeapon: 'grenade', sideWeapon: 'focus', ship: 'interceptor' },
   m4: { weapon: 'ion', generator: 'torrent', shield: 'wall', motor: 'rush', rearWeapon: 'grenade', sideWeapon: 'focus', ship: 'interceptor' },
   m5: { weapon: 'scatter', generator: 'torrent', shield: 'wall', motor: 'rush', rearWeapon: 'grenade', sideWeapon: 'focus', ship: 'interceptor' },
-  m6: { weapon: 'ion', generator: 'surge', shield: 'wall', motor: 'rush', rearWeapon: 'grenade', sideWeapon: 'focus', ship: 'interceptor' },
+  m6: { weapon: 'ion', generator: 'torrent', shield: 'flux', motor: 'rush', rearWeapon: 'grenade', sideWeapon: 'focus', ship: 'interceptor' },
 };

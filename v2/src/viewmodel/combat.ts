@@ -15,6 +15,13 @@ import { PALETTE } from '../view/palette';
 // CombatHud.ts's static row-label color matches the bar's fill color exactly (one source).
 export const HULL_GREEN = 0x44ff66;
 const BROWNOUT_COLOR = 0xff4400;
+// Named 2026-07-18 (Phase C, fable-review-fixes-2026-07-18.md — was a bare `1.05`
+// duplicated in both this file and CombatScene.ts). A mission's last scheduled event
+// tick isn't quite the real end of the mission (enemies from that event still have to
+// reach the ship/die after it fires), so both the progress bar and the support-call
+// markers measure against a slightly padded denominator rather than the literal last
+// event tick — otherwise the bar would hit 100% before the mission actually ends.
+const TIMELINE_TAIL_FRACTION = 1.05;
 
 export interface BarViewModel {
   current: number;
@@ -78,9 +85,24 @@ function computeMissionOrBossBar(boss: EnemyState | null, progressFrac: number):
   return { ...bar, label: `${String(Math.round(bar.fraction * 100))}%`, mode: boss !== null ? 'boss' : 'mission', name: boss !== null ? 'BOSS' : 'PROG' };
 }
 
-function computeSupportMarkers(state: CoreState): SupportMarkerViewModel[] {
+/** Padded total ticks — see TIMELINE_TAIL_FRACTION's own comment. 1 (not 0) when the
+ * mission has no events at all, matching the pre-Phase-C fallback exactly. */
+function paddedTotalTicks(state: CoreState): number {
   const lastEvent = state.mission.events[state.mission.events.length - 1];
-  const totalTicks = lastEvent !== undefined ? lastEvent.atTimelineTick * 1.05 : 1;
+  return lastEvent !== undefined ? lastEvent.atTimelineTick * TIMELINE_TAIL_FRACTION : 1;
+}
+
+/** Single source (Phase C — was duplicated in CombatScene.ts) for the mission-progress
+ * bar's fraction: 0 while a boss is up (the bar switches to showing boss HP instead —
+ * see computeMissionOrBossBar), else how far through the padded timeline the mission
+ * currently is. */
+function computeProgressFrac(state: CoreState, boss: EnemyState | null): number {
+  if (boss !== null) return 0;
+  return Math.min(1, state.timelineTick / paddedTotalTicks(state));
+}
+
+function computeSupportMarkers(state: CoreState): SupportMarkerViewModel[] {
+  const totalTicks = paddedTotalTicks(state);
   return state.mission.supportCallTicks.map((tick) => ({ fraction: Math.min(1, tick / totalTicks) }));
 }
 
@@ -180,10 +202,10 @@ export function nearestUnmissedTimeThreshold(progress: LiveStarStatus[]): number
 export function computeCombatHudViewModel(
   state: CoreState,
   boss: EnemyState | null,
-  progressFrac: number,
   alreadyEarnedStarIds: string[],
 ): CombatHudViewModel {
   const { ship } = state;
+  const progressFrac = computeProgressFrac(state, boss);
   const stats = computeEffectiveStats(
     state.loadout, state.modifiers,
     activeDamageMult(state), activeFireRateMult(state), activeGeneratorMult(state),

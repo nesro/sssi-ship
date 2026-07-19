@@ -7,8 +7,15 @@
 import { computeLoadoutReport } from '../core/report';
 import { computeEffectiveStats, defaultModifiers } from '../core/stats';
 import type { EffectiveStats } from '../core/stats';
-import type { LoadoutSnapshot } from '../core/types';
+import type { LoadoutSnapshot, RearWeaponKind, SideWeaponKind, WeaponKind } from '../core/types';
+import {
+  generatorSpecAtLevel, motorSpecAtLevel, rearWeaponSpecAtLevel, shieldSpecAtLevel, shipById,
+  sideWeaponSpecAtLevel, weaponSpecAtLevel,
+} from '../data/items';
+import type { GeneratorKind, MotorKind, ShieldKind } from '../data/items';
+import type { SaveData } from '../save/SaveManager';
 import { motorKindColorFromId, motorLevelFromId, textureForShipId } from '../view/textureKeys';
+import type { ShopTab } from './shopSystems';
 
 export interface PreviewStaticViewModel {
   shipTextureId: string;
@@ -36,6 +43,52 @@ export function computePreviewStatic(current: LoadoutSnapshot, prospective: Load
     rearWeaponId: activeLoadout.rearWeapon?.id ?? null,
     stats,
   };
+}
+
+/** Resolves the prospective (not-yet-purchased) loadout for the currently selected shop
+ * kind — moved here from HubScene.ts (Phase C, fable-review-fixes-2026-07-18.md): a
+ * pure function belongs next to computePreviewStatic above, which already resolves
+ * `prospective ?? current`, not in the scene. Returns null when there's nothing to
+ * preview (unknown tab, or the previewed kind/level is already what's equipped). */
+export function applyProspectiveKind(
+  tab: ShopTab, kind: string, previewLevel: number, current: LoadoutSnapshot, save: SaveData,
+): LoadoutSnapshot | null {
+  if (tab === 'ship') {
+    const previewId = `ship-${kind}-${String(previewLevel)}`;
+    if (save.equipped.ship === previewId) return null;
+    return { ...current, ship: shipById(previewId) };
+  }
+  if (tab === 'weapon') {
+    const spec = weaponSpecAtLevel(kind as WeaponKind, previewLevel);
+    if (current.weapon?.id === spec.id) return null;
+    return { ...current, weapon: spec };
+  }
+  if (tab === 'rear-weapon') {
+    const spec = rearWeaponSpecAtLevel(kind as RearWeaponKind, previewLevel);
+    if (current.rearWeapon?.id === spec.id) return null;
+    return { ...current, rearWeapon: spec };
+  }
+  if (tab === 'side-weapon') {
+    const spec = sideWeaponSpecAtLevel(kind as SideWeaponKind, previewLevel);
+    if (current.sideWeapon?.id === spec.id) return null;
+    return { ...current, sideWeapon: spec };
+  }
+  if (tab === 'shield') {
+    const spec = shieldSpecAtLevel(kind as ShieldKind, previewLevel);
+    if (save.equipped.shield === spec.id) return null;
+    return { ...current, shield: spec };
+  }
+  if (tab === 'generator') {
+    const spec = generatorSpecAtLevel(kind as GeneratorKind, previewLevel);
+    if (save.equipped.generator === spec.id) return null;
+    return { ...current, generator: spec };
+  }
+  if (tab === 'motor') {
+    const spec = motorSpecAtLevel(kind as MotorKind, previewLevel);
+    if (save.equipped.motor === spec.id) return null;
+    return { ...current, motor: spec };
+  }
+  return null;
 }
 
 // ── Pure simulation stepper — replaces the hand-rolled logic in ShopPreviewPanel ──────

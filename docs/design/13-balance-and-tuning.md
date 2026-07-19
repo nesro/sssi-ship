@@ -138,21 +138,58 @@ frictionless (median hull ≈100% at clear for both), matching the finding below
    right lever is mission/economy design (a deliberate, scoped change), not tuning the
    simulator's players to be worse.
 
-6. **Weapon×generator spread in `pnpm tune`'s report is expected, but the underlying
-   kind dominance behind it is only partially fixed — don't mistake this for a new
-   regression.** `tune-report.md` ranks weapon and generator jointly (their
-   energy/brownout interaction is real, per
+   **A scoped, deliberate mission-design change — exactly what this point called for —
+   landed 2026-07-18 (E-3, `docs/plans/fable-review-fixes-2026-07-18.md`), ahead of the
+   real playtest this point says should gate it, on Tomáš's own explicit "best effort
+   now" instruction.** One new small enemy wave each on m2/m3/m4 (see `missions.ts`'s own
+   `E-3 experiment` comments), sized via sim iteration to stay clear of each mission's
+   clear-rate floor. Result: `average` archetype's m2 margin-at-clear moved from 100%
+   median hull/0% near-miss to **59%/7.0%** — a real, measured tension moment where
+   there was none — while `expert` stayed at 100%/0% on all three missions, unaffected.
+   m3/m3b moved only slightly (m3's own insert was deliberately the smallest, given the
+   thinnest floor headroom of the three). Full data and caveats — most importantly, that
+   the sim structurally cannot verify the "a toggle is now required" half of the
+   premise, only that clear-rate stays safe and the campaign-sim's margin metrics move —
+   in `docs/known-issues.md`'s own entry for this. **Explicitly NOT settled design**:
+   unvalidated by a real playthrough, provisional pending Tomáš's own hands-on read.
+
+6. **Weapon×generator spread in `pnpm tune`'s report is expected — a same-system
+   dominant-kind signal is the real concern.** `tune-report.md` ranks weapon and
+   generator jointly (their energy/brownout interaction is real, per
    [Architecture & Tooling](12-architecture-and-tooling.md)), so a 60-100pp spread there is
    normal — it is not itself a "no dominant kind" violation the way a same-system spread
-   would be. But the 2026-07-11 investigation that produced this framing (`nova`'s
-   0%-clear trap, now fixed — see `items.ts`'s `WEAPON_BASE.nova` comment) also found the
-   broader pattern underneath it: **ion outperforms every other front-weapon kind on
-   nearly every mission**, and pulse (the calibration baseline) is the *worst* non-nova
-   kind on m1/m2. Only nova's specific trap got a targeted fix; ion's broader edge was
-   never addressed, and the recommended fix — a standing kind×mission balance-sweep
-   artifact to catch this systemically instead of one crisis at a time — was never built.
-   Flagging this here so it's found once, not rediscovered from a fresh `tune-report.md`
-   every few sessions.
+   would be.
+
+   **The standing kind×mission sweep artifact this point used to say "was never built"
+   now exists (2026-07-18, E-2 of `docs/plans/fable-review-fixes-2026-07-18.md`):**
+   `pnpm tune` now writes a cross-mission summary table to `tune-report.md` (spread per
+   system, one row per mission — scan a column instead of hunting through 7 separate
+   per-mission sections) and exits non-zero when any system is flagged dominant on any
+   mission, matching `pnpm balance`/`pnpm pacing`'s own CI-style convention. Building it
+   surfaced a real, separate bug in the tool itself: `y2010` (the campaign-completion-
+   gated Easter-egg weapon, `items.ts`) was included in the weapon tournament and won m3/
+   m6 outright — a false "dominant kind" signal, since no real first-time player can
+   equip it, and worse, it was silently feeding that recommendation into
+   `RECOMMENDED_KIND_PER_MISSION`, which `tools/campaign-simulate.ts`'s `expert`
+   archetype then treats as a realistic purchase. Fixed: `tune-loadouts.ts`'s weapon
+   tournament now excludes `y2010` from contention (`REAL_WEAPON_KINDS`).
+
+   **Fresh data (2026-07-18, y2010 excluded, 400 runs/candidate) supersedes the
+   2026-07-11 framing this point previously stated:** the specific claim "pulse is the
+   worst non-nova kind on m1/m2" no longer holds — pulse is now the *recommended
+   (winning)* kind on both, at a non-dominant 27.0pp/20.3pp spread. This is consistent
+   with, not contradicting, the nova-trap fix and the 2026-07-15 Reserve-generator fix
+   (`docs/known-issues.md`'s Resolved section already recorded m1's dominant-kind flag
+   clearing 87.0pp→27.0pp and m2's 60.25pp→21.0pp around that time) — the 2026-07-11
+   finding was simply never re-checked against later fixes before now. The broader
+   pattern is real and current, though: **5 of 7 missions still show a genuine
+   same-system dominant kind** — m3 (ion, 99.5pp), m3b (nova, 100pp), m4 (ion, 62pp), m5
+   (scatter, 100pp), m6 (ion, 99.8pp). This matches the already-accepted "kinds are
+   situational sidegrades — each has a real home mission and a real weak mission"
+   reading from the `expert`-archetype known-issues entry (2026-07-15), not a
+   newly-discovered problem. Still not rebalanced — the sweep tool's job was to produce
+   trustworthy data for a deliberate call, not to make that call itself; see
+   `docs/known-issues.md`'s Phase E-2 entry.
 
 ## Time-star thresholds
 
@@ -205,6 +242,21 @@ is documented in [Coins & Economy](10-economy.md).
 
 Re-run this sweep after any change to `GATE_*`/`HP_GROWTH_PER_ROUND`/`roundPeriodTicks` in
 `dailyMission.ts`, same convention as every other balance-affecting change in this file.
+
+**Motor-only residual, confirmed 2026-07-18 (E-4, `docs/plans/fable-review-fixes-
+2026-07-18.md`).** The table above uses `starterKindLoadoutAtLevel`'s coupled tiers,
+where motor speed moves together with weapon/shield/generator level — line 234-237's
+"mid dips below both starter and full... an acceptable, even interesting, consequence"
+framing was based on that coupled view. A true motor-ONLY sweep (same weapon/shield/
+generator, only motor level varied — proposed in `docs/known-issues.md` but not run
+until now) tells a different, larger story: at a fixed pulse/wall/torrent Lv2 loadout,
+500 runs/tier against a real daily seed, `rush-1` averaged 454.9 coins / 404.9s while
+`rush-3` averaged only 232.5 coins / 101.3s — the slowest motor nets **~2× the fastest
+motor's coins** at identical everything-else. Not the small, easily-dismissed residual
+the "acceptable consequence" framing suggested — see `docs/known-issues.md`'s own entry
+for the full numbers and the two candidate fixes (decouple flowing-wave timing from
+motor speed; freeze motor draw during gate fights). Not fixed here — a real mechanic
+change, needs a deliberate call, not a tuning-number tweak.
 
 ---
 

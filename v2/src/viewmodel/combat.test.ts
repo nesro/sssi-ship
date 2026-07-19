@@ -25,7 +25,7 @@ describe('computeCombatHudViewModel', () => {
     const state = createCoreState(FIXTURE_MISSION, FIXTURE_LOADOUT, 1, []);
     state.ship.hull = state.ship.maxHull * 2; // overheal edge case
     state.ship.shield = -5; // underflow edge case
-    const vm = computeCombatHudViewModel(state, null, 0.5, []);
+    const vm = computeCombatHudViewModel(state, null, []);
     expect(vm.hull.fraction).toBe(1);
     expect(vm.shield.fraction).toBe(0);
   });
@@ -33,39 +33,53 @@ describe('computeCombatHudViewModel', () => {
   it('energy bar switches to the brownout color below the threshold', () => {
     const state = createCoreState(FIXTURE_MISSION, FIXTURE_LOADOUT, 1, []);
     state.ship.energy = 0; // well below brownout threshold
-    const vm = computeCombatHudViewModel(state, null, 0, []);
+    const vm = computeCombatHudViewModel(state, null, []);
     expect(vm.energy.color).toBe(0xff4400);
   });
 
   it('mode is "boss" and reads boss.hp/boss.maxHp when a boss is present', () => {
     const state = createCoreState(FIXTURE_MISSION, FIXTURE_LOADOUT, 1, []);
     const boss = makeFixtureEnemy({ isBoss: true, hp: 40, maxHp: 200 });
-    const vm = computeCombatHudViewModel(state, boss, 0.9, []);
+    const vm = computeCombatHudViewModel(state, boss, []);
     expect(vm.missionOrBoss.mode).toBe('boss');
     expect(vm.missionOrBoss.name).toBe('BOSS');
     expect(vm.missionOrBoss.fraction).toBeCloseTo(0.2);
   });
 
-  it('mode is "mission" and reads progressFrac when no boss is present', () => {
+  // Phase C (fable-review-fixes-2026-07-18.md): progressFrac used to be a caller-
+  // supplied parameter (CombatScene.ts computed it and injected it here); now it's
+  // derived internally from state.timelineTick against the mission's own last event
+  // tick (padded by TIMELINE_TAIL_FRACTION) — this test drives that real computation
+  // instead of injecting a mock value, so it actually exercises the single-sourced logic.
+  it('mode is "mission" and derives progressFrac from state.timelineTick when no boss is present', () => {
     const state = createCoreState(FIXTURE_MISSION, FIXTURE_LOADOUT, 1, []);
-    const vm = computeCombatHudViewModel(state, null, 0.3, []);
+    // FIXTURE_MISSION's last event fires at seconds(24) = 240 ticks; padded total =
+    // 240 * 1.05 = 252. Setting timelineTick to half that should read back as ~0.5.
+    state.timelineTick = 126;
+    const vm = computeCombatHudViewModel(state, null, []);
     expect(vm.missionOrBoss.mode).toBe('mission');
     expect(vm.missionOrBoss.name).toBe('PROG');
-    expect(vm.missionOrBoss.fraction).toBeCloseTo(0.3);
+    expect(vm.missionOrBoss.fraction).toBeCloseTo(0.5);
+  });
+
+  it('progressFrac clamps to 1 once timelineTick passes the padded total', () => {
+    const state = createCoreState(FIXTURE_MISSION, FIXTURE_LOADOUT, 1, []);
+    state.timelineTick = 999999; // well past the padded total (252)
+    expect(computeCombatHudViewModel(state, null, []).missionOrBoss.fraction).toBe(1);
   });
 
   it('supportMarkers is empty when a boss is present', () => {
     const missionWithCalls = { ...FIXTURE_MISSION, supportCallTicks: [TICKS_PER_SECOND * 5] };
     const state = createCoreState(missionWithCalls, FIXTURE_LOADOUT, 1, []);
     const boss = makeFixtureEnemy({ isBoss: true, hp: 10, maxHp: 100 });
-    const vm = computeCombatHudViewModel(state, boss, 0, []);
+    const vm = computeCombatHudViewModel(state, boss, []);
     expect(vm.supportMarkers).toEqual([]);
   });
 
   it('supportMarkers has one entry per support-call tick when no boss is present', () => {
     const missionWithCalls = { ...FIXTURE_MISSION, supportCallTicks: [TICKS_PER_SECOND * 5, TICKS_PER_SECOND * 10] };
     const state = createCoreState(missionWithCalls, FIXTURE_LOADOUT, 1, []);
-    const vm = computeCombatHudViewModel(state, null, 0, []);
+    const vm = computeCombatHudViewModel(state, null, []);
     expect(vm.supportMarkers).toHaveLength(2);
   });
 
@@ -77,7 +91,7 @@ describe('computeCombatHudViewModel', () => {
     const loadoutNoWeapon = { ...FIXTURE_LOADOUT, weapon: null };
     const state = createCoreState(FIXTURE_MISSION, loadoutNoWeapon, 1, []);
     state.stats.kills = 2;
-    const vm = computeCombatHudViewModel(state, null, 0, []);
+    const vm = computeCombatHudViewModel(state, null, []);
     expect(vm.dpsLine).toBe('KILLS 2');
     expect(vm.damageRangeLine).toBe('');
     expect(vm.critLine).toBe('');
@@ -85,13 +99,13 @@ describe('computeCombatHudViewModel', () => {
 
   it('dpsLine shows both DPS and KILLS with a weapon equipped', () => {
     const state = createCoreState(FIXTURE_MISSION, FIXTURE_LOADOUT, 1, []);
-    const vm = computeCombatHudViewModel(state, null, 0, []);
+    const vm = computeCombatHudViewModel(state, null, []);
     expect(vm.dpsLine).toMatch(/^DPS \d+(\.\d+)? {2}KILLS 0$/);
   });
 
   it('damageRangeLine and critLine are populated when a weapon is equipped', () => {
     const state = createCoreState(FIXTURE_MISSION, FIXTURE_LOADOUT, 1, []);
-    const vm = computeCombatHudViewModel(state, null, 0, []);
+    const vm = computeCombatHudViewModel(state, null, []);
     expect(vm.damageRangeLine).not.toBe('');
     expect(vm.critLine).toMatch(/^CRIT \d+%$/);
   });

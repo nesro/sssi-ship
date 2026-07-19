@@ -541,6 +541,24 @@ export const ALL_MISSIONS: MissionSpec[] = [
       { atTimelineTick: seconds(110), kind: 'blocker', count: 1,  spacing: 0  },
       { atTimelineTick: seconds(124), kind: 'striker', count: 4,  spacing: 15 },
       { atTimelineTick: seconds(138), kind: 'fodder',  count: 7,  spacing: 14  },
+      // E-3 experiment (2026-07-18, fable-review-fixes-2026-07-18.md) — UNVALIDATED by
+      // sim or real playtest, added on Tomáš's explicit "best effort now, I'll get to
+      // it" call. Adds an energy-recovery-denial burst ~6s before the 148s support
+      // call, intended to create a felt "hold out, help is close" triage moment — NOT
+      // confirmed to actually require a toggle decision (the sim's own
+      // brownoutAwareToggles policy only ever flips the rear weapon, and the intended
+      // reference loadout has none equipped, so this can't be verified mechanically
+      // yet, only that it stays within m2's clear-rate floor). This slot turned out far
+      // more sensitive than the pre-implementation review's estimate predicted — likely
+      // because it sits sandwiched between the existing seconds(124) and seconds(152)
+      // striker waves, effectively tripling up striker pressure in one window rather
+      // than adding one isolated burst. count 3 measured 68.5% at 2000 runs (floor 75%);
+      // count 2 measured 74.4% — still just under. Settled on a single-enemy insert
+      // (count 1, spacing irrelevant at count 1): 79.3% at 2000 runs, a real 4.3pp
+      // margin above floor. Revert this one event if a real playtest says even this
+      // reads as unfair rather than tense, or if a later, higher-run-count check
+      // disagrees.
+      { atTimelineTick: seconds(142), kind: 'striker', count: 1,  spacing: 0 },
       { atTimelineTick: seconds(152), kind: 'striker', count: 4,  spacing: 15 },
       { atTimelineTick: seconds(166), kind: 'fodder',  count: 7,  spacing: 14  },
       { atTimelineTick: seconds(180), kind: 'striker', count: 5,  spacing: 15 },
@@ -598,6 +616,18 @@ export const ALL_MISSIONS: MissionSpec[] = [
       { atTimelineTick: seconds(110), kind: 'striker', count: 5,  spacing: 15 },
       { atTimelineTick: seconds(124), kind: 'fodder',  count: 9,  spacing: 14  },
       { atTimelineTick: seconds(138), kind: 'blocker', count: 1,  spacing: 0  },
+      // E-3 experiment (2026-07-18, fable-review-fixes-2026-07-18.md) — UNVALIDATED,
+      // same status/caveats as m2's own E-3 comment above. m3 has by far the thinnest
+      // headroom of the three missions in this experiment (68.8% clear vs. a 65% floor
+      // per a 2000-run baseline — only +3.8pp of margin, and this mission's own history
+      // already shows a much smaller change costing 7+pp), so this uses the smallest
+      // possible count (2, not 2-3) and lands right as the seconds(138) blocker dies —
+      // denying the post-blocker recovery window this mission's idle-stretch fix
+      // otherwise gives the player. `pnpm sim --mission m3 --runs 2000` after adding:
+      // still above the 65% floor, but the closest of the three — the first candidate
+      // to drop entirely if a real playtest or a later, higher-run-count check finds it
+      // pushes m3 under floor.
+      { atTimelineTick: seconds(143), kind: 'striker', count: 2,  spacing: 15 },
       { atTimelineTick: seconds(154), kind: 'striker', count: 5,  spacing: 15 },
       { atTimelineTick: seconds(168), kind: 'tank',    count: 2,  spacing: 20 },
       { atTimelineTick: seconds(182), kind: 'fodder',  count: 10, spacing: 14  },
@@ -765,6 +795,14 @@ export const ALL_MISSIONS: MissionSpec[] = [
       { atTimelineTick: seconds(106), kind: 'blocker', count: 2,  spacing: 20 },
       { atTimelineTick: seconds(122), kind: 'striker', count: 6,  spacing: 15 },
       { atTimelineTick: seconds(136), kind: 'fodder',  count: 8,  spacing: 14  },
+      // E-3 experiment (2026-07-18, fable-review-fixes-2026-07-18.md) — UNVALIDATED,
+      // same status/caveats as m2's own E-3 comment above. m4 has the most headroom of
+      // the three (71.9% clear vs. a 55% floor per a 2000-run baseline), so this is the
+      // least risky of the three inserts. Lands right before the seconds(150) blocker
+      // pair, so the strikers are still closing while the blocker freezes the timeline
+      // — a real, if compounded, DPS-check moment, not an isolated one. `pnpm sim
+      // --mission m4 --runs 2000` after adding: comfortably above the 55% floor.
+      { atTimelineTick: seconds(142), kind: 'striker', count: 3,  spacing: 15 },
       { atTimelineTick: seconds(150), kind: 'blocker', count: 2,  spacing: 22 },
       { atTimelineTick: seconds(166), kind: 'striker', count: 6,  spacing: 15 },
       { atTimelineTick: seconds(180), kind: 'fodder',  count: 8,  spacing: 14  },

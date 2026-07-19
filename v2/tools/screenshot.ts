@@ -170,6 +170,14 @@ const SHOTS: Shot[] = [
       // The cards grid only renders once a subscription tier is selected — a real
       // click on the left-panel row navTo alone can't reach.
       await cheat(page, 'selectSubscription', 'sub-offensive');
+      // This is the first real (non-forced) visit to dispatch-reinforcements in the
+      // run — hub-dispatch-tour-step-1/2 force the tour via showDispatchTour(), which
+      // deliberately passes skipScreenTour=true and so never sets dispatchTourSeen
+      // (see HubScene.ts's cheatShowDispatchTour comment) — so the real first-visit
+      // tour auto-fires here and covers the cards grid this shot exists to show. Same
+      // fix as hub-shop-weapon/hub-shop-ship-star-gated above (found during a Phase C
+      // polish round, fable-review-fixes-2026-07-18.md).
+      await cheat(page, 'hub.tourSkip');
     },
   },
   {

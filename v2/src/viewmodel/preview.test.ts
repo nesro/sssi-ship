@@ -4,7 +4,8 @@ import { FIXTURE_LOADOUT, FIXTURE_MISSION } from '../core/fixtures';
 import { computeEffectiveStats } from '../core/stats';
 import { createCoreState } from '../core/state';
 import type { LoadoutSnapshot } from '../core/types';
-import { computePreviewStatic, initPreviewSim, stepPreviewSim } from './preview';
+import { buildLoadout, defaultSave } from '../save/SaveManager';
+import { applyProspectiveKind, computePreviewStatic, initPreviewSim, stepPreviewSim } from './preview';
 
 describe('computePreviewStatic', () => {
   it('activeLoadout resolves to prospective when given, current otherwise', () => {
@@ -82,6 +83,71 @@ describe('stepPreviewSim', () => {
 
     const step = stepPreviewSim({ energy: stats.generatorCapacity - 1, shield: 0 }, stats, 0);
     expect(step.pulsedThisStep).toBe(false);
+  });
+});
+
+describe('applyProspectiveKind', () => {
+  const save = defaultSave(); // ship-interceptor-1, pulse-1, shield-wall-1, generator-torrent-1, motor-rush-1, no rear/side weapon
+  const current = buildLoadout(save);
+
+  it('ship: returns a loadout with the previewed ship when it differs from equipped', () => {
+    const result = applyProspectiveKind('ship', 'salvager', 1, current, save);
+    expect(result?.ship.id).toBe('ship-salvager-1');
+  });
+
+  it('ship: no-op (null) when the previewed ship is already equipped', () => {
+    expect(applyProspectiveKind('ship', 'interceptor', 1, current, save)).toBeNull();
+  });
+
+  it('weapon: returns a loadout with the previewed weapon when it differs from equipped', () => {
+    const result = applyProspectiveKind('weapon', 'scatter', 1, current, save);
+    expect(result?.weapon?.id).toBe('scatter-1');
+  });
+
+  it('weapon: no-op (null) when the previewed weapon is already equipped', () => {
+    expect(applyProspectiveKind('weapon', 'pulse', 1, current, save)).toBeNull();
+  });
+
+  it('rear-weapon: returns a loadout with the previewed rear weapon (none equipped, so never a no-op)', () => {
+    const result = applyProspectiveKind('rear-weapon', 'grenade', 1, current, save);
+    expect(result?.rearWeapon?.id).toBe('grenade-1');
+  });
+
+  it('side-weapon: returns a loadout with the previewed side weapon (none equipped, so never a no-op)', () => {
+    const result = applyProspectiveKind('side-weapon', 'focus', 1, current, save);
+    expect(result?.sideWeapon?.id).toBe('focus-1');
+  });
+
+  it('shield: returns a loadout with the previewed shield when it differs from equipped', () => {
+    const result = applyProspectiveKind('shield', 'reflex', 2, current, save);
+    expect(result?.shield?.id).toBe('shield-reflex-2');
+  });
+
+  it('shield: no-op (null) when the previewed shield is already equipped', () => {
+    expect(applyProspectiveKind('shield', 'wall', 1, current, save)).toBeNull();
+  });
+
+  it('generator: returns a loadout with the previewed generator when it differs from equipped', () => {
+    const result = applyProspectiveKind('generator', 'surge', 2, current, save);
+    expect(result?.generator.id).toBe('generator-surge-2');
+  });
+
+  it('generator: no-op (null) when the previewed generator is already equipped', () => {
+    expect(applyProspectiveKind('generator', 'torrent', 1, current, save)).toBeNull();
+  });
+
+  it('motor: returns a loadout with the previewed motor when it differs from equipped', () => {
+    const result = applyProspectiveKind('motor', 'tactical', 2, current, save);
+    expect(result?.motor.id).toBe('motor-tactical-2');
+  });
+
+  it('motor: no-op (null) when the previewed motor is already equipped', () => {
+    expect(applyProspectiveKind('motor', 'rush', 1, current, save)).toBeNull();
+  });
+
+  it('no-op (null) for tabs with no prospective concept (loadout/supplies)', () => {
+    expect(applyProspectiveKind('loadout', 'anything', 1, current, save)).toBeNull();
+    expect(applyProspectiveKind('supplies', 'anything', 1, current, save)).toBeNull();
   });
 });
 

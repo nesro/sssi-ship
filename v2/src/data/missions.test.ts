@@ -21,6 +21,26 @@ describe('mission wave events never spawn a kind tighter than its no-overlap flo
   }
 });
 
+// 2026-07-18 (E-3, fable-review-fixes-2026-07-18.md, Fable's pre-implementation
+// review) — `advanceTimeline` (core/timeline.ts) walks `nextEventIndex` sequentially
+// and breaks at the first not-yet-due event, assuming `events` is sorted by
+// `atTimelineTick`. An out-of-order insert doesn't throw — it silently fires LATE,
+// bundled into whichever earlier event the walk was still stuck on (a stealth density
+// spike no other test would catch, since the spacing-floor test above only checks each
+// event in isolation, never cross-event ordering). This is the enforcement.
+describe('mission wave events are sorted by atTimelineTick', () => {
+  for (const mission of ALL_MISSIONS) {
+    it(`${mission.id}: every event's atTimelineTick is >= the previous event's`, () => {
+      for (let i = 1; i < mission.events.length; i++) {
+        const prev = mission.events[i - 1];
+        const curr = mission.events[i];
+        if (prev === undefined || curr === undefined) throw new Error('event index out of range');
+        expect(curr.atTimelineTick, `${mission.id}: event ${String(i)} (tick ${String(curr.atTimelineTick)}) is out of order after tick ${String(prev.atTimelineTick)}`).toBeGreaterThanOrEqual(prev.atTimelineTick);
+      }
+    });
+  }
+});
+
 // 2026-07-18 (B1, docs/plans/fable-review-fixes-2026-07-18.md) — before this, T1 and
 // T2 (and on m6, T3) shared literally identical thresholds on every main mission, so
 // the victory screen listed the same "UNDER Ns" star text twice and two stars were

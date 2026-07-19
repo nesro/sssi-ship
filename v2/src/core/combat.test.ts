@@ -326,6 +326,42 @@ describe('fireShipWeapon state-based damage bonuses', () => {
     fireShipWeapon(state, statsOf(state));
     expect(state.stats.damageDealt).toBeCloseTo(FIXTURE_WEAPON.damagePerShot);
   });
+
+  // Missing Phase A test plan item (fable-review-fixes-2026-07-18.md): "no
+  // double-stacking with lowHullDmgMult family" — ZERO BARRIER (shieldZeroDmgMult) and
+  // a low-hull card (lowHullDmgMult) are independent modifiers gated on unrelated state
+  // (shield vs. hull), so a run carrying both can genuinely have both trigger at once
+  // (low hull AND zero shield simultaneously) — verify they compose multiplicatively,
+  // each applying exactly once, not double-counted or interfering with each other.
+  it('shieldZeroDmgMult and lowHullDmgMult apply independently and exactly once when both trigger conditions hold at once', () => {
+    const base = oneShotDmg({}, (s) => { s.ship.hull = Math.ceil(s.ship.maxHull * 0.5); s.ship.shield = 1; });
+    const bothActive = oneShotDmg(
+      { shieldZeroDmgMult: 1.4, lowHullDmgMult: 2 },
+      (s) => { s.ship.hull = Math.floor(s.ship.maxHull * 0.2); s.ship.shield = 0; },
+    );
+    // Each factor's own isolated effect, confirmed separately elsewhere in this file —
+    // composed here checks they multiply together (1.4 × 2 = 2.8×), not stack additively
+    // (3.4×) or have one silently override the other (1.4× or 2× alone).
+    expect(bothActive).toBeCloseTo(base * 1.4 * 2);
+  });
+
+  it('shieldZeroDmgMult does not apply when only the hull condition holds (shield still up)', () => {
+    const base = oneShotDmg({}, (s) => { s.ship.hull = Math.floor(s.ship.maxHull * 0.2); s.ship.shield = 1; });
+    const onlyLowHull = oneShotDmg(
+      { shieldZeroDmgMult: 1.4, lowHullDmgMult: 2 },
+      (s) => { s.ship.hull = Math.floor(s.ship.maxHull * 0.2); s.ship.shield = 1; },
+    );
+    expect(onlyLowHull).toBeCloseTo(base * 2);
+  });
+
+  it('lowHullDmgMult does not apply when only the shield condition holds (hull still healthy)', () => {
+    const base = oneShotDmg({}, (s) => { s.ship.hull = Math.ceil(s.ship.maxHull * 0.5); s.ship.shield = 0; });
+    const onlyZeroShield = oneShotDmg(
+      { shieldZeroDmgMult: 1.4, lowHullDmgMult: 2 },
+      (s) => { s.ship.hull = Math.ceil(s.ship.maxHull * 0.5); s.ship.shield = 0; },
+    );
+    expect(onlyZeroShield).toBeCloseTo(base * 1.4);
+  });
 });
 
 describe('fireShipWeapon situational and targeting modifiers', () => {

@@ -1,12 +1,7 @@
 import Phaser from 'phaser';
-import type { LoadoutSnapshot, RearWeaponKind, SideWeaponKind, WeaponKind } from '../core/types';
+import type { LoadoutSnapshot } from '../core/types';
 import { ALL_MISSIONS, missionById, setDailyMission, totalStarsAvailable } from '../data/missions';
 import { DAILY_MISSION_ID, dailyDateKey, dailySeedForDate, generateDailyMission, timeUntilNextMidnight } from '../data/dailyMission';
-import {
-  shipById,
-  generatorSpecAtLevel, motorSpecAtLevel, rearWeaponSpecAtLevel, shieldSpecAtLevel, sideWeaponSpecAtLevel, weaponSpecAtLevel,
-} from '../data/items';
-import type { GeneratorKind, MotorKind, ShieldKind } from '../data/items';
 import {
   buildLoadout, buySubscription, buySupplyCharge, dailyBestScore, downgradeSubscription,
   isDailyAvailable, loadSave, persistSave, resetSave, sellSupplyCharge, skipTutorials, switchItem,
@@ -20,6 +15,7 @@ import { ShopPreviewPanel } from './ShopPreviewPanel';
 import type { PreviewLayout } from './ShopPreviewPanel';
 import { buildGameTextures } from './textures';
 import { addLabel, addTextButton, drawDevBorder, ensureMinTapTarget, UI_FONT } from './widgets';
+import { ManagedObjectGroup } from './ManagedObjectGroup';
 import { HubTour } from './HubTour';
 import type { TourStep } from './HubTour';
 import { Sound } from '../audio/SoundManager';
@@ -33,6 +29,7 @@ import type {
   KindRowState, KindRowViewModel, LevelChipViewModel, MissionDetailViewModel, SubLevelChipViewModel,
 } from '../viewmodel/hub';
 import { shopSystemFor } from '../viewmodel/shopSystems';
+import { applyProspectiveKind } from '../viewmodel/preview';
 import type { ShopSystemConfig, ShopTab } from '../viewmodel/shopSystems';
 
 const SHIP_TAB_COLOR = 0x44ffaa;
@@ -225,7 +222,7 @@ const UNEQUIP_HANDLERS: Partial<Record<ShopTab, (save: SaveData) => SaveData>> =
 export class HubScene extends Phaser.Scene {
   private save!: SaveData;
   private scrollingStars: { rect: Phaser.GameObjects.Rectangle; speed: number }[] = [];
-  private contentObjects: Phaser.GameObjects.GameObject[] = [];
+  private contentObjects = new ManagedObjectGroup();
   private preview!: ShopPreviewPanel;
   private uiState: HubUIState = DEFAULT_HUB_UI_STATE;
   /** The viewmodel object most recently computed for whatever panel is on screen —
@@ -274,7 +271,7 @@ export class HubScene extends Phaser.Scene {
   create(): void {
     this.save = loadSave();
     this.uiState = DEFAULT_HUB_UI_STATE;
-    this.contentObjects = [];
+    this.contentObjects = new ManagedObjectGroup();
     this.scrollingStars = [];
     // Generated once per HubScene lifetime (not per rebuildContent — it's a real cost
     // to regenerate ~80 rounds of data on every navigation/click), registered into
@@ -472,8 +469,7 @@ export class HubScene extends Phaser.Scene {
   }
 
   private rebuildContent(): void {
-    this.contentObjects.forEach((o) => { o.removeInteractive(); o.destroy(); });
-    this.contentObjects = [];
+    this.contentObjects.destroyAll();
 
     if (this.uiState.nav !== null) {
       const backBtn = addTextButton(this, {
@@ -513,8 +509,7 @@ export class HubScene extends Phaser.Scene {
   }
 
   private addC<T extends Phaser.GameObjects.GameObject>(obj: T): T {
-    this.contentObjects.push(obj);
-    return obj;
+    return this.contentObjects.add(obj);
   }
 
   /** Dev-only: prints the current panel's viewmodel as JSON text — the whole point of
@@ -968,6 +963,29 @@ export class HubScene extends Phaser.Scene {
     return handler(this.save, mutation.itemId);
   }
 
+  /** Shared cell renderer for renderLevelChips/renderSubLevelChips below (B5 leftover
+   * dedup, fable-review-fixes-2026-07-18.md) — the background rectangle + label +
+   * sub-label skeleton is identical between the two; everything genuinely different
+   * (hit-area strategy, dimmed/interactive logic, tap handler) has its own documented
+   * bug history — see each caller's own comments — and stays there, not merged in here.
+   * Returns the rectangle so the caller can still attach its own interactivity. */
+  private renderChipCell(opts: {
+    x: number; y: number; width: number; height: number;
+    isCurrent: boolean; accentColor: number;
+    label: string; labelColor: number; subLabel: string; subColor: number;
+  }): Phaser.GameObjects.Rectangle {
+    const { x, y, width, height, isCurrent, accentColor, label, labelColor, subLabel, subColor } = opts;
+    const rect = this.add.rectangle(px(x), px(y), px(width), px(height), isCurrent ? 0x0c1a2e : 0x0e0e1e).setOrigin(0.5);
+    if (isCurrent) rect.setStrokeStyle(px(1), accentColor, 0.8);
+    this.addC(this.add.text(px(x), px(y - 7), label, {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`, color: cssColor(labelColor),
+    }).setOrigin(0.5));
+    this.addC(this.add.text(px(x), px(y + 8), subLabel, {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: cssColor(subColor),
+    }).setOrigin(0.5));
+    return rect;
+  }
+
   private renderLevelChips(chips: LevelChipViewModel[], config: ShopSystemConfig): void {
     const count = chips.length;
     if (count === 0) return;
@@ -984,8 +1002,15 @@ export class HubScene extends Phaser.Scene {
     chips.forEach((chip, i) => {
       const chipX = SHOP_ITEM_X + i * chipW + chipW / 2;
       const isCurrent = chip.state === 'equipped';
-      const rect = this.add.rectangle(px(chipX), px(chipCY), px(chipW - 4), px(chipH), isCurrent ? 0x0c1a2e : 0x0e0e1e).setOrigin(0.5);
-      if (isCurrent) rect.setStrokeStyle(px(1), accent, 0.8);
+      const labelColor = chip.state === 'locked' ? 0x444466 : isCurrent ? accent : (chip.state === 'unaffordable' ? 0x444466 : PALETTE.hullWhite);
+      const subColor = CHIP_SUB_COLOR[chip.state] === 'accent' ? accent
+        : CHIP_SUB_COLOR[chip.state] === 'blue' ? PALETTE.shieldBlue
+          : CHIP_SUB_COLOR[chip.state] === 'amber' ? PALETTE.generatorAmber
+            : 0x445566;
+      const rect = this.renderChipCell({
+        x: chipX, y: chipCY, width: chipW - 4, height: chipH, isCurrent, accentColor: accent,
+        label: chip.label, labelColor, subLabel: chip.subLabel, subColor,
+      });
       const dimmed = chip.state === 'locked' || chip.state === 'unaffordable';
       if (!isCurrent) {
         if (dimmed) { rect.setAlpha(0.35); } else {
@@ -1008,19 +1033,6 @@ export class HubScene extends Phaser.Scene {
         }
       }
       this.addC(rect);
-
-      const labelColor = chip.state === 'locked' ? 0x444466 : isCurrent ? accent : (chip.state === 'unaffordable' ? 0x444466 : PALETTE.hullWhite);
-      this.addC(this.add.text(px(chipX), px(chipCY - 7), chip.label, {
-        fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`, color: cssColor(labelColor),
-      }).setOrigin(0.5));
-
-      const subColor = CHIP_SUB_COLOR[chip.state] === 'accent' ? accent
-        : CHIP_SUB_COLOR[chip.state] === 'blue' ? PALETTE.shieldBlue
-          : CHIP_SUB_COLOR[chip.state] === 'amber' ? PALETTE.generatorAmber
-            : 0x445566;
-      this.addC(this.add.text(px(chipX), px(chipCY + 8), chip.subLabel, {
-        fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: cssColor(subColor),
-      }).setOrigin(0.5));
     });
   }
 
@@ -1203,9 +1215,16 @@ export class HubScene extends Phaser.Scene {
       const isCurrent = chip.state === 'current';
       const dimmed = chip.state === 'locked' || chip.state === 'unaffordable';
       const chipX = DR_LEFT_X + i * chipW + chipW / 2;
+      const labelColor = chip.state === 'locked' ? 0x444466 : isCurrent ? accentColor : (chip.state === 'unaffordable' ? 0x444466 : PALETTE.hullWhite);
+      const subColor = chip.state === 'locked' ? 0x445566
+        : isCurrent ? accentColor
+          : chip.subLabel.startsWith('+') || chip.subLabel === 'FREE' ? PALETTE.shieldBlue
+            : chip.state === 'unaffordable' ? 0x445566 : PALETTE.generatorAmber;
 
-      const rect = this.add.rectangle(px(chipX), px(chipCY), px(chipW - 3), px(chipH), isCurrent ? 0x0c1a2e : 0x0e0e1e).setOrigin(0.5);
-      if (isCurrent) rect.setStrokeStyle(px(1), accentColor, 0.8);
+      const rect = this.renderChipCell({
+        x: chipX, y: chipCY, width: chipW - 3, height: chipH, isCurrent, accentColor,
+        label: chip.label, labelColor, subLabel: chip.subLabel, subColor,
+      });
       if (!isCurrent) {
         if (dimmed) { rect.setAlpha(0.35); } else {
           // Same 44px tap-target floor as renderLevelChips above (B5) — see the
@@ -1218,19 +1237,6 @@ export class HubScene extends Phaser.Scene {
         }
       }
       this.addC(rect);
-
-      const labelColor = chip.state === 'locked' ? 0x444466 : isCurrent ? accentColor : (chip.state === 'unaffordable' ? 0x444466 : PALETTE.hullWhite);
-      this.addC(this.add.text(px(chipX), px(chipCY - 7), chip.label, {
-        fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`, color: cssColor(labelColor),
-      }).setOrigin(0.5));
-
-      const subColor = chip.state === 'locked' ? 0x445566
-        : isCurrent ? accentColor
-          : chip.subLabel.startsWith('+') || chip.subLabel === 'FREE' ? PALETTE.shieldBlue
-            : chip.state === 'unaffordable' ? 0x445566 : PALETTE.generatorAmber;
-      this.addC(this.add.text(px(chipX), px(chipCY + 8), chip.subLabel, {
-        fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: cssColor(subColor),
-      }).setOrigin(0.5));
     });
   }
 
@@ -1479,44 +1485,3 @@ const CHIP_SUB_COLOR: Record<LevelChipViewModel['state'], 'accent' | 'blue' | 'a
   locked: 'grey',
 };
 
-/** Resolves the prospective (not-yet-purchased) loadout for the currently selected shop kind. */
-function applyProspectiveKind(
-  tab: ShopTab, kind: string, previewLevel: number, current: LoadoutSnapshot, save: SaveData,
-): LoadoutSnapshot | null {
-  if (tab === 'ship') {
-    const previewId = `ship-${kind}-${String(previewLevel)}`;
-    if (save.equipped.ship === previewId) return null;
-    return { ...current, ship: shipById(previewId) };
-  }
-  if (tab === 'weapon') {
-    const spec = weaponSpecAtLevel(kind as WeaponKind, previewLevel);
-    if (current.weapon?.id === spec.id) return null;
-    return { ...current, weapon: spec };
-  }
-  if (tab === 'rear-weapon') {
-    const spec = rearWeaponSpecAtLevel(kind as RearWeaponKind, previewLevel);
-    if (current.rearWeapon?.id === spec.id) return null;
-    return { ...current, rearWeapon: spec };
-  }
-  if (tab === 'side-weapon') {
-    const spec = sideWeaponSpecAtLevel(kind as SideWeaponKind, previewLevel);
-    if (current.sideWeapon?.id === spec.id) return null;
-    return { ...current, sideWeapon: spec };
-  }
-  if (tab === 'shield') {
-    const spec = shieldSpecAtLevel(kind as ShieldKind, previewLevel);
-    if (save.equipped.shield === spec.id) return null;
-    return { ...current, shield: spec };
-  }
-  if (tab === 'generator') {
-    const spec = generatorSpecAtLevel(kind as GeneratorKind, previewLevel);
-    if (save.equipped.generator === spec.id) return null;
-    return { ...current, generator: spec };
-  }
-  if (tab === 'motor') {
-    const spec = motorSpecAtLevel(kind as MotorKind, previewLevel);
-    if (save.equipped.motor === spec.id) return null;
-    return { ...current, motor: spec };
-  }
-  return null;
-}

@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { resolveAbilityAction } from '../core/cards';
 import { activateAbility, fireSideWeapon, nearestEnemyAhead, setPriorityTarget, toggleAutoFire, toggleAutoShield, toggleRearWeapon } from '../core/combat';
 import { resolveNarrator } from '../core/narrator';
-import { CARD_ACTION_REROLL, CARD_ACTION_SKIP, HOLD_CHARGE_TIER_2_TICKS, HOLD_CHARGE_TIER_3_TICKS, LANE_LENGTH, MS_PER_TICK } from '../core/constants';
+import { HOLD_CHARGE_TIER_2_TICKS, HOLD_CHARGE_TIER_3_TICKS, LANE_LENGTH, MS_PER_TICK } from '../core/constants';
 import { buildMissionResult } from '../core/result';
 import { createCoreState } from '../core/state';
 import { applyBoost } from '../core/supplies';
@@ -28,7 +28,11 @@ import { buildGameTextures, laserTextureForWeaponId, rearBoltTextureKey, sideBol
 import { iconTextureForSideWeaponId, motorKindColorFromId, motorLevelFromId, splitWeaponId, textureForShipId } from './textureKeys';
 import { drawGeneratorCore, drawRearWeaponIndicator, drawShieldRings, drawSideWeaponIndicator, renderGunIndicator, renderThrusterAssembly, tickLaserBolts, tickMuzzleFlashes } from './shipRenderers';
 import type { LaserBolt, MuzzleFlash } from './shipRenderers';
+import { tickBurstParticles, tickFloatingTexts, tickShieldPulseRings } from './combatEffects';
+import type { BurstParticle, FloatingText, ShieldPulseRing } from './combatEffects';
+import { CombatCheats } from './CombatCheats';
 import { addModalBackdrop, addTextButton, drawDevBorder, drawPointerArrow, ensureMinTapTarget, UI_FONT } from './widgets';
+import { ManagedObjectGroup } from './ManagedObjectGroup';
 
 // Ship sits at the bottom-centre of the game field; enemies stream from the top.
 const SHIP_CENTER_X = GAME_X + Math.floor(GAME_WIDTH / 2); // 480 logical
@@ -140,12 +144,6 @@ const NARRATOR_ARROW_TARGETS: Record<string, Record<number, number>> = {
   t2: { 0: HUD_ROW_ENRG, 1: HUD_ROW_ENRG, 2: HUD_ROW_ENRG },
 };
 
-interface BurstParticle {
-  x: number; y: number; vx: number; vy: number;
-  color: number; life: number; maxLife: number;
-}
-interface FloatingText { text: Phaser.GameObjects.Text; vy: number; life: number; maxLife: number }
-interface ShieldPulseRing { radius: number; alpha: number }
 /** Pre-tick core-state snapshot — compared against post-tick state to detect events worth
  * a visual/audio reaction (shots fired, kills, shield/hull deltas, collisions, enemy shots). */
 interface PreTickSnapshot {
@@ -163,12 +161,13 @@ export interface CombatSceneData {
  * is pending the core pauses itself; this scene just shows the card overlay.
  */
 export class CombatScene extends Phaser.Scene {
-  private core!: CoreState;
+  core!: CoreState; // not private: CombatCheats.ts needs direct access (Phase C)
   private save!: SaveData;
   private hud!: CombatHud;
   private cardOverlay!: CardOverlay;
   private supplyButtons!: SupplyButtons;
-  private narrator!: NarratorBar;
+  narrator!: NarratorBar; // not private: CombatCheats.ts needs direct access (Phase C)
+  private cheats!: CombatCheats;
   private shipSprite!: Phaser.GameObjects.Image;
   private thrusterGfx!: Phaser.GameObjects.Graphics;
   private motorGfx!: Phaser.GameObjects.Graphics;
@@ -257,9 +256,9 @@ export class CombatScene extends Phaser.Scene {
     nameText: Phaser.GameObjects.Text;
     cooldownText: Phaser.GameObjects.Text;
   }> = [];
-  private exitConfirmObjects: Phaser.GameObjects.GameObject[] = [];
-  private narratorModalObjects: Phaser.GameObjects.GameObject[] = [];
-  private narratorLineIdx = 0;
+  exitConfirmObjects = new ManagedObjectGroup(); // not private: CombatCheats.ts needs direct access (Phase C)
+  private narratorModalObjects = new ManagedObjectGroup();
+  narratorLineIdx = 0; // not private: CombatCheats.ts needs direct access (Phase C)
   /** Reference to whichever narratorEvents.lines array is currently on screen — tick.ts
    * assigns a fresh array (`[...event.lines]`) each time a new event fires, so `!==`
    * reliably distinguishes "a new event replaced the one still showing" from "the same
@@ -355,6 +354,7 @@ export class CombatScene extends Phaser.Scene {
     this.hud = new CombatHud(this);
     this.cardOverlay = new CardOverlay(this, (action) => { this.handleCardAction(action); });
     this.narrator = new NarratorBar(this);
+    this.cheats = new CombatCheats(this);
 
     this.resetPerRunState();
     // Dynamic top-down cursor (see the constants block above) — toggles, then ability
@@ -444,7 +444,7 @@ export class CombatScene extends Phaser.Scene {
     this.floatingTexts = [];
     this.shieldPulseRings = [];
     this.stars = [];
-    this.exitConfirmObjects = [];
+    this.exitConfirmObjects = new ManagedObjectGroup();
     this.cardEntries = [];
     this.abilitySlots = [];
     this.shieldHitFlash = 0;
@@ -457,7 +457,7 @@ export class CombatScene extends Phaser.Scene {
     this.narratorSupportCallShown = false;
     this.narratorBossShown = false;
     this.narratorBoosterShown = false;
-    this.narratorModalObjects = [];
+    this.narratorModalObjects = new ManagedObjectGroup();
     this.displayedNarratorLines = null;
     this.narratorLineIdx = 0;
   }
@@ -514,18 +514,10 @@ export class CombatScene extends Phaser.Scene {
   }
 
   private renderShieldPulseRings(deltaMs: number): void {
-    this.shieldPulseGfx.clear();
     const cx = px(SHIP_CENTER_X) + this.driftX();
     const cy = px(SHIP_Y - 6) + this.bobY();
-    this.shieldPulseRings = this.shieldPulseRings.filter((ring) => {
-      ring.radius += px(PULSE_RING_EXPAND_PX_S) * deltaMs / 1000;
-      ring.alpha -= PULSE_RING_FADE_S * deltaMs / 1000;
-      if (ring.alpha <= 0) return false;
-      this.shieldPulseGfx.lineStyle(px(1.5), 0x44aaff, ring.alpha);
-      this.shieldPulseGfx.strokeCircle(cx, cy, ring.radius);
-      this.shieldPulseGfx.lineStyle(px(0.8), 0x88ddff, ring.alpha * 0.5);
-      this.shieldPulseGfx.strokeCircle(cx, cy, ring.radius + px(4));
-      return true;
+    this.shieldPulseRings = tickShieldPulseRings(this.shieldPulseGfx, this.shieldPulseRings, deltaMs, {
+      cx, cy, expandPxPerSec: PULSE_RING_EXPAND_PX_S, fadePerSec: PULSE_RING_FADE_S,
     });
   }
 
@@ -614,27 +606,11 @@ export class CombatScene extends Phaser.Scene {
   }
 
   private updateBurstParticles(deltaMs: number): void {
-    this.particleGfx.clear();
-    this.burstParticles = this.burstParticles.filter((p) => {
-      p.x += p.vx * deltaMs / 1000;
-      p.y += p.vy * deltaMs / 1000;
-      p.life -= deltaMs;
-      if (p.life <= 0) return false;
-      const t = p.life / p.maxLife;
-      this.particleGfx.fillStyle(p.color, t * 0.9);
-      this.particleGfx.fillRect(p.x - px(1.5), p.y - px(1.5), px(3), px(3));
-      return true;
-    });
+    this.burstParticles = tickBurstParticles(this.particleGfx, this.burstParticles, deltaMs);
   }
 
   private updateFloatingTexts(deltaMs: number): void {
-    this.floatingTexts = this.floatingTexts.filter((ft) => {
-      ft.text.y += ft.vy * deltaMs / 1000;
-      ft.life -= deltaMs;
-      ft.text.setAlpha(ft.life / ft.maxLife);
-      if (ft.life <= 0) { ft.text.destroy(); return false; }
-      return true;
-    });
+    this.floatingTexts = tickFloatingTexts(this.floatingTexts, deltaMs);
   }
 
   // fallow-ignore-next-line unused-class-member
@@ -662,9 +638,6 @@ export class CombatScene extends Phaser.Scene {
     this.syncNarrator();
     const alpha = this.core.pendingOffer !== null ? 1 : this.accumulatorMs / MS_PER_TICK;
     const boss = this.core.enemies.find((e) => e.isBoss) ?? null;
-    const lastEvent = this.core.mission.events[this.core.mission.events.length - 1];
-    const totalTicks = lastEvent !== undefined ? lastEvent.atTimelineTick * 1.05 : 1;
-    const progressFrac = boss === null ? Math.min(1, this.core.timelineTick / totalTicks) : 0;
     this.updateStars(deltaMs);
     this.renderThruster();
     this.renderGenerator();
@@ -684,7 +657,7 @@ export class CombatScene extends Phaser.Scene {
     this.updateEnemyBolts(deltaMs);
     this.updateBurstParticles(deltaMs);
     this.updateFloatingTexts(deltaMs);
-    this.hud.update(this.core, boss, progressFrac, this.save.missionStars[this.core.mission.id] ?? []);
+    this.hud.update(this.core, boss, this.save.missionStars[this.core.mission.id] ?? []);
     this.supplyButtons.update(this.core);
     this.updateAbilityBar();
     this.narrator.update(deltaMs);
@@ -751,7 +724,7 @@ export class CombatScene extends Phaser.Scene {
     }
   }
 
-  private handleCardAction(action: number): void {
+  handleCardAction(action: number): void { // not private: CombatCheats.ts needs direct access (Phase C)
     const prevCount = this.core.pickedAbilityIds.length;
     resolveAbilityAction(this.core, action);
     if (this.core.pickedAbilityIds.length > prevCount) {
@@ -996,14 +969,14 @@ export class CombatScene extends Phaser.Scene {
     });
   }
 
-  private handleBoostTap(slot: number): void {
+  handleBoostTap(slot: number): void { // not private: CombatCheats.ts needs direct access (Phase C)
     const supply = this.core.supplies[slot];
     if (supply === undefined || supply.chargesLeft <= 0 || this.core.status !== 'running') return;
     applyBoost(this.core, slot);
     Sound.boost();
   }
 
-  private handleSideWeaponTap(): void {
+  handleSideWeaponTap(): void { // not private: CombatCheats.ts needs direct access (Phase C)
     if (!computeSideWeaponButtonViewModel(this.core).canFire) return;
     const sideWeapon = this.core.loadout.sideWeapon;
     if (sideWeapon === null) return;
@@ -1035,32 +1008,32 @@ export class CombatScene extends Phaser.Scene {
     }
   }
 
-  private showNarratorLine(lines: string[], idx: number): void {
+  showNarratorLine(lines: string[], idx: number): void { // not private: CombatCheats.ts needs direct access (Phase C)
     this.hideNarratorModal();
     const depth = 35;
     const panelW = 520;
     const panelH = 170;
     const cx = LOGICAL_WIDTH / 2;
     const cy = LOGICAL_HEIGHT / 2;
-    this.narratorModalObjects.push(addModalBackdrop(this, depth));
-    this.narratorModalObjects.push(
+    this.narratorModalObjects.add(addModalBackdrop(this, depth));
+    this.narratorModalObjects.add(
       this.add.rectangle(px(cx), px(cy), px(panelW), px(panelH), 0x080820, 0.97)
         .setStrokeStyle(px(1), 0x334466)
         .setDepth(depth + 1),
     );
-    this.narratorModalObjects.push(
+    this.narratorModalObjects.add(
       this.add.text(px(cx + panelW / 2 - 8), px(cy - panelH / 2 + 7), `${String(idx + 1)}/${String(lines.length)}`, {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`, color: '#444466',
       }).setOrigin(1, 0).setDepth(depth + 2),
     );
-    this.narratorModalObjects.push(
+    this.narratorModalObjects.add(
       this.add.text(px(cx), px(cy - 22), lines[idx] ?? '', {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(16))}px`,
         color: '#ffaa22', wordWrap: { width: px(panelW - 48) }, align: 'center',
       }).setOrigin(0.5).setDepth(depth + 2),
     );
     const isLast = idx >= lines.length - 1;
-    this.narratorModalObjects.push(
+    this.narratorModalObjects.add(
       addTextButton(this, {
         x: px(cx), y: px(cy + 54), label: isLast ? 'CONTINUE' : 'NEXT →',
         color: 0x00ffee, size: 16,
@@ -1077,13 +1050,12 @@ export class CombatScene extends Phaser.Scene {
     const arrowRow = NARRATOR_ARROW_TARGETS[this.core.mission.id]?.[idx];
     if (arrowRow !== undefined) {
       const boxBounds = new Phaser.Geom.Rectangle(px(cx - panelW / 2), px(cy - panelH / 2), px(panelW), px(panelH));
-      this.narratorModalObjects.push(drawPointerArrow(this, boxBounds, hudRowScreenBounds(arrowRow), 0x00ffee, depth + 2));
+      this.narratorModalObjects.add(drawPointerArrow(this, boxBounds, hudRowScreenBounds(arrowRow), 0x00ffee, depth + 2));
     }
   }
 
   private hideNarratorModal(): void {
-    this.narratorModalObjects.forEach((o) => { o.removeInteractive(); o.destroy(); });
-    this.narratorModalObjects = [];
+    this.narratorModalObjects.destroyAll();
   }
 
   private syncNarrator(): void {
@@ -1640,41 +1612,37 @@ export class CombatScene extends Phaser.Scene {
     }
   }
 
-  private showExitConfirm(): void {
+  showExitConfirm(): void { // not private: CombatCheats.ts needs direct access (Phase C)
     if (this.exitConfirmObjects.length > 0) return;
     const cx = px(LOGICAL_WIDTH / 2);
     const cy = px(LOGICAL_HEIGHT / 2);
     const isDaily = this.core.mission.id === DAILY_MISSION_ID;
-    const backdrop = addModalBackdrop(this, 40);
-    const title = this.add.text(cx, cy - px(35), 'ABANDON MISSION?', {
+    this.exitConfirmObjects.add(addModalBackdrop(this, 40));
+    this.exitConfirmObjects.add(this.add.text(cx, cy - px(35), 'ABANDON MISSION?', {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(20))}px`, color: '#ddeeff',
-    }).setOrigin(0.5).setDepth(41);
+    }).setOrigin(0.5).setDepth(41));
     // Daily-only subtitle: abandoning it still banks whatever's been earned so far and
     // ends today's one attempt (via confirmAbandon -> abandonRun + maybeFinish, the same
     // path a real defeat takes) — closing the "quit and try again for a better score"
     // loophole a silent, resultless exit (the campaign's own abandon behavior) would
     // otherwise leave wide open on a once-per-day mode.
-    const subtitle = isDaily
-      ? this.add.text(cx, cy - px(12), "Banks coins earned so far. Ends today's attempt.", {
-          fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: '#8899aa',
-        }).setOrigin(0.5).setDepth(41)
-      : null;
-    const confirmBtn = addTextButton(this, {
+    if (isDaily) {
+      this.exitConfirmObjects.add(this.add.text(cx, cy - px(12), "Banks coins earned so far. Ends today's attempt.", {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: '#8899aa',
+      }).setOrigin(0.5).setDepth(41));
+    }
+    this.exitConfirmObjects.add(addTextButton(this, {
       x: cx - px(60), y: cy + px(20), label: 'ABANDON', color: 0xff4444, size: 13,
       onClick: () => { this.confirmAbandon(); },
-    }).setDepth(41);
-    const cancelBtn = addTextButton(this, {
+    }).setDepth(41));
+    this.exitConfirmObjects.add(addTextButton(this, {
       x: cx + px(60), y: cy + px(20), label: 'CANCEL', color: 0xffaa22, size: 13,
       onClick: () => { this.hideExitConfirm(); },
-    }).setDepth(41);
-    this.exitConfirmObjects = subtitle !== null
-      ? [backdrop, title, subtitle, confirmBtn, cancelBtn]
-      : [backdrop, title, confirmBtn, cancelBtn];
+    }).setDepth(41));
   }
 
   private hideExitConfirm(): void {
-    this.exitConfirmObjects.forEach((obj) => { obj.removeInteractive(); obj.destroy(); });
-    this.exitConfirmObjects = [];
+    this.exitConfirmObjects.destroyAll();
   }
 
   /** The real ABANDON button's decision, also called directly by cheatConfirmExit() so
@@ -1682,7 +1650,7 @@ export class CombatScene extends Phaser.Scene {
    * handleCardAction/cheatPickCard elsewhere in this class). Campaign missions keep
    * their existing behavior — abandon forfeits all progress, no result is ever built.
    * The daily banks its partial run instead (see showExitConfirm's subtitle above). */
-  private confirmAbandon(): void {
+  confirmAbandon(): void { // not private: CombatCheats.ts needs direct access (Phase C)
     // hideExitConfirm() (destroys + clears), not a bare array clear — the daily branch
     // below stays in this scene for maybeFinish()'s 600ms delayedCall before cutting to
     // ResultScene (unlike the campaign branch's immediate scene.start), so a bare clear
@@ -1737,214 +1705,42 @@ export class CombatScene extends Phaser.Scene {
     this.tweens.add({ targets: this.shipSprite, alpha: 0, duration: 500, delay: 100 });
   }
 
-  // ── Dev-only cheats (__cheat.combat.*, main.ts) — a screenshot/test harness needs
-  // to reach any point in a mission instantly rather than waiting through it or
-  // clicking. Sprite sync happens for free: renderEnemies() (called every real frame
-  // from update()) rebuilds its sprite map purely by diffing `this.core.enemies`
-  // against what's already on screen, so it's safe to call these mid-fast-forward and
-  // let the next natural frame catch the view up — no manual re-sync needed.
-
-  /** __cheat.combat.fastForward(ticks) — advances the core simulation instantly,
-   * auto-dismissing narrator lines and always picking the first card offer so a
-   * support call or story beat along the way can't stall the jump. Guarded against
-   * runaway loops (e.g. ticks requested past mission end). */
-  // fallow-ignore-next-line unused-class-member
-  cheatFastForward(ticks: number): void {
-    let advanced = 0;
-    let guard = 0;
-    const guardLimit = ticks * 20 + 1000;
-    while (advanced < ticks && this.core.status === 'running' && guard < guardLimit) {
-      guard += 1;
-      if (this.core.pendingNarrator !== null) { resolveNarrator(this.core); continue; }
-      if (this.core.pendingOffer !== null) { resolveAbilityAction(this.core, 0); continue; }
-      advanceTick(this.core);
-      advanced += 1;
-    }
-  }
-
-  /** __cheat.combat.fastForwardToOffer(maxTicks) — like cheatFastForward, but stops the
-   * instant a support-call card offer opens instead of auto-resolving it, so the
-   * Playwright harness can actually reach and verify CardOverlay's own hit areas/text
-   * (every other tool deliberately fast-forwards *past* offers via flushPendingOffer).
-   * Narrator popups still auto-resolve — they're not what this is for.
-   * Returns immediately without advancing at all if an offer is ALREADY pending when
-   * called — this finds the next *fresh* offer, it doesn't wait one out. To inspect one
-   * offer then move to the next, resolve the current one first (fastForward(1)
-   * auto-picks card 0 and moves past it — there's no separate dismiss-offer cheat, since
-   * only the narrator modal needed one to reach its later scripted events one at a time,
-   * see cheatDismissNarrator). */
-  // fallow-ignore-next-line unused-class-member
-  cheatFastForwardToOffer(maxTicks: number): void {
-    let advanced = 0;
-    let guard = 0;
-    const guardLimit = maxTicks * 20 + 1000;
-    while (advanced < maxTicks && this.core.status === 'running' && guard < guardLimit) {
-      guard += 1;
-      if (this.core.pendingOffer !== null) return;
-      if (this.core.pendingNarrator !== null) { resolveNarrator(this.core); continue; }
-      advanceTick(this.core);
-      advanced += 1;
-    }
-  }
-
-  /** __cheat.combat.fastForwardToNarrator(maxTicks) — the narrator-modal mirror of
-   * cheatFastForwardToOffer: stops the instant a MissionSpec.narratorEvents popup opens
-   * (the blocking modal with its own CONTINUE/NEXT button — not the passive bottom
-   * NarratorBar strip, which never pauses the sim and needs no cheat to see) instead of
-   * auto-resolving it. Also returns immediately without advancing if a narrator is
-   * ALREADY pending — call cheatDismissNarrator first to reach the next scripted event.
-   * Currently only w0 defines narratorEvents, and w0 has no galaxy-map node
-   * (docs/known-issues.md) — reachable here only via startMission('w0'), which bypasses
-   * hub navigation same as any other mission id. */
-  // fallow-ignore-next-line unused-class-member
-  cheatFastForwardToNarrator(maxTicks: number): void {
-    let advanced = 0;
-    let guard = 0;
-    const guardLimit = maxTicks * 20 + 1000;
-    while (advanced < maxTicks && this.core.status === 'running' && guard < guardLimit) {
-      guard += 1;
-      if (this.core.pendingNarrator !== null) return;
-      if (this.core.pendingOffer !== null) { resolveAbilityAction(this.core, 0); continue; }
-      advanceTick(this.core);
-      advanced += 1;
-    }
-  }
-
-  /** __cheat.combat.markTarget(enemyId) — sets/clears the front weapon's priority
-   * target without a real pointer click on the (possibly still-animating) sprite. */
-  // fallow-ignore-next-line unused-class-member
-  cheatMarkTarget(enemyId: number | null): void {
-    setPriorityTarget(this.core, enemyId);
-  }
-
-  /** __cheat.combat.setToggle('fire'|'rear'|'shield', on) — sets a toggle to an exact
-   * state (the real toggle functions just flip, which needs the current state to be
-   * read first from JS anyway — this is the one-call version). */
-  // fallow-ignore-next-line unused-class-member
-  cheatSetToggle(system: 'fire' | 'rear' | 'shield', on: boolean): void {
-    if (system === 'fire' && this.core.autoFireEnabled !== on) toggleAutoFire(this.core);
-    if (system === 'rear' && this.core.rearWeaponEnabled !== on) toggleRearWeapon(this.core);
-    if (system === 'shield' && this.core.autoShieldEnabled !== on) toggleAutoShield(this.core);
-  }
-
-  /** __cheat.combat.showExitConfirm() — opens the "ABANDON MISSION?" modal without a
-   * real tap on the EXIT button, for screenshot/touch-target coverage of that state. */
-  // fallow-ignore-next-line unused-class-member
-  cheatShowExitConfirm(): void {
-    this.showExitConfirm();
-  }
-
-  /** __cheat.combat.confirmExit() — headless equivalent of tapping ABANDON on the exit-
-   * confirm modal (opens it first if not already showing), for verifying the mid-
-   * mission-abandon-to-hub transition doesn't regress the WebGL-restart crash class
-   * (docs/known-issues.md, "CombatScene crashed... on any mission restart"). */
-  // fallow-ignore-next-line unused-class-member
-  cheatConfirmExit(): void {
-    if (this.exitConfirmObjects.length === 0) this.showExitConfirm();
-    this.confirmAbandon();
-  }
-
-  /** __cheat.combat.dismissNarrator() — resolves the current narrator-modal event in
-   * one shot (same core call the real CONTINUE button makes on its last line), so a
-   * multi-event test (fastForwardToNarrator → dismissNarrator → fastForwardToNarrator)
-   * can inspect each scripted narrator popup in a mission without pagination through
-   * every line by hand. */
-  // fallow-ignore-next-line unused-class-member
-  cheatDismissNarrator(): void {
-    if (this.core.pendingNarrator !== null) resolveNarrator(this.core);
-  }
-
-  /** __cheat.combat.narratorNext() — headless equivalent of tapping NEXT → on the
-   * narrator modal: advances to the next line WITHOUT resolving the whole popup (unlike
-   * cheatDismissNarrator). Line pagination lives entirely in the view (narratorLineIdx),
-   * not core state, so this is the only way to reach a multi-line event's 2nd+ line
-   * headlessly — e.g. to screenshot t1/t2's HUD-bar-callout lines specifically. Calling
-   * it on the last line resolves the popup, same as a real tap on CONTINUE. */
-  // fallow-ignore-next-line unused-class-member
-  cheatNarratorNext(): void {
-    const lines = this.core.pendingNarrator;
-    if (lines === null) return;
-    if (this.narratorLineIdx >= lines.length - 1) { resolveNarrator(this.core); return; }
-    this.narratorLineIdx += 1;
-    this.showNarratorLine(lines, this.narratorLineIdx);
-  }
-
-  /** __cheat.combat.pickCard(index) / rerollCard() / skipCard() — headless equivalents
-   * of tapping a card in the offer overlay. Routes through the same handleCardAction()
-   * the real click handler uses (not resolveAbilityAction directly), so the picked-
-   * ability sidebar and overlay hide/show stay in sync exactly like a real pick would —
-   * calling the core function directly here would silently desync the view the same way
-   * cheatFastForward's auto-pick-0 already does (docs/plans/comprehensive-coverage-sweep.md). */
-  // fallow-ignore-next-line unused-class-member
-  cheatPickCard(index: number): void {
-    this.handleCardAction(index);
-  }
+  // ── Dev-only cheats (__cheat.combat.*, main.ts) — implementations live in
+  // CombatCheats.ts (Phase C, fable-review-fixes-2026-07-18.md); these are thin
+  // delegates so main.ts's `scene[method]` lookup convention still finds them by name.
 
   // fallow-ignore-next-line unused-class-member
-  cheatRerollCard(): void {
-    this.handleCardAction(CARD_ACTION_REROLL);
-  }
-
+  cheatFastForward(ticks: number): void { this.cheats.fastForward(ticks); }
   // fallow-ignore-next-line unused-class-member
-  cheatSkipCard(): void {
-    this.handleCardAction(CARD_ACTION_SKIP);
-  }
-
-  /** __cheat.combat.activateAbility(slotIndex) — headless equivalent of tapping an
-   * equipped ability's slot in the right panel. */
+  cheatFastForwardToOffer(maxTicks: number): void { this.cheats.fastForwardToOffer(maxTicks); }
   // fallow-ignore-next-line unused-class-member
-  cheatActivateAbility(slotIndex: number): void {
-    activateAbility(this.core, slotIndex);
-  }
-
-  /** __cheat.combat.fireSideWeapon() — headless equivalent of tapping the side-weapon
-   * button. No-op (matching the real tap handler) if the weapon can't currently fire. */
+  cheatFastForwardToNarrator(maxTicks: number): void { this.cheats.fastForwardToNarrator(maxTicks); }
   // fallow-ignore-next-line unused-class-member
-  cheatFireSideWeapon(): void {
-    this.handleSideWeaponTap();
-  }
-
-  /** __cheat.combat.activateSupply(slot) — headless equivalent of tapping a BOOST
-   * button. No-op (matching the real tap handler) if that slot has no charges left. */
+  cheatMarkTarget(enemyId: number | null): void { this.cheats.markTarget(enemyId); }
   // fallow-ignore-next-line unused-class-member
-  cheatActivateSupply(slot: number): void {
-    this.handleBoostTap(slot);
-  }
-
-  /** __cheat.combat.inspect() — a JSON-safe snapshot of ship/enemy state for a
-   * screenshot harness to read back and decide what to do next (e.g. which enemy id
-   * to pass to markTarget). */
+  cheatSetToggle(system: 'fire' | 'rear' | 'shield', on: boolean): void { this.cheats.setToggle(system, on); }
   // fallow-ignore-next-line unused-class-member
-  cheatInspect(): unknown {
-    return {
-      missionId: this.core.mission.id,
-      tick: this.core.tick,
-      // Added 2026-07-17/18 (polish-loop, Fable's review of the advanceUntil silent-
-      // timeout fix) — `tick` alone can't distinguish "genuinely still early in the
-      // mission" from "stuck behind a blocksConveyor freeze": timelineTick.ts's
-      // advanceTimeline stalls timelineTick entirely while any blocker/turret/boss/
-      // booster is alive, so `tick` (the real per-advance counter) keeps climbing while
-      // `timelineTick` (what wave-spawn schedules are checked against) doesn't move at
-      // all — exactly the gap that made combat-m6-boss's advanceUntil predicate never
-      // fire within its tick budget. Surfaced in advanceUntil's timeout error message.
-      timelineTick: this.core.timelineTick,
-      status: this.core.status,
-      priorityTargetId: this.core.priorityTargetId,
-      hasPendingOffer: this.core.pendingOffer !== null,
-      // Lets the screenshot harness poll for "the bottom NarratorBar's current line has
-      // finished its typewriter reveal" instead of sleeping a fixed duration — see
-      // NarratorBar.isFullyRevealed's own doc comment.
-      narratorFullyRevealed: this.narrator.isFullyRevealed(),
-      ship: {
-        hull: this.core.ship.hull, maxHull: this.core.ship.maxHull,
-        shield: this.core.ship.shield, energy: this.core.ship.energy,
-      },
-      enemies: this.core.enemies.map((e) => ({
-        id: e.id, kind: e.kind, distance: e.distance, hp: e.hp, maxHp: e.maxHp,
-        holdChargeTicks: e.holdChargeTicks, blocksConveyor: e.blocksConveyor,
-      })),
-    };
-  }
+  cheatShowExitConfirm(): void { this.cheats.showExitConfirm(); }
+  // fallow-ignore-next-line unused-class-member
+  cheatConfirmExit(): void { this.cheats.confirmExit(); }
+  // fallow-ignore-next-line unused-class-member
+  cheatDismissNarrator(): void { this.cheats.dismissNarrator(); }
+  // fallow-ignore-next-line unused-class-member
+  cheatNarratorNext(): void { this.cheats.narratorNext(); }
+  // fallow-ignore-next-line unused-class-member
+  cheatPickCard(index: number): void { this.cheats.pickCard(index); }
+  // fallow-ignore-next-line unused-class-member
+  cheatRerollCard(): void { this.cheats.rerollCard(); }
+  // fallow-ignore-next-line unused-class-member
+  cheatSkipCard(): void { this.cheats.skipCard(); }
+  // fallow-ignore-next-line unused-class-member
+  cheatActivateAbility(slotIndex: number): void { this.cheats.activateAbility(slotIndex); }
+  // fallow-ignore-next-line unused-class-member
+  cheatFireSideWeapon(): void { this.cheats.fireSideWeapon(); }
+  // fallow-ignore-next-line unused-class-member
+  cheatActivateSupply(slot: number): void { this.cheats.activateSupply(slot); }
+  // fallow-ignore-next-line unused-class-member
+  cheatInspect(): unknown { return this.cheats.inspect(); }
 }
 
 

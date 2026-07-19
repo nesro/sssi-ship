@@ -5,7 +5,7 @@ import { TICKS_PER_SECOND } from '../core/constants';
 import type { MissionResult } from '../core/result';
 import type { StarFamily, StarSpec } from '../core/types';
 import { DAILY_MISSION_ID } from '../data/dailyMission';
-import { missionById } from '../data/missions';
+import { MISSION_UNLOCK_EDGES, missionById } from '../data/missions';
 
 export interface StarResultViewModel {
   id: string;
@@ -44,6 +44,19 @@ export interface ResultViewModel {
    * (SaveManager's applyDailyResult already applied DAILY_COIN_MULT to result.coins) so
    * `coinsEarned` above reflects reality, plus whether this run set a new personal best. */
   daily?: { isNewBest: boolean };
+  /** The mission a NEXT MISSION button should start, or null if none applies — moved
+   * here from ResultScene.ts (Phase C, fable-review-fixes-2026-07-18.md): untested
+   * scene logic scanning MISSION_UNLOCK_EDGES belongs in the viewmodel. Only
+   * meaningful when `buttons.kind === 'standard'` (the view never renders a NEXT
+   * MISSION button otherwise), but computed unconditionally here since it's cheap and
+   * correct either way. A mission "completes" (unlocks its MISSION_UNLOCK_EDGES
+   * targets) on victory, or — tutorials only — on defeat too (`completesOnDefeat`);
+   * t1's own two outgoing edges (t2 AND m1) resolve to t2 here since `.find()` takes
+   * the first match and t2 is listed first in `missions.ts` (tutorials and the main
+   * campaign are separate branches — a player can skip into missions after the first
+   * tutorial — so NEXT MISSION should continue the track the player is actually on,
+   * not jump them into the main campaign mid-tutorial-run). */
+  nextMissionId: string | null;
 }
 
 /** Player-facing label built from the star's actual requirement, not its data id — the
@@ -86,6 +99,10 @@ export function computeResultViewModel(
   const isDaily = result.missionId === DAILY_MISSION_ID;
   const killsLine = `${String(result.weaponKills)}/${String(result.spawned)}` +
     (result.collisions > 0 ? `   (${String(result.collisions)} collided)` : '');
+  const completed = result.status === 'victory' || mission.completesOnDefeat === true;
+  const nextMissionId = completed
+    ? MISSION_UNLOCK_EDGES.find(([from]) => from === result.missionId)?.[1] ?? null
+    : null;
 
   return {
     status: result.status,
@@ -105,5 +122,6 @@ export function computeResultViewModel(
       ? { kind: 'w0-branch' }
       : (isDaily ? { kind: 'daily' } : { kind: 'standard' }),
     ...(dailyBonus !== undefined ? { daily: { isNewBest: dailyBonus.isNewBest } } : {}),
+    nextMissionId,
   };
 }

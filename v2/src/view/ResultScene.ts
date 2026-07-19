@@ -4,7 +4,6 @@ import { persistSave } from '../save/SaveManager';
 import type { SaveData } from '../save/SaveManager';
 import { computeResultViewModel } from '../viewmodel/result';
 import type { ResultViewModel, StarResultViewModel } from '../viewmodel/result';
-import { missionById, MISSION_UNLOCK_EDGES } from '../data/missions';
 import { cssColor, PALETTE } from './palette';
 import { fontPx, px, SCREEN_WIDTH } from './layout';
 import { addLabel, addTextButton, drawDevBorder, UI_FONT } from './widgets';
@@ -41,7 +40,6 @@ export class ResultScene extends Phaser.Scene {
     drawDevBorder(this, data.save);
     const { result, newStarIds, save, dailyBonus, wasAbandoned } = data;
     const vm = computeResultViewModel(result, newStarIds, dailyBonus, wasAbandoned);
-    const victory = vm.status === 'victory';
 
     this.add
       .text(SCREEN_WIDTH / 2, px(70), TITLE_BY_OUTCOME[vm.outcome], {
@@ -108,21 +106,11 @@ export class ResultScene extends Phaser.Scene {
       return;
     }
 
-    // A mission "completes" (unlocks its MISSION_UNLOCK_EDGES targets) on victory, or —
-    // tutorials only — on defeat too (completesOnDefeat, missions.ts); NEXT MISSION only
-    // makes sense to offer when that actually happened. t1's own two outgoing edges
-    // (t2 AND m1) resolve to t2 here since .find() takes the first match and t2 is
-    // listed first (missions.ts's own comment: tutorials and the main campaign are
-    // "separate branches... a player can skip into missions after the first tutorial" —
-    // NEXT MISSION should continue the track the player is actually on, not jump them
-    // into the main campaign mid-tutorial-run).
-    const completed = victory || missionById(result.missionId).completesOnDefeat === true;
-    const nextMissionId = completed
-      ? MISSION_UNLOCK_EDGES.find(([from]) => from === result.missionId)?.[1] ?? null
-      : null;
-
+    // nextMissionId is computed in computeResultViewModel (Phase C, moved out of this
+    // scene — the graph-walking logic is now tested there, see result.test.ts).
     const buttons: { label: string; color: number; onClick: () => void }[] = [];
-    if (nextMissionId !== null) {
+    if (vm.nextMissionId !== null) {
+      const nextMissionId = vm.nextMissionId;
       buttons.push({
         label: 'NEXT MISSION ▸', color: PALETTE.generatorAmber,
         onClick: () => { this.scene.start('CombatScene', { missionId: nextMissionId }); },

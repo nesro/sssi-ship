@@ -134,8 +134,8 @@ export class CombatHud {
     }).setOrigin(0, 0.5).setDepth(11);
   }
 
-  update(state: CoreState, boss: EnemyState | null, progressFrac: number, alreadyEarnedStarIds: string[]): void {
-    const vm = computeCombatHudViewModel(state, boss, progressFrac, alreadyEarnedStarIds);
+  update(state: CoreState, boss: EnemyState | null, alreadyEarnedStarIds: string[]): void {
+    const vm = computeCombatHudViewModel(state, boss, alreadyEarnedStarIds);
     const bars: BarViewModel[] = [vm.hull, vm.shield, vm.energy, vm.missionOrBoss];
 
     this.bgGfx.clear();

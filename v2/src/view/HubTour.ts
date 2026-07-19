@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { cssColor, PALETTE } from './palette';
 import { fontPx, LOGICAL_WIDTH, px } from './layout';
 import { addModalBackdrop, addTextButton, drawPointerArrow, UI_FONT } from './widgets';
+import { ManagedObjectGroup } from './ManagedObjectGroup';
 
 export interface TourStep {
   /** Matched against every GameObject sharing this `.setData('tourId', ...)` tag on
@@ -62,7 +63,7 @@ export class HubTour {
   private readonly scene: Phaser.Scene;
   private readonly steps: TourStep[];
   private stepIndex = 0;
-  private stepObjects: Phaser.GameObjects.GameObject[] = [];
+  private stepObjects = new ManagedObjectGroup();
   // One tourId can tag MULTIPLE sibling GameObjects (2026-07-17/18 fix) — a shop tab or
   // dispatch row is a background rectangle plus one-or-more separate label Texts, not a
   // single combined object like the main-menu buttons (addTextButton bakes its
@@ -88,8 +89,7 @@ export class HubTour {
   }
 
   private clearStep(): void {
-    this.stepObjects.forEach((obj) => { obj.destroy(); });
-    this.stepObjects = [];
+    this.stepObjects.destroyAll();
     for (const { obj, depth, wasEnabled } of this.currentTargets) {
       obj.setDepth(depth);
       // Only re-enable input on objects that were actually ENABLED before this step —
@@ -110,7 +110,7 @@ export class HubTour {
     const step = this.steps[this.stepIndex];
     if (step === undefined) { return; }
 
-    this.stepObjects.push(addModalBackdrop(this.scene, DEPTH_BACKDROP));
+    this.stepObjects.add(addModalBackdrop(this.scene, DEPTH_BACKDROP));
 
     let targetRingBounds: Phaser.Geom.Rectangle | null = null;
     const targets = this.findTargets(step.tourId);
@@ -135,7 +135,7 @@ export class HubTour {
       const ring = this.scene.add.graphics().setDepth(DEPTH_TARGET);
       ring.lineStyle(px(2), PALETTE.weaponCyan, 1);
       ring.strokeRect(targetRingBounds.x, targetRingBounds.y, targetRingBounds.width, targetRingBounds.height);
-      this.stepObjects.push(ring);
+      this.stepObjects.add(ring);
     }
 
     // Same dark bordered-card look as the tutorial narrator modal (CombatScene.ts's
@@ -143,7 +143,7 @@ export class HubTour {
     const panelBounds = new Phaser.Geom.Rectangle(
       px(PANEL_CX - PANEL_W / 2), px(PANEL_CY - PANEL_H / 2), px(PANEL_W), px(PANEL_H),
     );
-    this.stepObjects.push(
+    this.stepObjects.add(
       // Fully opaque (not narrator-modal's 0.97) — this panel's y-range overlaps the
       // CREDITS nav button (NAV_ITEMS' 5th entry, y=398, not a tour target but still
       // present and dimmed-but-visible under the backdrop like every other button), and
@@ -152,13 +152,13 @@ export class HubTour {
         .setStrokeStyle(px(1), 0x334466)
         .setDepth(DEPTH_UI),
     );
-    this.stepObjects.push(
+    this.stepObjects.add(
       this.scene.add.text(px(PANEL_CX + PANEL_W / 2 - 8), px(PANEL_CY - PANEL_H / 2 + 7),
         `${String(this.stepIndex + 1)}/${String(this.steps.length)}`, {
           fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`, color: '#444466',
         }).setOrigin(1, 0).setDepth(DEPTH_UI + 1),
     );
-    this.stepObjects.push(
+    this.stepObjects.add(
       this.scene.add.text(px(PANEL_CX), px(PANEL_CY - 32), step.caption, {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(14))}px`, color: cssColor(PALETTE.hullWhite),
         align: 'center', wordWrap: { width: px(PANEL_W - 60) },
@@ -166,7 +166,7 @@ export class HubTour {
     );
 
     if (targetRingBounds !== null) {
-      this.stepObjects.push(drawPointerArrow(this.scene, panelBounds, targetRingBounds, PALETTE.weaponCyan, DEPTH_UI + 1));
+      this.stepObjects.add(drawPointerArrow(this.scene, panelBounds, targetRingBounds, PALETTE.weaponCyan, DEPTH_UI + 1));
     }
 
     const isLast = this.stepIndex === this.steps.length - 1;
@@ -175,7 +175,7 @@ export class HubTour {
       label: isLast ? 'DONE' : 'NEXT →', color: PALETTE.weaponCyan,
       onClick: () => { this.advance(); },
     }).setDepth(DEPTH_UI + 1);
-    this.stepObjects.push(nextBtn);
+    this.stepObjects.add(nextBtn);
 
     if (!isLast) {
       const skipBtn = addTextButton(this.scene, {
@@ -183,7 +183,7 @@ export class HubTour {
         label: 'SKIP TOUR', color: 0x8888aa,
         onClick: () => { this.end(); },
       }).setDepth(DEPTH_UI + 1);
-      this.stepObjects.push(skipBtn);
+      this.stepObjects.add(skipBtn);
     }
   }
 

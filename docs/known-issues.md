@@ -15,6 +15,86 @@ Move resolved items to the bottom with the date and what fixed them, instead of 
 
 ## Open
 
+### m2/m3/m4 mid-campaign tension experiment — implemented, sim-verified, UNVALIDATED by real playtest, awaiting Tomáš
+Added 2026-07-18 as E-3 of `docs/plans/fable-review-fixes-2026-07-18.md`. The finding
+(`docs/design/13-balance-and-tuning.md`'s tuning log, point 5): `pnpm campaign` showed
+median hull 100%, near-miss ≈0%, retries ≈1.0 through m1-m5 for both simulated
+archetypes — the energy-triage skill loop (toggling front/rear weapon or shield
+recharge off to conserve energy) is never actually *required* to clear a main mission
+before m6. The plan's own recommendation was a scoped experiment "after a real playtest
+session confirms or refutes the concern" — Tomáš was asked whether to wait for that or
+have it designed now from sim data alone, and explicitly said: "Make it as best as
+possible, I will get to it sooner or later." This entry is that experiment, landed
+without a playtest per that explicit instruction — **treat every number below as
+provisional, not settled design.**
+
+**What changed:** one new short enemy wave per mission (m2/m3/m4 — using each
+mission's own already-tuned `striker` spec, not a new enemy or new stats), each landing
+in an existing timeline gap a few seconds before that mission's next scheduled support
+call. Planned with a Fable pre-implementation review first (per this repo's own
+convention for anything touching `missions.ts`'s balance data) — see each mission's own
+inline `E-3 experiment` comment in `missions.ts` for the exact placement/sizing
+reasoning and why `striker` was the chosen lever (blocker/tank counts are documented
+difficulty cliffs in these same missions; striker isn't).
+
+**A real, honest caveat the review surfaced and this entry preserves:** the sim cannot
+actually verify the "toggle now required" premise. `intendedLoadoutForMission` (the
+reference loadout `pnpm sim`/`pnpm balance` score against) equips no rear or side
+weapon, and the sim's only energy-triage policy (`brownoutAwareToggles`,
+`tools/policies.ts`) only ever flips the rear weapon — so at the intended loadout, this
+policy is a structural no-op. What the sim CAN and does verify: the change doesn't
+break any mission's documented clear-rate floor, and (via `pnpm campaign`, which runs
+richer archetypes that do own gear and do use the toggle policy) that it visibly moves
+the margin-at-clear metrics the original finding was about.
+
+**Sizing needed real iteration, not just the review's estimate:** m4's insert (3
+strikers) and m3's (2 strikers, deliberately the smallest of the three — m3 had by far
+the thinnest floor headroom, 68.8% vs. a 65% floor) landed fine on the first try. m2's
+did not: a 3-striker insert (matching the review's own recommendation) measured 68.5%
+at 2000 runs against m2's 75% floor — a real, larger-than-predicted drop, most likely
+because the insertion point sits sandwiched between m2's own existing seconds(124) and
+seconds(152) striker waves, tripling up pressure in one window rather than adding one
+isolated burst. Reduced to 2 strikers (74.4% — still just under floor), then to a single
+enemy (79.3% — a real 4.3pp margin). This is recorded in `missions.ts`'s own comment on
+that event, not just here.
+
+**Verification run this round (`pnpm sim --mission {m2,m3,m4} --runs 2000` each, then
+the full sweep):**
+- `pnpm sim` per-mission clear rates, all above floor: m2 79.3% (floor 75%), m3 70.0%
+  (floor 65%), m4 72.2% (floor 55%).
+- `pnpm balance` (500 runs/combo, 98 combos): zero UNREACHABLE/TRIVIAL flags; m2/m4's
+  shield stars (the two closest to any edge) sit at 13.6%/13.0%, both comfortably clear
+  of the 5% floor.
+- `pnpm campaign` (500 campaigns/archetype) — **this is the result the whole experiment
+  was aimed at:** `average` archetype's m2 margin-at-clear moved from the pre-existing
+  100%-median-hull/0%-near-miss pattern to **59% median hull, 7.0% near-miss** — a real,
+  measured tension moment where none existed before. m3/m3b stayed close to unchanged
+  (m3's insert was deliberately the smallest, per its thin headroom). `expert`
+  archetype (strong/well-built gear) stayed at 100% median hull / 0% near-miss on all
+  three missions, completely unaffected — the tension is felt by weaker builds, not
+  imposed on strong ones, matching the intended shape. Both archetypes' completion rate
+  held at 100%/100%, the core safety invariant.
+- `pnpm pacing`: still exactly the 3 pre-existing accepted flags (w0/t1 SLOW_START, m1
+  MONOTONY) — no new MONOTONY/IDLE_STRETCH signal on m2/m3/m4.
+- Added a new permanent regression test (`missions.test.ts`, found missing during the
+  Fable pre-implementation review): `events` arrays must stay sorted by
+  `atTimelineTick` — `advanceTimeline` (`core/timeline.ts`) assumes this and silently
+  fires an out-of-order event LATE, bundled into whatever earlier event the walk was
+  still stuck on, rather than erroring. Nothing previously checked this cross-event
+  invariant (only per-event spacing was tested).
+
+**Not done, deliberately:** no time-star re-anchoring (T1's 75th-percentile anchor is
+now slightly stale on all three missions since runs got a little longer/harder, but
+re-anchoring an unvalidated experiment risks churn if it gets reverted — re-anchor only
+once this becomes settled design). No UI/screenshot changes needed (pure `missions.ts`
+data, no view-layer touch).
+
+**What Tomáš needs to actually evaluate:** does the m2 moment (and the smaller m3/m4
+ones) feel like real tension or like an unfair spike? Does it read as intended given
+the visual crowding at that point in each mission (worth a live playthrough, not just
+numbers)? If it reads wrong, each insert is a single, clearly-commented event line —
+delete the one line (or the three) to fully revert, no other coupled changes.
+
 ### Screenshots taken well into a mission (via `combat.fastForward`/`advanceUntil`) show the mission-title text still fully visible and overlapping enemy HP labels/reticles/damage numbers — a harness artifact, not a live bug
 Found 2026-07-18 during this round's screenshot sweep (delegated review agents flagged
 `combat-m1-tap-target`, `combat-m3-blocker`, `combat-m4-blocker-pressure`,
@@ -138,32 +218,39 @@ genuinely gear-gated boss-time tiers, matching the finish-time stars' philosophy
 legitimate design direction if Tomáš wants it — it just needs a deliberate decision,
 because it changes what the finale's stars mean.
 
-### Daily Mission — y2010's secret weapon can guarantee a full clear, a very large repeatable payout
-Found 2026-07-17 (Fable's design review). `y2010` (`items.ts`) is a deliberately
-unbalanced, un-nerfed Easter-egg weapon (500 dmg/2 ticks, hits every enemy on screen),
-unlocked after beating the campaign. A player who owns it can very plausibly clear all
-`ROUND_COUNT` rounds / all gates of the Daily Mission outright — the generator's own doc
-comment calls a full clear "a harmless edge case, not a special case this module needs to
-handle," which is true architecturally (it just pays out as a normal victory) but not
-economically: cumulative gate + wave coin rewards across every round, at
-`DAILY_COIN_MULT`, comes to a very large number — potentially tens of thousands of coins,
-repeatable every single day, dwarfing a normal day's run and rivaling a large fraction of
-the ~100,000-coin completionist target in one sitting. Not fixed — needs a deliberate
-decision (cap the payout, special-case y2010 out of the daily, or accept it as a
-post-campaign perk) before this is a settled design, not an oversight.
-
-### Daily Mission — a faster motor can score WORSE than a slower one at the same weapon/shield/generator tier
+### Daily Mission — a faster motor scores WORSE than a slower one at the same weapon/shield/generator tier — now CONFIRMED and quantified, not fixed
 Found 2026-07-17 (Fable's design review), residual after the gate-based fix (see
 [Balance & Tuning](design/13-balance-and-tuning.md)'s tuning log) closed the main
 motor-vs-gear inversion. Two smaller channels still couple motor tier to score in the
 wrong direction: (1) the flowing waves between gates are still motor-timed, so a faster
 motor still reaches later-round waves sooner in real time; (2) motor energy draw
 continues during a gate fight even though the timeline is frozen and gains nothing from
-it, pushing a fast/heavy motor toward brownout exactly when DPS matters most. Not
-verified against real sim data (a "motor-only sweep" — same weapon/shield/generator, only
-motor level varied, checking coins stay roughly flat — was proposed but not run). Likely
-still true today; low severity relative to the primary fix, but worth checking before
-calling the economy fully tuned.
+it, pushing a fast/heavy motor toward brownout exactly when DPS matters most.
+
+**Confirmed 2026-07-18 (E-4, `docs/plans/fable-review-fixes-2026-07-18.md`)** — the
+motor-only sweep proposed but never run is now done: same weapon/shield/generator
+(pulse/wall/torrent, all Lv2), only motor level (`rush` 1/2/3) varied, 500 runs each
+against today's real daily seed (throwaway script, run then deleted per this repo's own
+convention). Result is not a small residual — it's a large, monotonic inversion:
+
+| Motor | Avg raw coins | Avg survival |
+|---|---|---|
+| rush-1 (slowest) | 454.9 | 404.9s |
+| rush-2 | 277.6 | 160.0s |
+| rush-3 (fastest) | 232.5 | 101.3s |
+
+The slowest motor nets **~2× the fastest motor's coins** at identical weapon/shield/
+generator investment — a player who spent coins upgrading their motor tier would
+score *worse* on the Daily than one who never touched it. This is the single largest
+un-reconciled economy inversion found in this project's balance history and is
+**squarely owner-gated**: fixing it means picking one of at least two real designs —
+decouple the daily's flowing-wave timing from motor speed entirely (its own escalation
+curve, not `timelineMultiplier`), or freeze motor draw during gate fights (mirroring how
+the timeline itself already freezes) — either is a real mechanic change to
+`dailyMission.ts`/`core/timeline.ts`, not a tuning-number tweak, and needs a deliberate
+call before implementation. Not fixed this round (E-4's own scope was measurement, not
+a fix) — logged here with real numbers instead of the "not verified... proposed but not
+run" state this entry used to describe.
 
 ### Daily Mission — replay records don't pin which day's generated mission they belong to
 Found 2026-07-17 (Fable's design review). `ReplayRecord` stores `missionId: 'daily'` +
@@ -261,6 +348,23 @@ kinds' per-mission matchups is a much bigger, riskier undertaking (core weapon d
 numbers, verified across 7 missions) than this pass, and touches the game's stated
 design philosophy directly — needs a real decision, not a data tweak.
 
+**Phase E-2 (2026-07-18, `docs/plans/fable-review-fixes-2026-07-18.md`) — sweep artifact
+built, decision on rebalancing still deliberately deferred.** `pnpm tune` now has a
+cross-mission summary table + a non-zero exit on any dominant-kind flag (matching
+`pnpm balance`/`pnpm pacing`'s own convention) — see
+[Balance & Tuning](design/13-balance-and-tuning.md)'s point 6 for the full write-up.
+Building it found and fixed a real bug in the tool itself (the campaign-completion-gated
+`y2010` Easter egg was in the weapon tournament, winning m3/m6 and silently feeding a
+mechanically-impossible-for-a-first-playthrough recommendation into
+`RECOMMENDED_KIND_PER_MISSION`, which `expert`'s own campaign sim then acts on). Fresh,
+y2010-excluded data supersedes this entry's 2026-07-11-era "pulse worst on m1/m2"
+framing (both missions now show pulse recommended, non-dominant spread — consistent
+with the nova-trap and Reserve-generator fixes that landed after that original finding,
+never re-checked until now) while confirming the broader pattern is still real: m3
+(ion), m3b (nova), m4 (ion), m5 (scatter), m6 (ion) each show a genuine dominant kind.
+Still no rebalancing — that remains an owner-gated design decision, now with
+trustworthy, current data to decide from rather than a stale 2026-07-11 snapshot.
+
 ### Manual playtest of m1/m3/m5's reshaped pacing — needs a human, not simulation
 `docs/plans/mission-design-and-testing.md`'s "Open item 1." The simulator is structurally
 blind to feel; needs a human with a controller. **Needs dev server / Preview, not
@@ -305,6 +409,34 @@ exit on a clean run is expected until/unless someone decides to invest further d
 effort in either mission's approach-phase pacing specifically.
 
 ## Resolved
+
+### Daily Mission — y2010's secret weapon can guarantee a full clear, a very large repeatable payout — accepted as intended, 2026-07-18
+Closed as E-1 of `docs/plans/fable-review-fixes-2026-07-18.md`. Decision (Tomáš): accept
+as-is — a post-campaign reward, not a bug. `y2010` is already gated behind actually
+beating the campaign (or dev mode), so the "exploit" is only reachable by a player who
+has already finished the game's real content; a very large, repeatable Daily payout at
+that point is being read as the intended shape of a post-campaign perk, not something
+requiring a payout cap or a special-case exclusion. No code change. If this is ever
+revisited, the three options this entry originally raised (cap the payout via a named
+`DAILY_MAX_PAYOUT`, exclude y2010 from the daily, or keep accepting it as-is) are still
+the live menu — this entry just records that "keep accepting it" was the deliberate call
+made this round, not a default arrived at by inaction.
+
+### `hub-dispatch-reinforcements` screenshot captured the first-visit dispatch coach-mark tour instead of the clean cards grid — fixed 2026-07-18
+Found while visually verifying Phase C's chip-grid de-duplication (B5 leftover,
+`docs/plans/fable-review-fixes-2026-07-18.md`) — not caused by that change, a
+pre-existing gap in the same class already fixed for `hub-shop-weapon`/
+`hub-shop-ship-star-gated` earlier the same day. Root cause: this shot's setup calls
+`__cheat.selectSubscription('sub-offensive')`, which internally calls `setNav('dispatch-
+reinforcements')` with no `skipScreenTour`, and `dispatchTourSeen` is still false at
+this point in the batch — the two earlier `hub-dispatch-tour-step-1/2` shots force the
+tour via `showDispatchTour()`, which deliberately passes `skipScreenTour: true` and so
+never sets the seen-flag (see `HubScene.ts`'s `cheatShowDispatchTour` comment). The real
+first-visit tour therefore auto-fires here too, covering the cards grid this shot exists
+to demonstrate. Fixed the same way as the earlier two: added `cheat(page,
+'hub.tourSkip')` right after `selectSubscription` in `tools/screenshot.ts`. Re-verified
+the regenerated screenshot shows the intended clean state (10 subscription cards, page
+1/4, the sub-level chip row visible at the bottom-left).
 
 ### `SaveManager.ts`'s migration switch had no `migrateV12` case — closed by removing the whole migration switch, 2026-07-18
 Fixed as D8 of `docs/plans/fable-review-fixes-2026-07-18.md`, applying this project's

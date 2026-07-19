@@ -102,6 +102,33 @@ describe('computeResultViewModel', () => {
   });
 });
 
+describe('computeResultViewModel — nextMissionId (Phase C, moved out of ResultScene.ts)', () => {
+  it('m1 victory resolves to m2 via MISSION_UNLOCK_EDGES', () => {
+    const vm = computeResultViewModel(victoryResult({ missionId: 'm1' }), []);
+    expect(vm.nextMissionId).toBe('m2');
+  });
+
+  it('m1 defeat (not completesOnDefeat) resolves to null — no next mission on a real loss', () => {
+    const vm = computeResultViewModel(victoryResult({ missionId: 'm1', status: 'defeat' }), []);
+    expect(vm.nextMissionId).toBeNull();
+  });
+
+  it('t1 has two outgoing edges (t2 and m1) — resolves to t2, the first match, not m1', () => {
+    const vm = computeResultViewModel(victoryResult({ missionId: 't1', earnedStarIds: [] }), []);
+    expect(vm.nextMissionId).toBe('t2');
+  });
+
+  it('t1 defeat still resolves to t2 — tutorials complete on defeat too (completesOnDefeat)', () => {
+    const vm = computeResultViewModel(victoryResult({ missionId: 't1', status: 'defeat', earnedStarIds: [] }), []);
+    expect(vm.nextMissionId).toBe('t2');
+  });
+
+  it('m6 (the last main mission, no outgoing edge) resolves to null even on victory', () => {
+    const vm = computeResultViewModel(victoryResult({ missionId: 'm6', earnedStarIds: [] }), []);
+    expect(vm.nextMissionId).toBeNull();
+  });
+});
+
 describe('computeResultViewModel — daily mission', () => {
   function dailyResult(overrides: Partial<MissionResult> = {}): MissionResult {
     return victoryResult({

@@ -6,6 +6,7 @@ import type { CardOverlayViewModel, OfferCardViewModel } from '../viewmodel/comb
 import { cssColor, PALETTE } from './palette';
 import { fontPx, px, SCREEN_HEIGHT, SCREEN_WIDTH } from './layout';
 import { addModalBackdrop, addTextButton, UI_FONT } from './widgets';
+import { ManagedObjectGroup } from './ManagedObjectGroup';
 
 const DEPTH = 30;
 // Portrait: 3 cards side by side — 150px each × 3 + 10px gap × 2 = 470px < 540px
@@ -18,7 +19,7 @@ const CARD_GAP_LOGICAL = 10;
  * The core sim is paused (pendingOffer) for as long as this overlay is visible.
  */
 export class CardOverlay {
-  private objects: Phaser.GameObjects.GameObject[] = [];
+  private objects = new ManagedObjectGroup();
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -32,8 +33,8 @@ export class CardOverlay {
   show(offer: AbilityOffer, state: CoreState): void {
     const vm = computeCardOverlayViewModel(offer, state);
     this.hide();
-    this.objects.push(addModalBackdrop(this.scene, DEPTH));
-    this.objects.push(
+    this.objects.add(addModalBackdrop(this.scene, DEPTH));
+    this.objects.add(
       this.scene.add
         .text(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - px(CARD_HEIGHT_LOGICAL / 2) - px(44), 'DISPATCH REINFORCEMENTS', {
           fontFamily: UI_FONT,
@@ -43,7 +44,7 @@ export class CardOverlay {
         .setOrigin(0.5)
         .setDepth(DEPTH + 1),
     );
-    this.objects.push(
+    this.objects.add(
       this.scene.add
         .text(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - px(CARD_HEIGHT_LOGICAL / 2) - px(22), 'pick one', {
           fontFamily: UI_FONT,
@@ -59,8 +60,7 @@ export class CardOverlay {
   }
 
   hide(): void {
-    this.objects.forEach((obj) => { obj.removeInteractive(); obj.destroy(); });
-    this.objects = [];
+    this.objects.destroyAll();
   }
 
   private addCard(card: OfferCardViewModel, index: number): void {
@@ -117,7 +117,11 @@ export class CardOverlay {
       })
       .setOrigin(0.5, 0)
       .setDepth(DEPTH + 2);
-    this.objects.push(panel, iconGfx, iconText, name, description);
+    this.objects.add(panel);
+    this.objects.add(iconGfx);
+    this.objects.add(iconText);
+    this.objects.add(name);
+    this.objects.add(description);
   }
 
   /** SKIP is always available (declining all 3 offers must never be blocked); REROLL only
@@ -133,7 +137,7 @@ export class CardOverlay {
       color: PALETTE.hullWhite,
       onClick: () => { this.onAction(CARD_ACTION_SKIP); },
     }).setDepth(DEPTH + 2);
-    this.objects.push(skipBtn);
+    this.objects.add(skipBtn);
 
     if (!vm.showReroll) return;
 
@@ -144,7 +148,7 @@ export class CardOverlay {
       color: PALETTE.generatorAmber,
       onClick: () => { this.onAction(CARD_ACTION_REROLL); },
     }).setDepth(DEPTH + 2);
-    this.objects.push(rerollBtn);
+    this.objects.add(rerollBtn);
 
     // Both buttons were created centered on the same point — spread them apart
     // symmetrically now that their actual rendered widths are known.
