@@ -40,8 +40,8 @@ describe('advanceEnemies', () => {
     expect(state.stats.coinsEarned).toBe(0);
   });
 
-  // Regression for the 2026-07-18 A4 fix: the view's coin popup must never show for a
-  // collision self-death, since no coins are actually credited for it.
+  // The view's coin popup must never show for a collision self-death, since no coins
+  // are actually credited for it.
   it('a collision self-death never emits an enemy-killed visual event', () => {
     const state = freshState();
     state.enemies = [makeFixtureEnemy({ id: 3, distance: 1, speed: 2, coinReward: 50 })];

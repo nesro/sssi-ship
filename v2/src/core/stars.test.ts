@@ -122,10 +122,9 @@ describe('finish-time stars', () => {
 
 describe('totalStarsAvailable', () => {
   it('returns 50 stars across the 7 main missions', () => {
-    // m3 and m6 each omit hull-90/shield (attritional DPS-check missions where
-    // near-zero-damage completion is structurally near-unreachable) — 4 missions ×
-    // 8 stars + 2 missions × 6 stars. m3b (added 2026-07-15, Item 7) omits all-kills
-    // and shield-unbroken for the same structural reason — 6 stars.
+    // m3, m3b, and m6 each omit hull-90/shield and/or all-kills (attritional
+    // DPS-check missions where near-zero-damage/zero-collision completion is
+    // structurally near-unreachable) — 4 missions × 8 stars + 3 missions × 6 stars.
     expect(totalStarsAvailable()).toBe(50);
   });
 });

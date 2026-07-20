@@ -18,17 +18,12 @@ const STORY_LINES: Record<string, NarratorLine[]> = {
   // T1-T4_NARRATOR_EVENTS), not here — showing both would be duplicate, conflicting UI.
   // 'first-support-call' stays here: that beat is a non-blocking aside while the card
   // overlay is already the main focus, not a "here's what's about to happen" moment
-  // that needs a full pause.
-  t2: [
-    {
-      trigger: 'first-support-call',
-      text: 'NOVAK COMMAND: Support window open. A rate or damage card clears a wall faster — your call.',
-    },
-  ],
+  // that needs a full pause. t2 has no entry — it has no support call anymore (its fix
+  // is a shop visit between attempts, not a mid-run card pick).
   t3: [
     {
       trigger: 'first-support-call',
-      text: 'NOVAK COMMAND: Support window open. A damage boost is what breaks its regen — take it.',
+      text: 'NOVAK COMMAND: Support window open. Shield and generator upgrades won\'t touch its regen — only raw damage has a shot.',
     },
   ],
   t4: [

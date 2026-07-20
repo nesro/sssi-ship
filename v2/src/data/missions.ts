@@ -145,9 +145,9 @@ const TUTORIAL_LOADOUT_BASE: Omit<ForcedLoadout, 'weaponId'> = {
  * Slow-crawl guardian for t1: no weapon, so the ship must "let them reach you" — the
  * shield absorbs the collision (routed shield-first, conveyor.ts) and bursts a
  * fraction of the absorbed damage back onto every other surviving guardian
- * (SHIELD_BURST_RETURN). Low HP means a couple of accumulated bursts can finish a
- * later guardian before its own collision; missChance=0.9 keeps shot pressure
- * non-lethal so the player can safely observe the mechanic play out.
+ * (SHIELD_BURST_RETURN) — visible chip damage, not enough alone to kill one (25 HP
+ * against a single collision's burst). missChance=0.9 keeps shot pressure non-lethal
+ * so the player can safely observe the mechanic play out.
  */
 // speed tuned so t1's first collision lands early enough to feel responsive — see the
 // spawn-tick comment on t1's own MissionSpec below for the timing math.
@@ -158,13 +158,18 @@ const GUARDIAN_SLOW: EnemySpec = {
 };
 
 /**
- * Regenerating guardian for t3: regen (2.2/tick = 22 HP/s) exceeds base weapon DPS
- * (20 DPS), making it unkillable by shooting alone. A +30% damage card breaks even.
+ * Regenerating guardian for t3: regen (2.2/tick = 22 HP/s, 5 ticks/cycle = 11/cycle)
+ * exceeds base weapon DPS (pulse-1: 10 dmg / 5-tick cycle) — the guardian heals back to
+ * full between every shot and is genuinely unkillable at base damage, not just slowed.
+ * A +30% damage card (13/cycle) breaks through at a net -2.5 HP/cycle. Without it, the
+ * guardian never dies — its own fire (shotDamage 10 every 2s) is what fails the mission
+ * for a wrong pick or a skip, well before its slow (speed 0.3) approach would ever
+ * collide (t3 has real stakes now — see this mission's completesOnDefeat: false).
  */
 const GUARDIAN_REGEN: EnemySpec = {
-  kind: 'guardian', hp: 55, speed: 0.3, shotDamage: 2,
-  ticksBetweenShots: seconds(3), blocksConveyor: true, coinReward: 20,
-  regenPerTick: 2.2, critChance: 0, missChance: 0, critMult: 2.0,
+  kind: 'guardian', hp: 55, speed: 0.3, shotDamage: 10,
+  ticksBetweenShots: seconds(2), blocksConveyor: true, coinReward: 20,
+  regenPerTick: 2.1, critChance: 0, missChance: 0, critMult: 2.0,
 };
 
 /**
@@ -195,23 +200,41 @@ export const MIN_VISUAL_SPACING: Partial<Record<string, number>> = {
 // line indices in these arrays — kept in sync by hand: reordering or adding lines here
 // requires updating that lookup too.
 //
-// Accuracy constraints on t2's lines: the GENERATOR line only claims refill rate
-// improves with a better module — capacity does NOT increase on every generator kind
-// (items.ts's GENERATOR_BASE; torrent's caps decrease with level, and torrent is what
+// Accuracy constraints on t1/t2's generator lines: only claim refill rate improves with
+// a better module — capacity does NOT increase on every generator kind (items.ts's
+// GENERATOR_BASE; torrent's caps decrease with level, and torrent is what
 // TUTORIAL_LOADOUT_BASE gives every tutorial player). The DISPATCH REINFORCEMENTS line
 // says "on real missions" rather than "after it": t2's own support call is scripted via
 // `firstOfferIds` below and bypasses the subscription-derived pool entirely
 // (createAbilityOffer, core/cards.ts), and every tutorial's resolveForcedLoadout sets
 // subscriptionCardIds: [] (loadouts.ts) — so the claim is only true outside a tutorial.
+//
+// t1 has two narratorEvents, not one: the first (tick 0) sets up the concepts before
+// any enemy arrives; the second pauses right after the first guardian collision
+// resolves so the lines can point at real, freshly-changed numbers instead of
+// describing the mechanic in the abstract beforehand. atTimelineTick: 56 is the exact,
+// deterministic tick that collision lands on for this mission's fixed forced loadout —
+// GUARDIAN_SLOW's speed (2.2) and the spawn event's own atTimelineTick (seconds(1)) have
+// no RNG in their path to a collision, so this is stable across every run, not a guess.
+// If GUARDIAN_SLOW's speed/hp or this event's spawn tick/count ever change, recompute
+// via a quick core-only probe (createCoreState + advanceTick in a loop, watching
+// state.ship.shield for the first drop) rather than eyeballing a new value — this tick
+// doubles as CombatScene.ts's NARRATOR_ARROW_TARGETS event-index key (t1[1]).
 const T1_NARRATOR_EVENTS: NarratorEvent[] = [
   {
     atTimelineTick: 0,
     lines: [
-      'No weapon loaded, Commander.',
-      'Your shield is the only defense here — let them close in.',
-      'Watch the SHLD bar — every collision drains it before your hull takes any damage.',
-      'The shield absorbs the hit, and the impact bleeds back onto the others.',
-      "A stronger SHIELD module absorbs more before it breaks — check the shop's SHIELD tab when you're back at base.",
+      'Your ship runs on four core modules, Commander: WEAPON, SHIELD, GENERATOR, MOTOR — swap and upgrade each one from the shop between missions.',
+      'No weapon loaded for this run. Your SHIELD is the only thing between you and them — let them close in.',
+      'Your GENERATOR constantly fills the ENRG bar. Once it\'s full, it discharges straight into your SHIELD, then starts refilling.',
+      'Watch the SHLD bar when they hit — every collision drains it before your hull takes any damage.',
+    ],
+  },
+  {
+    atTimelineTick: 56,
+    lines: [
+      'That collision drained real SHLD — a stronger SHIELD module absorbs more before it breaks, and a stronger GENERATOR refills it faster.',
+      'Some of what your shield just absorbed bounces back onto the other guardians — that blue number floating off them is shield backlash, not weapon fire.',
     ],
   },
 ];
@@ -222,8 +245,6 @@ const T2_NARRATOR_EVENTS: NarratorEvent[] = [
       'Your laser draws energy on every shot — watch that bar.',
       'It refills on its own between shots. Run it too low and your fire rate slows — but it never stops.',
       "A better GENERATOR module refills that bar faster — check the shop's GENERATOR tab for the tradeoffs between kinds.",
-      "When support calls in, you'll be offered a card — pick one to boost your gear for the rest of this fight.",
-      "This first offer is scripted to get you started — on real missions, which cards show up depends on your DISPATCH REINFORCEMENTS choice back at base.",
       "A dense wall's inbound. Single-target fire will bog down against it.",
     ],
   },
@@ -252,47 +273,76 @@ const T4_NARRATOR_EVENTS: NarratorEvent[] = [
 // ---------- Tutorial missions ----------
 
 const TUTORIAL_MISSIONS: MissionSpec[] = [
-  // Every tutorial completes on defeat too (completesOnDefeat), so there's no failure
-  // state to protect the player from — each is cut to the minimum content that
-  // demonstrates its one mechanic once.
+  // completesOnDefeat splits the four tutorials by whether they present a real
+  // decision: t1 (no weapon, nothing to choose) and t4 (use the preloaded supplies or
+  // don't — a spectrum, not a right/wrong pick) complete on defeat too, since there's
+  // no decision to hold the player accountable for. t2/t3 (pick the support card that
+  // solves the mission) do NOT — a decision tutorial with no way to fail it teaches
+  // nothing, so a wrong pick there is a genuine, intended failure requiring a retry.
   {
-    id: 't1', name: 'Shield Basics', completionCoins: 30,
+    id: 't1', name: 'Shield Basics', completionCoins: 30, campaign: 'tutorial',
     blurb: 'No weapon. Your shield is the only weapon. Let them reach you.',
     enemyKinds: { guardian: GUARDIAN_SLOW },
     // 100-unit lane / speed 2.2 ≈ 4.5s travel; with the 1s spawn delay, first collision
     // lands ~5.5s after the popup is dismissed — deliberately not faster, since that
     // would exceed every other enemy's speed (kamikaze, the fastest, is 2.8) and read as
     // an unreadable blink rather than "the shield absorbs a hit". `pnpm pacing`'s
-    // SLOW_START flag tracks this going forward.
+    // SLOW_START flag tracks this going forward. Spacing 60 (not MIN_VISUAL_SPACING's
+    // floor of 15) spreads the 3 collisions ~2.7s apart instead of ~1.1s — enough for the
+    // player to watch each one land and read the SHLD bar drop before the next arrives.
     events: [
-      { atTimelineTick: seconds(1), kind: 'guardian', count: 3, spacing: 24 },
+      { atTimelineTick: seconds(1), kind: 'guardian', count: 3, spacing: 60 },
     ],
     supportCallTicks: [],
+    // No all-kills star: collisions are not kills (stars.ts), and this mission's only
+    // damage source is the shield-burst (SHIELD_BURST_RETURN), which can chip a
+    // guardian but can't kill one at these numbers — the star would be permanently
+    // unreachable. shield-unbroken fits the mission's actual identity instead.
     stars: [
       { id: 't1-hull-50', family: 'hull-above', threshold: 0.5 },
-      { id: 't1-all-kills', family: 'all-kills', threshold: 0 },
+      { id: 't1-shield', family: 'shield-unbroken', threshold: 0 },
     ],
-    forcedLoadout: { ...TUTORIAL_LOADOUT_BASE, weaponId: null },
+    // shield-wall-2 (60 capacity), not the shared TUTORIAL_LOADOUT_BASE's wall-1 (30) —
+    // t1 has no weapon and no toggles, so the shield-unbroken star has no player skill
+    // behind it at all, only the enemy-stats-vs-capacity matchup; at wall-1's 30
+    // capacity, 3 guardian collisions (9 dmg each) plus incidental ranged hits reliably
+    // exceeded it (0% reachable, sim-confirmed). wall-2 leaves real margin.
+    forcedLoadout: { ...TUTORIAL_LOADOUT_BASE, weaponId: null, shieldId: 'shield-wall-2' },
     completesOnDefeat: true,
     narratorEvents: T1_NARRATOR_EVENTS,
   },
   {
-    id: 't2', name: 'Weapon Systems', completionCoins: 50,
-    blurb: 'Watch energy drain when you fire. Dense walls slow your weapon — the right card fixes that.',
+    id: 't2', name: 'Weapon Systems', completionCoins: 50, campaign: 'tutorial',
+    blurb: 'Your real gear, a real wall. If it beats you, the fix is a free switch away in the shop.',
     enemyKinds: { fodder: FODDER },
+    // No forcedLoadout — this mission runs on the player's real, equipped gear. Under
+    // the forced tutorial chain (t1 is the only mission that can precede it, and t1's
+    // 30-coin reward can't afford any tier change) that's always exactly starter
+    // pulse-1/wall-1/torrent-1/rush-1 on a first attempt. Split wave 2 into two
+    // sub-waves half a second apart, not a single count=16 wave: sim-verified
+    // (runMission, 2000 seeds/config) that gives pulse-1 a firm fail (10.8%) and a
+    // same-level pulse→scatter switch (free — both 100 coins at level 1) a reliable,
+    // not razor-thin, clear (99.2%, avg hull 12.3% remaining).
     events: [
-      { atTimelineTick: seconds(3), kind: 'fodder', count: 3, spacing: 14 },
+      { atTimelineTick: seconds(3), kind: 'fodder', count: 2, spacing: 14 },
       { atTimelineTick: seconds(9), kind: 'fodder', count: 8, spacing: 14 },
+      { atTimelineTick: seconds(9.5), kind: 'fodder', count: 8, spacing: 14 },
     ],
-    supportCallTicks: [seconds(9)],
-    firstOfferIds: ['w-dmg-30', 'w-rate-20', 'w-cost-25'],
-    stars: standardStars('t2'),
-    forcedLoadout: { ...TUTORIAL_LOADOUT_BASE, weaponId: 'pulse-1' },
-    completesOnDefeat: true,
+    supportCallTicks: [],
+    // hull-90/hull-50/shield-unbroken all dropped: even the fixed (scatter) path clears
+    // with real, by-design damage taken (avg hull ~12%) — none of those thresholds are
+    // reachable. all-kills is reachable on every real clear (sim-confirmed, 100%).
+    stars: [
+      { id: 't2-all-kills', family: 'all-kills', threshold: 0 },
+    ],
+    // Real stakes, same as t3 below — a wrong/unfixed loadout is a genuine, intended
+    // failure, not a near-miss; see docs/known-issues.md and 13-balance-and-tuning.md.
+    completesOnDefeat: false,
+    defeatHint: 'Your weapon hits one target at a time — this wall needs more spread than that. The shop has a same-level switch that fixes it, and it costs nothing.',
     narratorEvents: T2_NARRATOR_EVENTS,
   },
   {
-    id: 't3', name: 'Support Cards', completionCoins: 60,
+    id: 't3', name: 'Support Cards', completionCoins: 60, campaign: 'tutorial',
     blurb: 'It heals faster than you shoot. You need the right card to break through.',
     // One guardian only: the problem and the solution land on the same enemy (watch it
     // out-heal you, the card breaks it).
@@ -308,18 +358,26 @@ const TUTORIAL_MISSIONS: MissionSpec[] = [
       { atTimelineTick: seconds(3), kind: 'guardian', count: 1, spacing: 0 },
     ],
     supportCallTicks: [seconds(2)],
+    // w-dmg-30 is the only pick that ever damages the guardian net-negative (see
+    // GUARDIAN_REGEN's own comment) — s-cap-20/g-out-08/skip all leave it fully
+    // unkillable, and its own fire (not its collision) is what fails the mission for a
+    // wrong pick (sim-verified, 2000 runs/pick: w-dmg-30 100% clear, everything else
+    // ~0%). Real stakes now — see completesOnDefeat: false below.
     firstOfferIds: ['w-dmg-30', 's-cap-20', 'g-out-08'],
+    // t3-shield dropped: the survivable (right-pick) path takes real shield damage by
+    // design now, so shield-unbroken is permanently unreachable — same reasoning as
+    // t2's dropped hull-90/shield-unbroken stars above.
     stars: [
       { id: 't3-hull-50', family: 'hull-above', threshold: 0.5 },
       { id: 't3-all-kills', family: 'all-kills', threshold: 0 },
-      { id: 't3-shield', family: 'shield-unbroken', threshold: 0 },
     ],
     forcedLoadout: { ...TUTORIAL_LOADOUT_BASE, weaponId: 'pulse-1' },
-    completesOnDefeat: true,
+    // Not completesOnDefeat, unlike t1/t4 — see t2's own comment on this same field.
+    completesOnDefeat: false,
     narratorEvents: T3_NARRATOR_EVENTS,
   },
   {
-    id: 't4', name: 'Battle Supplies', completionCoins: 70,
+    id: 't4', name: 'Battle Supplies', completionCoins: 70, campaign: 'tutorial',
     blurb: 'Two supplies are preloaded. Use them — they are built for moments like this.',
     enemyKinds: { fodder: FODDER, striker: STRIKER },
     events: [
@@ -356,7 +414,7 @@ export const ALL_MISSIONS: MissionSpec[] = [
   // (see known-issues.md); going lower reopens a difficulty cliff (count 9→10 on the
   // dense waves alone swings clear-rate from ~90% to ~77.5%, under the ≥85% floor).
   {
-    id: 'm1', name: 'First Contact', completionCoins: 120,
+    id: 'm1', name: 'First Contact', completionCoins: 120, campaign: 'act1',
     blurb: 'Loose fodder drifting in. Warm up the laser.',
     enemyKinds: { fodder: FODDER, striker: STRIKER },
     events: [
@@ -413,7 +471,7 @@ export const ALL_MISSIONS: MissionSpec[] = [
   // ── m2: Picket Line ──────────────────────────────────────────────────────
   // Fodder + strikers alternating, 1 blocker mid-mission → tank final push.
   {
-    id: 'm2', name: 'Picket Line', completionCoins: 180,
+    id: 'm2', name: 'Picket Line', completionCoins: 180, campaign: 'act1',
     blurb: 'Strikers hit harder and close in fast.',
     enemyKinds: { fodder: FODDER, striker: STRIKER, blocker: BLOCKER, tank: TANK },
     events: [
@@ -469,7 +527,7 @@ export const ALL_MISSIONS: MissionSpec[] = [
   // ── m3: The Wall ─────────────────────────────────────────────────────────
   // Dense fodder walls + tanks + 2 mid-mission blockers → blocker final push.
   {
-    id: 'm3', name: 'The Wall', completionCoins: 200,
+    id: 'm3', name: 'The Wall', completionCoins: 200, campaign: 'act1',
     blurb: 'Dense fodder walls, then the swarm starts moving faster. Single-target lasers will drown.',
     enemyKinds: { fodder: FODDER, striker: STRIKER, tank: TANK, blocker: BLOCKER },
     events: [
@@ -540,7 +598,7 @@ export const ALL_MISSIONS: MissionSpec[] = [
   // the enemy ahead of it, same shape as t3's regen-guardian lesson but solvable by a
   // verb instead of only raw DPS.
   {
-    id: 'm3b', name: 'Supply Column', completionCoins: 230,
+    id: 'm3b', name: 'Supply Column', completionCoins: 230, campaign: 'act1',
     blurb: 'Boosters keep the line alive. Cut the source, or grind through double the HP.',
     enemyKinds: { fodder: FODDER, striker: STRIKER, tank: TANK, booster: BOOSTER },
     // Booster/tank pairs are spaced far enough apart (~30-36s) that a player who
@@ -611,7 +669,7 @@ export const ALL_MISSIONS: MissionSpec[] = [
   // ── m4: Blockade ─────────────────────────────────────────────────────────
   // Blocker gauntlet with escalating pairs → rapid triple-blocker final push.
   {
-    id: 'm4', name: 'Blockade', completionCoins: 260,
+    id: 'm4', name: 'Blockade', completionCoins: 260, campaign: 'act1',
     blurb: 'Blockers stall your advance until they die. DPS check.',
     // Turret is a static ranged DPS check, distinct from the blocker's approaching one.
     // It swaps the two single-blocker events (the only safe slot — blocker counts
@@ -673,7 +731,7 @@ export const ALL_MISSIONS: MissionSpec[] = [
   // Patient-tier lead-in exists because opening directly into a swarm flood is
   // unclearable on starter gear — a shape problem, not just a numbers one.
   {
-    id: 'm5', name: 'Asteroid Run', completionCoins: 300,
+    id: 'm5', name: 'Asteroid Run', completionCoins: 300, campaign: 'act1',
     blurb: 'A swarm too thick to shoot down. Shields are a weapon too.',
     // "Asteroid Run" fiction fits a fast-rock threat, and kamikaze is the sharpest enemy
     // in the game (highest collision damage) — meeting one taste of it here, readably,
@@ -739,7 +797,7 @@ export const ALL_MISSIONS: MissionSpec[] = [
   // Full mixed gauntlet with 3 blocker gates → boss at seconds(250).
   // Boss time-stars measure absolute tick from mission start.
   {
-    id: 'm6', name: 'Leviathan', completionCoins: 500,
+    id: 'm6', name: 'Leviathan', completionCoins: 500, campaign: 'act1',
     blurb: 'It swims below. Kill it fast for the time-stars.',
     enemyKinds: {
       fodder: FODDER, striker: STRIKER, swarm: SWARM,
@@ -832,24 +890,23 @@ export function missionById(id: string): MissionSpec {
   throw new Error(`Unknown mission "${id}"`);
 }
 
-/** Total stars earnable across non-tutorial missions — used by the menu progress display. */
+/** Total stars earnable across act1 — used by the menu progress display. w0 is
+ * excluded too (campaign is undefined, and its own stars list is always empty). */
 export function totalStarsAvailable(): number {
   return ALL_MISSIONS
-    .filter((m) => m.forcedLoadout === undefined)
+    .filter((m) => m.campaign === 'act1')
     .reduce((sum, mission) => sum + mission.stars.length, 0);
 }
 
 /**
  * The mission dependency graph (§9: "completing a mission unlocks the next").
  * [fromId, toId] — completing fromId unlocks toId. A mission with no incoming edge
- * here (t1) is always unlocked. Tutorials and main missions are separate branches
- * joined at a single point (t1 → m1) — a player can skip straight into the missions
- * after the first tutorial, per w0's own narrator dialogue ("skip straight into the
- * sector"). This is also the galaxy map's line layout — shared by `isMissionUnlocked`
- * (save/SaveManager.ts) and `computeGalaxyMap` (viewmodel/hub.ts), not duplicated.
+ * here (t1) is always unlocked. A single forced chain, no shortcuts: every tutorial
+ * must be completed before act1 opens (t1→t2→t3→t4→m1). This is also the galaxy map's
+ * line layout — shared by `isMissionUnlocked` (save/SaveManager.ts) and
+ * `computeGalaxyMap` (viewmodel/hub.ts), not duplicated.
  */
 export const MISSION_UNLOCK_EDGES: [string, string][] = [
-  ['t1', 't2'], ['t2', 't3'], ['t3', 't4'],
-  ['t1', 'm1'],
+  ['t1', 't2'], ['t2', 't3'], ['t3', 't4'], ['t4', 'm1'],
   ['m1', 'm2'], ['m2', 'm3'], ['m3', 'm3b'], ['m3b', 'm4'], ['m4', 'm5'], ['m5', 'm6'],
 ];

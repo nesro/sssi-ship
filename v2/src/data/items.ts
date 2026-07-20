@@ -52,16 +52,28 @@ const WEAPON_BASE: Record<WeaponKind, {
 // Weapon kinds are situational sidegrades, not a tier ladder — every kind costs the
 // same coins/stars to reach a given level. Stars are a separate, deliberately modest
 // gate so performance-based progression still means something even as coin cost
-// compresses across kinds.
+// compresses across kinds. Kind *access* is a separate gate on top of this (see
+// WEAPON_KIND_UNLOCK_STARS below) — sidegrade pricing applies once a kind is unlocked,
+// it doesn't mean every kind is available from the start.
 
 /** Stars required per weapon level (index = level − 1) — identical across every kind. */
 const WEAPON_STARS_BY_LEVEL: [number, number, number, number, number] = [0, 3, 8, 16, 26];
 // y2010's real gate is isKindVisible (campaign completion / dev mode), not stars — once
 // visible, it's already "earned" by finishing the game, so no additional star cost.
 const WEAPON_STARS_Y2010: [number, number, number, number, number] = [0, 0, 0, 0, 0];
+// Kind-unlock gate: pulse/scatter are the free starter choice, ion/nova are star-gated
+// even at level 1. Floored across the WHOLE ladder (not just level 1) — the shop's
+// switch-cost economy prices a same-level switch at the price delta only, with no star
+// check of its own (SaveManager.ts's switchItem), so a level-1-only gate would be
+// bypassable by buying straight into a gated kind's higher level.
+const WEAPON_KIND_UNLOCK_STARS: Record<WeaponKind, number> = { pulse: 0, scatter: 0, ion: 4, nova: 8, y2010: 0 };
+const gatedLadder = (base: [number, number, number, number, number], gate: number): [number, number, number, number, number] =>
+  base.map((s) => Math.max(s, gate)) as [number, number, number, number, number];
 const WEAPON_STARS: Record<WeaponKind, [number, number, number, number, number]> = {
   pulse: WEAPON_STARS_BY_LEVEL, scatter: WEAPON_STARS_BY_LEVEL,
-  ion: WEAPON_STARS_BY_LEVEL, nova: WEAPON_STARS_BY_LEVEL, y2010: WEAPON_STARS_Y2010,
+  ion: gatedLadder(WEAPON_STARS_BY_LEVEL, WEAPON_KIND_UNLOCK_STARS.ion),
+  nova: gatedLadder(WEAPON_STARS_BY_LEVEL, WEAPON_KIND_UNLOCK_STARS.nova),
+  y2010: WEAPON_STARS_Y2010,
 };
 
 // Coin cost per level (index = level − 1) — identical across every kind (see comment
@@ -159,9 +171,14 @@ const REAR_WEAPON_BASE: Record<RearWeaponKind, {
 
 /** Stars required per rear weapon level (index = level − 1) — identical across every kind. */
 const REAR_WEAPON_STARS_BY_LEVEL: [number, number, number, number, number] = [0, 2, 4, 8, 15];
+// Kind-unlock gate: grenade/flak are the free starter choice, arc/cluster/plasma are
+// star-gated even at level 1 — same floored-ladder reasoning as WEAPON_KIND_UNLOCK_STARS.
+const REAR_WEAPON_KIND_UNLOCK_STARS: Record<RearWeaponKind, number> = { grenade: 0, cluster: 5, flak: 0, arc: 3, plasma: 8 };
 const REAR_WEAPON_STARS: Record<RearWeaponKind, [number, number, number, number, number]> = {
-  grenade: REAR_WEAPON_STARS_BY_LEVEL, cluster: REAR_WEAPON_STARS_BY_LEVEL,
-  flak: REAR_WEAPON_STARS_BY_LEVEL, arc: REAR_WEAPON_STARS_BY_LEVEL, plasma: REAR_WEAPON_STARS_BY_LEVEL,
+  grenade: REAR_WEAPON_STARS_BY_LEVEL, flak: REAR_WEAPON_STARS_BY_LEVEL,
+  cluster: gatedLadder(REAR_WEAPON_STARS_BY_LEVEL, REAR_WEAPON_KIND_UNLOCK_STARS.cluster),
+  arc: gatedLadder(REAR_WEAPON_STARS_BY_LEVEL, REAR_WEAPON_KIND_UNLOCK_STARS.arc),
+  plasma: gatedLadder(REAR_WEAPON_STARS_BY_LEVEL, REAR_WEAPON_KIND_UNLOCK_STARS.plasma),
 };
 
 // Coin cost per level (index = level − 1) — identical across every kind. Rear weapon

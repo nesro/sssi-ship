@@ -317,7 +317,7 @@ function parseCliOptions(argv: string[]): CliOptions {
 function main(): void {
   const options = parseCliOptions(process.argv.slice(2));
   const runsPerCombo = options.runs;
-  const nonTutorial = ALL_MISSIONS.filter((m) => m.forcedLoadout === undefined);
+  const nonTutorial = ALL_MISSIONS.filter((m) => m.campaign === 'act1');
   const loadoutKeys = LOADOUT_KEYS;
   const strategyKeys = ['greedy', 'random'];
   const total = nonTutorial.length * loadoutKeys.length * strategyKeys.length;

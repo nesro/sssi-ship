@@ -6,9 +6,9 @@
 
 import type { Page } from 'playwright';
 
-export const BASE_URL = process.env.SCREENSHOT_BASE_URL ?? 'http://localhost:5173';
+const BASE_URL = process.env.SCREENSHOT_BASE_URL ?? 'http://localhost:5173';
 export const VIEWPORT = { width: 960, height: 540 }; // LOGICAL_WIDTH/HEIGHT, src/view/layout.ts
-export const BOOT_TIMEOUT_MS = 20_000; // BootScene fetches a ~9MB music track on first load
+const BOOT_TIMEOUT_MS = 20_000; // BootScene fetches a ~9MB music track on first load
 export const SETTLE_MS = 150; // let one real Phaser frame run after a state change before capture
 
 /** Playwright's default deviceScaleFactor is 1, so a default run only ever exercises
@@ -27,6 +27,7 @@ export interface EnemySnapshot {
 export interface CombatSnapshot {
   missionId: string; tick: number; timelineTick: number; status: string; priorityTargetId: number | null;
   hasPendingOffer: boolean;
+  hasPendingNarrator: boolean;
   narratorFullyRevealed: boolean;
   ship: { hull: number; maxHull: number; shield: number; energy: number };
   enemies: EnemySnapshot[];

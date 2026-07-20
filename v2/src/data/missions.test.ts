@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { ALL_MISSIONS, MIN_VISUAL_SPACING } from './missions';
+import { TUTORIAL_MISSION_IDS } from '../save/SaveManager';
 import { TICKS_PER_SECOND } from '../core/constants';
 
-// 2026-07-17 (playtest feedback: "some enemies are too close to each other and it
-// doesn't look good") — every event's spacing was raised to MIN_VISUAL_SPACING's floor
-// for its kind (missions.ts's own comment has the full derivation). This test is the
-// enforcement: it's the only thing stopping a future mission-tuning edit from silently
-// reintroducing a too-tight spacing value, since MIN_VISUAL_SPACING itself isn't
-// checked anywhere at spawn/render time.
+// Every event's spacing must clear MIN_VISUAL_SPACING's floor for its kind
+// (missions.ts's own comment has the full derivation) — this is the only thing
+// stopping a future mission-tuning edit from silently reintroducing a too-tight
+// spacing value, since MIN_VISUAL_SPACING itself isn't checked anywhere at
+// spawn/render time.
 describe('mission wave events never spawn a kind tighter than its no-overlap floor', () => {
   for (const mission of ALL_MISSIONS) {
     it(`${mission.id}: every event's spacing clears MIN_VISUAL_SPACING for its kind`, () => {
@@ -21,13 +21,12 @@ describe('mission wave events never spawn a kind tighter than its no-overlap flo
   }
 });
 
-// 2026-07-18 (E-3, fable-review-fixes-2026-07-18.md, Fable's pre-implementation
-// review) — `advanceTimeline` (core/timeline.ts) walks `nextEventIndex` sequentially
-// and breaks at the first not-yet-due event, assuming `events` is sorted by
-// `atTimelineTick`. An out-of-order insert doesn't throw — it silently fires LATE,
-// bundled into whichever earlier event the walk was still stuck on (a stealth density
-// spike no other test would catch, since the spacing-floor test above only checks each
-// event in isolation, never cross-event ordering). This is the enforcement.
+// `advanceTimeline` (core/timeline.ts) walks `nextEventIndex` sequentially and breaks
+// at the first not-yet-due event, assuming `events` is sorted by `atTimelineTick`. An
+// out-of-order insert doesn't throw — it silently fires LATE, bundled into whichever
+// earlier event the walk was still stuck on (a stealth density spike no other test
+// would catch, since the spacing-floor test above only checks each event in
+// isolation, never cross-event ordering).
 describe('mission wave events are sorted by atTimelineTick', () => {
   for (const mission of ALL_MISSIONS) {
     it(`${mission.id}: every event's atTimelineTick is >= the previous event's`, () => {
@@ -41,12 +40,11 @@ describe('mission wave events are sorted by atTimelineTick', () => {
   }
 });
 
-// 2026-07-18 (B1, docs/plans/fable-review-fixes-2026-07-18.md) — before this, T1 and
-// T2 (and on m6, T3) shared literally identical thresholds on every main mission, so
-// the victory screen listed the same "UNDER Ns" star text twice and two stars were
-// always earned or missed together. This test is the enforcement: any future
-// percentile recalibration that collapses two tiers back onto (nearly) the same value
-// fails here instead of silently shipping duplicate stars.
+// T1/T2 (and on m6, T3) must never share literally identical thresholds on a main
+// mission — that would list the same "UNDER Ns" star text twice on the victory
+// screen, with two stars always earned or missed together. This test is the
+// enforcement: any future percentile recalibration that collapses two tiers back onto
+// (nearly) the same value fails here instead of silently shipping duplicate stars.
 describe('time-star tiers within one mission are genuinely distinct thresholds', () => {
   const MIN_TIER_GAP_TICKS = 1 * TICKS_PER_SECOND; // 1s — well under any real tier gap
   for (const mission of ALL_MISSIONS) {
@@ -64,6 +62,17 @@ describe('time-star tiers within one mission are genuinely distinct thresholds',
           expect(gap, `${a.id} (${String(a.threshold)}) vs ${b.id} (${String(b.threshold)})`).toBeGreaterThanOrEqual(MIN_TIER_GAP_TICKS);
         }
       }
+    });
+  }
+});
+
+describe('every mission belongs to exactly the right campaign', () => {
+  const ACT1_IDS = new Set(['m1', 'm2', 'm3', 'm3b', 'm4', 'm5', 'm6']);
+  for (const mission of ALL_MISSIONS) {
+    if (mission.id === 'w0') continue; // outside both groupings by design
+    it(`${mission.id}: campaign matches TUTORIAL_MISSION_IDS/the act1 set`, () => {
+      const expected = TUTORIAL_MISSION_IDS.includes(mission.id) ? 'tutorial' : ACT1_IDS.has(mission.id) ? 'act1' : undefined;
+      expect(mission.campaign).toBe(expected);
     });
   }
 });

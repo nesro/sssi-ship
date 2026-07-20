@@ -22,6 +22,19 @@ experimenting with gear. **Corrected 2026-07-18:** stars are never part of this 
 something the shop ever deducts or refunds (this line previously said "coin and star
 cost," describing a spend/refund mechanic the shop code never implemented).
 
+**Kind-unlock star gate (added 2026-07-19).** Front weapon and rear weapon each have a
+free starter pair (pulse/scatter; grenade/flak) plus kinds gated behind stars even at
+level 1 (ion 4★, nova 8★; arc 3★, cluster 5★, plasma 8★ — `v2/src/data/items.ts`'s
+`WEAPON_KIND_UNLOCK_STARS`/`REAR_WEAPON_KIND_UNLOCK_STARS`). Before this, every kind
+shared one price/star ladder with no kind-level gate at all, so once a player bought
+their mandatory starter Lv1 weapon, every other kind's Lv1 was a free switch (same
+price, 0 stars) — no kind ever felt unlocked. The gate is a floor across each gated
+kind's whole ladder (`max(sharedLadder, gate)`), not just level 1, since the shop's
+switch-cost economy has no star check of its own — a level-1-only gate would be
+bypassable by buying straight into a gated kind's higher level. Shield/generator/motor/
+side-weapon/ship are unaffected; only front and rear weapon have more than 2 kinds
+worth gating.
+
 **Confirmed edge case (2026-07-09):** the refund/switch-cost model always uses the item's
 *current listed price*, not what the player actually paid. This is a no-op in almost every case
 (price paid == current price), but starter/default equipment was never actually purchased, so

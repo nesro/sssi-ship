@@ -122,10 +122,9 @@ describe('hashCoreState', () => {
     expect(hashCoreState(state)).not.toBe(before);
   });
 
-  // 2026-07-18 fix: hashCoreState used to omit a dozen run-evolving fields — two runs
-  // diverging ONLY on one of these previously still hashed identically. Spot-checks 3
-  // representative newly-covered fields (one per field "family": RNG/replay-input state,
-  // a plain counter, and a nested array).
+  // Spot-checks 3 representative fields hashCoreState must cover (one per field
+  // "family": RNG/replay-input state, a plain counter, and a nested array) — two runs
+  // diverging ONLY on one of these must not hash identically.
   it('changes when rerollsLeft changes', () => {
     const { state } = runMission(FIXTURE_MISSION, FIXTURE_LOADOUT, 5);
     const before = hashCoreState(state);
@@ -186,11 +185,11 @@ describe('verifyReplay with priority-target taps', () => {
   });
 });
 
-// 2026-07-18 fix: a record's loadout used to be able to embed `maxTargets: Infinity`
-// (nova/y2010/orbital), and JSON.stringify(Infinity) === "null" — a persisted/shared
-// replay would silently lose its "hit everyone" targeting on reload. HIT_ALL_TARGETS
-// (Number.MAX_SAFE_INTEGER) must survive the exact round-trip a real persistence layer
-// would perform.
+// A record's loadout can embed `maxTargets: HIT_ALL_TARGETS` (nova/y2010/orbital) —
+// `JSON.stringify(Infinity) === "null"`, so a persisted/shared replay would silently
+// lose its "hit everyone" targeting on reload if this were a literal Infinity.
+// HIT_ALL_TARGETS (Number.MAX_SAFE_INTEGER) must survive the exact round-trip a real
+// persistence layer would perform.
 describe('verifyReplay survives a JSON round-trip (nova\'s "hit everyone" targeting)', () => {
   it('a JSON.parse(JSON.stringify(record)) replay still re-simulates to the same hash', () => {
     const novaLoadout = { ...FIXTURE_LOADOUT, weapon: weaponSpecAtLevel('nova', 1) };

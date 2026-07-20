@@ -12,7 +12,7 @@ import { itemById, REAR_WEAPON_ITEMS, shipById, SIDE_WEAPON_ITEMS, SUPPLIES } fr
 import { ALL_MISSIONS, MISSION_UNLOCK_EDGES } from '../data/missions';
 import { SUBSCRIPTIONS } from '../data/subscriptions';
 import type { SubscriptionSpec } from '../data/subscriptions';
-import { isMissionUnlocked, switchCost, TUTORIAL_MISSION_IDS } from '../save/SaveManager';
+import { isMissionUnlocked, switchCost } from '../save/SaveManager';
 import type { SaveData } from '../save/SaveManager';
 import { ABILITY_COMPANY_COLORS } from './companyColors';
 import { shopSystemFor, type ShopSystemConfig, type ShopTab } from './shopSystems';
@@ -119,10 +119,6 @@ export interface GalaxyConnectionViewModel {
 export interface GalaxyMapViewModel {
   missions: GalaxyMissionViewModel[];
   connections: GalaxyConnectionViewModel[];
-  /** True while none of t1-t4 have been completed (by playing OR by skipping) — the
-   * galaxy screen's "skip tutorials" link renders only then. All-or-nothing, same as
-   * skipTutorials() itself: there's no partial-skip state. */
-  showSkipTutorialsHint: boolean;
 }
 
 // ── Mission detail ─────────────────────────────────────────────────────────
@@ -215,6 +211,15 @@ export interface SettingsViewModel {
 // ── Top-level Hub ──────────────────────────────────────────────────────────
 
 export type HubNav = 'missions' | 'shop' | 'dispatch-reinforcements' | 'settings' | 'credits' | null;
+
+/** True until t2 has been failed (or won) at least once — keeps a player from pre-
+ * buying the cheap rear weapon that trivializes t2's fail-first wall before ever
+ * attempting it (docs/known-issues.md). Only gates the hub's main-menu SHOP button;
+ * t2's own defeat-shop-redirect screen navigates to `initialNav: 'shop'` directly and
+ * is unaffected. */
+export function isShopNavLocked(save: SaveData): boolean {
+  return save.t2FailedOnce !== true && !save.completedMissionIds.includes('t2');
+}
 
 // ── UI state (ephemeral, not persisted to SaveData) ─────────────────────────
 
@@ -538,14 +543,13 @@ export function computeGalaxyMap(save: SaveData, selectedMissionId: string | nul
   const connections = MISSION_UNLOCK_EDGES
     .filter(([a, b]) => GALAXY_NODES[a] !== undefined && GALAXY_NODES[b] !== undefined)
     .map(([fromId, toId]) => ({ fromId, toId, bothUnlocked: isMissionUnlocked(save, fromId) && isMissionUnlocked(save, toId) }));
-  const showSkipTutorialsHint = !TUTORIAL_MISSION_IDS.some((id) => save.completedMissionIds.includes(id));
-  return { missions, connections, showSkipTutorialsHint };
+  return { missions, connections };
 }
 
 function computeGalaxyMission(
   save: SaveData, mission: MissionSpec, pos: { x: number; y: number }, selectedMissionId: string | null,
 ): GalaxyMissionViewModel {
-  const isTutorial = mission.forcedLoadout !== undefined;
+  const isTutorial = mission.campaign === 'tutorial';
   const unlocked = isMissionUnlocked(save, mission.id);
   const earned = save.missionStars[mission.id]?.length ?? 0;
   return {
@@ -584,7 +588,7 @@ export function computeMissionDetail(
   }
   const mission = ALL_MISSIONS.find((m) => m.id === selectedMissionId);
   if (mission === undefined) return null;
-  const isTutorial = mission.forcedLoadout !== undefined;
+  const isTutorial = mission.campaign === 'tutorial';
   const earned = save.missionStars[mission.id] ?? [];
   return {
     name: mission.name,

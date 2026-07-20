@@ -24,9 +24,8 @@ describe('abilityById: covers new company abilities', () => {
 // ── Fractional-bonus sanity check ───────────────────────────────────────────────
 // combat.ts applies these five fields as `mult *= 1 + bonus` (computeStateDmgMult,
 // computeProgressDmgMult) — a card writing an absolute-looking number instead of a
-// fraction silently becomes a multi-hundred-percent damage multiplier. Caught once
-// already 2026-07-10: four cards wrote +25/+30/+35/+40 instead of +0.25/+0.3/+0.35/+0.4.
-// This guards against the same mistake recurring in any future card.
+// fraction silently becomes a multi-hundred-percent damage multiplier. This guards
+// against that mistake in any card.
 const MULTIPLICATIVE_BONUS_FIELDS: (keyof RunModifiers)[] = [
   'fullEnergyDmgBonus', 'singleEnemyDmgBonus', 'shieldActiveDmgBonus',
   'earlyBirdDmgBonus', 'finalPushDmgBonus',

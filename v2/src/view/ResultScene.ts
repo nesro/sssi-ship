@@ -1,6 +1,5 @@
 import Phaser from 'phaser';
 import type { MissionResult } from '../core/result';
-import { persistSave } from '../save/SaveManager';
 import type { SaveData } from '../save/SaveManager';
 import { computeResultViewModel } from '../viewmodel/result';
 import type { ResultViewModel, StarResultViewModel } from '../viewmodel/result';
@@ -38,7 +37,7 @@ export class ResultScene extends Phaser.Scene {
   // fallow-ignore-next-line unused-class-member
   create(data: ResultSceneData): void {
     drawDevBorder(this, data.save);
-    const { result, newStarIds, save, dailyBonus, wasAbandoned } = data;
+    const { result, newStarIds, dailyBonus, wasAbandoned } = data;
     const vm = computeResultViewModel(result, newStarIds, dailyBonus, wasAbandoned);
 
     this.add
@@ -69,27 +68,15 @@ export class ResultScene extends Phaser.Scene {
 
     const buttonY = px(460);
 
-    if (vm.buttons.kind === 'w0-branch') {
-      addLabel(this, {
-        x: SCREEN_WIDTH / 2, y: px(390),
-        text: 'WHERE DO YOU WANT TO START?',
-        color: PALETTE.generatorAmber, size: 14,
-      });
+    if (vm.buttons.kind === 'defeat-shop-redirect') {
+      this.add.text(SCREEN_WIDTH / 2, px(390), vm.defeatHint ?? '', {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(13))}px`, color: cssColor(PALETTE.generatorAmber),
+        align: 'center', wordWrap: { width: px(640) },
+      }).setOrigin(0.5, 0);
       addTextButton(this, {
-        x: SCREEN_WIDTH / 2 - px(140), y: buttonY, label: 'TUTORIAL',
-        color: PALETTE.generatorAmber, size: 16,
-        onClick: () => {
-          persistSave({ ...save, firstBranchChoice: 'tutorial' });
-          this.scene.start('HubScene');
-        },
-      });
-      addTextButton(this, {
-        x: SCREEN_WIDTH / 2 + px(140), y: buttonY, label: 'EXPLORE',
-        color: PALETTE.weaponCyan, size: 16,
-        onClick: () => {
-          persistSave({ ...save, firstBranchChoice: 'missions' });
-          this.scene.start('HubScene');
-        },
+        x: SCREEN_WIDTH / 2, y: buttonY, label: 'GO TO SHOP ▸',
+        color: PALETTE.motorMagenta, size: 18,
+        onClick: () => { this.scene.start('HubScene', { initialNav: 'shop' }); },
       });
       return;
     }

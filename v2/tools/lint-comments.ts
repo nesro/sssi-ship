@@ -31,7 +31,11 @@ function collectTsFiles(dir: string): string[] {
     const full = join(dir, entry);
     const stat = statSync(full);
     if (stat.isDirectory()) { out.push(...collectTsFiles(full)); continue; }
-    if (!entry.endsWith('.ts') || entry.endsWith('.test.ts') || SKIP_FILES.has(entry)) continue;
+    // .test.ts is NOT exempt — it only looked that way at first: a legitimate fixture
+    // like `dailyDateKey(...) === '2026-07-14'` is a string literal, not a comment line,
+    // so isCommentLine() already leaves it alone. What the exemption actually hid was
+    // the same narrative/forensic disease this rule targets, just in test files.
+    if (!entry.endsWith('.ts') || SKIP_FILES.has(entry)) continue;
     out.push(full);
   }
   return out;

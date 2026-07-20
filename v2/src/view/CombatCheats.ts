@@ -197,6 +197,7 @@ export class CombatCheats {
       status: core.status,
       priorityTargetId: core.priorityTargetId,
       hasPendingOffer: core.pendingOffer !== null,
+      hasPendingNarrator: core.pendingNarrator !== null,
       // Lets the screenshot harness poll for "the bottom NarratorBar's current line has
       // finished its typewriter reveal" instead of sleeping a fixed duration — see
       // NarratorBar.isFullyRevealed's own doc comment.

@@ -2,6 +2,7 @@ import type { ForcedLoadout, LoadoutSnapshot, SupplyLoadout } from '../core/type
 import {
   DEFAULT_SHIP_ID,
   generatorSpecById,
+  motorSpecAtLevel,
   motorSpecById,
   rearWeaponSpecById,
   shieldSpecById,
@@ -10,6 +11,7 @@ import {
   supplyById,
   weaponSpecById,
 } from './items';
+import type { MotorKind } from './items';
 import { DEFAULT_SUBSCRIPTION_CARD_IDS } from './subscriptions';
 
 /**
@@ -59,4 +61,18 @@ export function resolveForcedLoadout(forced: ForcedLoadout): LoadoutSnapshot {
     // (see CombatScene.ts's abilityPoolForLoadout fallback), not a fidelity gap to fix.
     subscriptionCardIds: [],
   };
+}
+
+/** Replaces a real loadout's motor with its own kind's Lv1 spec — every motor kind's
+ * Lv1 is identical (mult 1.0, draw 0.30, items.ts's MOTOR_BASE), the established
+ * "free tap is always safe" baseline. Used for the Daily Mission only: motor level
+ * otherwise scores *worse* the more a player invests in it (a faster motor compresses
+ * the daily's flowing waves into more simultaneous incoming DPS, ending the run at an
+ * earlier, lower-paying round — measured across the whole motor system, not just one
+ * kind, see docs/known-issues.md's motor-tier inversion entry). Neutralizing to Lv1
+ * makes motor level score-neutral on the daily instead of actively punishing
+ * investment, without touching core/ or any campaign mission's tuning. */
+export function neutralizeMotorForDaily(loadout: LoadoutSnapshot): LoadoutSnapshot {
+  const kind = loadout.motor.id.split('-')[1] as MotorKind;
+  return { ...loadout, motor: motorSpecAtLevel(kind, 1) };
 }

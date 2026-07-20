@@ -339,6 +339,17 @@ export interface MissionSpec {
    * a different narrative beat that still requires a real victory).
    */
   completesOnDefeat?: boolean;
+  /**
+   * Which stretch of the campaign this mission belongs to (t1-t4 = 'tutorial', m1-m6 =
+   * 'act1'). Undefined for missions outside both (w0, the runtime-generated daily) —
+   * this is the "is this mission a tutorial" source of truth; `forcedLoadout` answers a
+   * different question (does this mission override the player's real gear) and must
+   * not be reused for this one, even though every current tutorial happens to set both.
+   */
+  campaign?: 'tutorial' | 'act1';
+  /** Shown prominently on the defeat screen when set — a teaching line explaining what
+   * went wrong and how to fix it, distinct from the mission's own blurb. */
+  defeatHint?: string;
 }
 
 // ---------- Live state ----------
@@ -371,7 +382,7 @@ export interface EnemyState {
   aliveTicks: number;
 }
 
-export type ShotEventKind = 'player-crit' | 'player-miss' | 'enemy-crit' | 'enemy-miss' | 'enemy-killed';
+export type ShotEventKind = 'player-crit' | 'player-miss' | 'enemy-crit' | 'enemy-miss' | 'enemy-killed' | 'shield-burst';
 
 export interface ShotEvent {
   kind: ShotEventKind;

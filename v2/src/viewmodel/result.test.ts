@@ -41,7 +41,7 @@ describe('computeResultViewModel', () => {
     expect(vm.stars.find((s) => s.id === 'm1-shield')?.state).toBe('unearned');
   });
 
-  it('isTutorial true means stars is empty (t1 has forcedLoadout)', () => {
+  it('isTutorial true means stars is empty (t1 has campaign: "tutorial")', () => {
     const result = victoryResult({ missionId: 't1', earnedStarIds: [] });
     const vm = computeResultViewModel(result, []);
     expect(vm.isTutorial).toBe(true);
@@ -53,10 +53,9 @@ describe('computeResultViewModel', () => {
     expect(vm.coinsEarned).toBe(250);
   });
 
-  it('buttons is w0-branch iff missionId is w0 and status is victory', () => {
-    expect(computeResultViewModel(victoryResult({ missionId: 'w0', earnedStarIds: [] }), []).buttons).toEqual({ kind: 'w0-branch' });
-    expect(computeResultViewModel(victoryResult({ missionId: 'w0', status: 'defeat', earnedStarIds: [] }), []).buttons).toEqual({ kind: 'standard' });
+  it('buttons is standard for a victory, and for a defeat with no defeatHint', () => {
     expect(computeResultViewModel(victoryResult({ missionId: 'm1' }), []).buttons).toEqual({ kind: 'standard' });
+    expect(computeResultViewModel(victoryResult({ missionId: 't1', status: 'defeat', earnedStarIds: [] }), []).buttons).toEqual({ kind: 'standard' });
   });
 
   it('killsLine includes the collided clause iff collisions > 0', () => {
@@ -141,7 +140,7 @@ describe('computeResultViewModel — daily mission', () => {
     expect(vm.stars).toEqual([]);
   });
 
-  it('uses buttons: daily (no RETRY), never w0-branch or standard', () => {
+  it('uses buttons: daily (no RETRY), never standard', () => {
     const vm = computeResultViewModel(dailyResult(), []);
     expect(vm.buttons).toEqual({ kind: 'daily' });
   });

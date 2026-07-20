@@ -1,5 +1,5 @@
-// Pure viewmodel for ResultScene: victory/defeat, NEW! star marking, the tutorial
-// branch, and which button set to show. Zero Phaser import.
+// Pure viewmodel for ResultScene: victory/defeat, NEW! star marking, and which button
+// set to show. Zero Phaser import.
 
 import { TICKS_PER_SECOND } from '../core/constants';
 import type { MissionResult } from '../core/result';
@@ -18,9 +18,9 @@ export interface StarResultViewModel {
 }
 
 export type ResultButtonSet =
-  | { kind: 'w0-branch' } // TUTORIAL / EXPLORE, persists firstBranchChoice
   | { kind: 'standard' } // RETRY / MISSIONS / SHOP
-  | { kind: 'daily' }; // MISSIONS only — no RETRY on a once-per-day attempt
+  | { kind: 'daily' } // MISSIONS only — no RETRY on a once-per-day attempt
+  | { kind: 'defeat-shop-redirect' }; // GO TO SHOP only — a mission's defeatHint fix lives there
 
 export interface ResultViewModel {
   status: 'victory' | 'defeat';
@@ -40,6 +40,8 @@ export interface ResultViewModel {
   isTutorial: boolean;
   stars: StarResultViewModel[]; // [] for tutorials
   buttons: ResultButtonSet;
+  /** Shown on defeat only, when the mission defines one — see `MissionSpec.defeatHint`. */
+  defeatHint?: string;
   /** Present only for the daily mission — CombatScene passes the actual wallet deposit
    * (SaveManager's applyDailyResult already applied DAILY_COIN_MULT to result.coins) so
    * `coinsEarned` above reflects reality, plus whether this run set a new personal best. */
@@ -49,11 +51,8 @@ export interface ResultViewModel {
    * MISSION button otherwise), but computed unconditionally here since it's cheap and
    * correct either way. A mission "completes" (unlocks its MISSION_UNLOCK_EDGES
    * targets) on victory, or — tutorials only — on defeat too (`completesOnDefeat`);
-   * t1's own two outgoing edges (t2 AND m1) resolve to t2 here since `.find()` takes
-   * the first match and t2 is listed first in `missions.ts` (tutorials and the main
-   * campaign are separate branches — a player can skip into missions after the first
-   * tutorial — so NEXT MISSION should continue the track the player is actually on,
-   * not jump them into the main campaign mid-tutorial-run). */
+   * every mission has exactly one outgoing edge in the current forced chain
+   * (t1→t2→t3→t4→m1→…→m6), so `.find()` never has more than one match to pick from. */
   nextMissionId: string | null;
 }
 
@@ -93,7 +92,7 @@ export function computeResultViewModel(
     throw new Error(`computeResultViewModel: mission "${result.missionId}" is still running`);
   }
   const mission = missionById(result.missionId);
-  const isTutorial = mission.forcedLoadout !== undefined;
+  const isTutorial = mission.campaign === 'tutorial';
   const isDaily = result.missionId === DAILY_MISSION_ID;
   const killsLine = `${String(result.weaponKills)}/${String(result.spawned)}` +
     (result.collisions > 0 ? `   (${String(result.collisions)} collided)` : '');
@@ -116,9 +115,13 @@ export function computeResultViewModel(
       shortName: starShortName(star),
       state: computeStarState(star.id, result.earnedStarIds, newStarIds),
     })),
-    buttons: result.missionId === 'w0' && result.status === 'victory'
-      ? { kind: 'w0-branch' }
+    // A tutorial's defeatHint marks a mission whose fix genuinely lives in the shop
+    // (a free gear swap, not a retry-and-hope) — its defeat screen skips RETRY/MISSIONS
+    // entirely and sends the player straight there, matching the mission's own design.
+    buttons: isTutorial && result.status === 'defeat' && mission.defeatHint !== undefined
+      ? { kind: 'defeat-shop-redirect' }
       : (isDaily ? { kind: 'daily' } : { kind: 'standard' }),
+    ...(result.status === 'defeat' && mission.defeatHint !== undefined ? { defeatHint: mission.defeatHint } : {}),
     ...(dailyBonus !== undefined ? { daily: { isNewBest: dailyBonus.isNewBest } } : {}),
     nextMissionId,
   };

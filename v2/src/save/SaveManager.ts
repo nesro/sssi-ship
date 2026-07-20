@@ -44,16 +44,12 @@ export interface SaveData {
    * `w0` has no unlock edge and no launcher, so it's unreachable in real play; see
    * `docs/known-issues.md`'s `w0` entry. */
   w0Completed?: boolean;
-  /** Player's branch pick at the end of w0. Nothing reads this either, despite the
-   * field still being written by `ResultScene.ts`'s w0-branch buttons. */
-  firstBranchChoice?: 'tutorial' | 'missions';
   /** Set by BootScene the moment a save's first-ever hub visit happens — absent/
    * undefined on every pre-existing save means "hasn't launched yet", the correct
    * default with no migration needed. Deliberately distinct from a "fresh save" check
-   * (completedMissionIds.length === 0 && ...): gates only the one-time hub button tour
-   * (the tutorials-or-skip choice lives on the galaxy screen itself, HubScene's
-   * missions-screen "skip tutorials" link), so without this field the tour would replay
-   * on every launch until the player finished a mission or earned a coin. */
+   * (completedMissionIds.length === 0 && ...): gates only the one-time hub button
+   * tour, so without this field the tour would replay on every launch until the
+   * player finished a mission or earned a coin. */
   onboardingSeen?: boolean;
   /** Set the first time the player ever opens the Shop / Dispatch Reinforcements panel
    * — same absent-means-unset precedent as `onboardingSeen` above, no migration needed.
@@ -61,6 +57,11 @@ export interface SaveData {
    * its screen is opened, independent of the main-menu button tour and of each other. */
   shopTourSeen?: boolean;
   dispatchTourSeen?: boolean;
+  /** Set on t2's first defeat — same absent-means-unset precedent as `onboardingSeen`
+   * above. Gates hub shop navigation (`isShopNavLocked`, viewmodel/hub.ts) so a player
+   * can't pre-buy the rear weapon that trivializes t2's fail-first wall before ever
+   * attempting it; unlocked forever the moment t2 is failed (or won) once. */
+  t2FailedOnce?: boolean;
   /**
    * Daily mission state (src/data/dailyMission.ts). Absent = never played, available
    * today — the same "optional/absent = unset" precedent as `onboardingSeen` above, so
@@ -74,6 +75,10 @@ export interface SaveData {
    * for the same reservation.
    */
   daily?: { lastPlayedDate: string; bestScore: number; paid: boolean };
+  /** Set the first time the player checks the terms/privacy acceptance box on
+   * AlphaNoticeScene — same absent-means-unset precedent as `onboardingSeen` above, no
+   * migration needed. Once true, stays true (accepted once, not re-asked every launch). */
+  termsAccepted?: boolean;
 }
 
 const SAVE_VERSION = 13;
@@ -170,22 +175,14 @@ export function isMissionUnlocked(save: SaveData, missionId: string): boolean {
   return incoming.some(([fromId]) => save.completedMissionIds.includes(fromId));
 }
 
-/** Exported so viewmodel/hub.ts's "show the skip-tutorials link" check (all-or-nothing,
- * same semantics as skipTutorials() below) never drifts out of sync with this list. */
+/** The tutorial mission ids, in campaign order — same membership as every
+ * `campaign === 'tutorial'` mission in `ALL_MISSIONS` (enforced by a test). */
 export const TUTORIAL_MISSION_IDS = ['t1', 't2', 't3', 't4'];
 
 /** BootScene's first-launch marker: just marks the (now implicit) onboarding moment
  * seen, no other mutation — tutorials remain fully playable and rewarded normally. */
 export function acceptOnboarding(save: SaveData): SaveData {
   return { ...save, onboardingSeen: true };
-}
-
-/** The galaxy screen's "skip tutorials" link: marks t1-t4 completed (so m1 unlocks via
- * MISSION_UNLOCK_EDGES and t2-t4 don't sit around as unclaimed locked nodes) without
- * granting their coin rewards — the player chose not to play them. */
-export function skipTutorials(save: SaveData): SaveData {
-  const completedMissionIds = [...new Set([...save.completedMissionIds, ...TUTORIAL_MISSION_IDS])];
-  return { ...save, completedMissionIds, onboardingSeen: true };
 }
 
 /** Builds the mission-start loadout snapshot from equipped items + owned supplies + subscription card pools. */
@@ -437,9 +434,14 @@ export function applyMissionResult(save: SaveData, result: MissionResult): Appli
     persistSave(next);
     return { save: next, newStarIds: [] };
   }
-  const isTutorial = mission.forcedLoadout !== undefined;
+  const isTutorial = mission.campaign === 'tutorial';
   if (isTutorial) {
-    const next: SaveData = { ...save, coins: save.coins + result.coins, completedMissionIds };
+    const next: SaveData = {
+      ...save,
+      coins: save.coins + result.coins,
+      completedMissionIds,
+      ...(result.missionId === 't2' && result.status === 'defeat' ? { t2FailedOnce: true } : {}),
+    };
     persistSave(next);
     return { save: next, newStarIds: [] };
   }

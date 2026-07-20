@@ -156,6 +156,15 @@ const BASE_GATE: RoundKindBase = {
  * "reaches further gates" directly buys "earns dramatically more" — motor speed is
  * left to do what it already does for every other mission (pace the flowing waves
  * between gates), no longer the thing that determines how long you survive.
+ *
+ * That still leaves the flowing-wave pacing itself motor-sensitive: a faster motor
+ * compresses more waves into the same real time between gates, so it still nets a
+ * player *fewer* gates reached, not more. Rather than decouple wave timing from the
+ * motor too (a much bigger change to a shared mechanic), the daily instead neutralizes
+ * motor tier entirely — `loadouts.ts`'s `neutralizeMotorForDaily` swaps in the player's
+ * motor kind's Lv1 spec before every daily run, called from both CombatScene and
+ * simulate.ts's `--daily-seed` path, so a real player's motor investment is simply
+ * inert here rather than actively counterproductive.
  */
 const GATE_EVERY_N_ROUNDS = 4;
 const GATE_HP_GROWTH_PER_GATE = 1.22;
@@ -172,7 +181,7 @@ const COIN_GROWTH_PER_ROUND = 1.025;
 const MAX_DAMAGE_MULT = 6;
 
 /** Finite safety cap — large enough that no loadout should plausibly survive it. */
-export const ROUND_COUNT = 80;
+const ROUND_COUNT = 80;
 
 const SUPPORT_CALL_EVERY_N_ROUNDS = 3;
 

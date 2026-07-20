@@ -46,11 +46,10 @@ describe('computeCombatHudViewModel', () => {
     expect(vm.missionOrBoss.fraction).toBeCloseTo(0.2);
   });
 
-  // Phase C (fable-review-fixes-2026-07-18.md): progressFrac used to be a caller-
-  // supplied parameter (CombatScene.ts computed it and injected it here); now it's
-  // derived internally from state.timelineTick against the mission's own last event
-  // tick (padded by TIMELINE_TAIL_FRACTION) — this test drives that real computation
-  // instead of injecting a mock value, so it actually exercises the single-sourced logic.
+  // progressFrac is derived internally from state.timelineTick against the mission's
+  // own last event tick (padded by TIMELINE_TAIL_FRACTION), not injected by the
+  // caller — this test drives that real computation instead of a mock value, so it
+  // actually exercises the single-sourced logic.
   it('mode is "mission" and derives progressFrac from state.timelineTick when no boss is present', () => {
     const state = createCoreState(FIXTURE_MISSION, FIXTURE_LOADOUT, 1, []);
     // FIXTURE_MISSION's last event fires at seconds(24) = 240 ticks; padded total =
@@ -83,10 +82,9 @@ describe('computeCombatHudViewModel', () => {
     expect(vm.supportMarkers).toHaveLength(2);
   });
 
-  // B4 (docs/plans/fable-review-fixes-2026-07-18.md): with no weapon (t1's forced
-  // loadout) the HUD used to print a permanent "DPS 0.0" — a broken-reading stat
-  // through the entire tutorial. KILLS stays: shield-burst kills are real credited
-  // kills (conveyor.ts), so the counter is live even weaponless.
+  // With no weapon (t1's forced loadout), the HUD must drop the DPS stat entirely
+  // rather than print a permanent "DPS 0.0". KILLS stays: shield-burst kills are real
+  // credited kills (conveyor.ts), so the counter is live even weaponless.
   it('dpsLine drops the DPS stat but keeps KILLS with no weapon equipped', () => {
     const loadoutNoWeapon = { ...FIXTURE_LOADOUT, weapon: null };
     const state = createCoreState(FIXTURE_MISSION, loadoutNoWeapon, 1, []);

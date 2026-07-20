@@ -12,7 +12,7 @@ import { abilityById, abilityPoolForLoadout } from '../data/cards';
 import { missionById } from '../data/missions';
 import { DAILY_MISSION_ID, dailyDateKey } from '../data/dailyMission';
 import { getStoryLine } from '../data/story';
-import { resolveForcedLoadout } from '../data/loadouts';
+import { neutralizeMotorForDaily, resolveForcedLoadout } from '../data/loadouts';
 import { computeSideWeaponButtonViewModel } from '../viewmodel/combat';
 import { ABILITY_COMPANY_COLORS } from '../viewmodel/companyColors';
 import { applyDailyResult, applyMissionResult, buildLoadout, isDailyAvailable, loadSave, reserveDailyAttempt } from '../save/SaveManager';
@@ -73,6 +73,13 @@ const MUZZLE_FLASH_MS = 100;
 // seconds. Without this the accumulator would fast-forward dozens of ticks in one frame and
 // the mission could resolve the instant the player returns. 250 ms = at most ~3 ticks/frame.
 const MAX_CATCH_UP_MS = 250;
+// Delay before maybeFinish() cuts to ResultScene, per outcome. Long enough to see the
+// final HUD state (a floating number's own lifetime is 700ms) before the cut; victory
+// gets the longest hold since it's the one outcome worth lingering on. Abandon stays
+// short — a voluntary quit should feel snappy, not padded.
+const VICTORY_EXIT_DELAY_MS = 2000;
+const DEFEAT_EXIT_DELAY_MS = 1400;
+const ABANDON_EXIT_DELAY_MS = 600;
 // Right button panel: a dynamic top-down layout, not fixed Y offsets — the row count
 // varies with loadout (toggle buttons: fire+shield always, rear/side conditional;
 // supplies: 0-3 owned types), and fixed offsets already caused one real bug (a
@@ -126,13 +133,20 @@ const BOOSTER_BUFF_GREEN = 0x22ee44;
 const HEAL_FLOAT_INTERVAL_MS = 700;
 
 // Which HUD row (if any) a tutorial's narrator line should point a live arrow at while
-// it's shown. Keyed by missionId, then line index — a view-only presentation choice,
-// deliberately NOT part of core's NarratorEvent (src/core/types.ts stays plain text
-// data). Keep in sync by hand with T1_NARRATOR_EVENTS/T2_NARRATOR_EVENTS's line order
-// (missions.ts).
-const NARRATOR_ARROW_TARGETS: Record<string, Record<number, number>> = {
-  t1: { 2: HUD_ROW_SHLD, 3: HUD_ROW_SHLD, 4: HUD_ROW_SHLD },
-  t2: { 0: HUD_ROW_ENRG, 1: HUD_ROW_ENRG, 2: HUD_ROW_ENRG },
+// it's shown. Keyed by missionId, then narratorEvents index (a mission's Nth event, 0-
+// based — see narratorEventIndex), then line index within that event — a view-only
+// presentation choice, deliberately NOT part of core's NarratorEvent (src/core/types.ts
+// stays plain text data). The event-index level matters once a mission has more than
+// one narratorEvent: narratorLineIdx resets to 0 for every new event, so a flat
+// missionId->lineIndex map would ambiguously apply event A's arrow to event B's
+// same-numbered line. Keep in sync by hand with T1_NARRATOR_EVENTS/T2_NARRATOR_EVENTS's
+// line order (missions.ts).
+const NARRATOR_ARROW_TARGETS: Record<string, Record<number, Record<number, number>>> = {
+  t1: {
+    0: { 1: HUD_ROW_SHLD, 2: HUD_ROW_ENRG, 3: HUD_ROW_SHLD },
+    1: { 0: HUD_ROW_SHLD },
+  },
+  t2: { 0: { 0: HUD_ROW_ENRG, 1: HUD_ROW_ENRG, 2: HUD_ROW_ENRG } },
 };
 
 /** Pre-tick core-state snapshot — compared against post-tick state to detect events worth
@@ -258,6 +272,12 @@ export class CombatScene extends Phaser.Scene {
    * combat.inspect()-equivalent state dumps showing pendingNarrator correctly advanced
    * to event 2 while the view kept rendering event 1 forever). */
   private displayedNarratorLines: string[] | null = null;
+  /** Which of mission.narratorEvents is currently showing (0-based) — derived from
+   * core.firedNarratorTicks.length once per new event (see syncNarratorModal), since
+   * narratorLineIdx alone can't disambiguate "line 1 of event A" from "line 1 of event
+   * B" for missions with more than one narratorEvent (t1's post-first-hit follow-up).
+   * Feeds NARRATOR_ARROW_TARGETS's per-event lookup. */
+  private narratorEventIndex = 0;
   /** Credited coins per enemy id — set only when the core actually emits an
    * 'enemy-killed' visual event (detectHits(), every tick), consumed on death
    * (onEnemyDeath()). Deliberately NOT pre-populated from the enemy's raw spec
@@ -300,9 +320,10 @@ export class CombatScene extends Phaser.Scene {
       this.dailyTodayStr = todayStr;
     }
     const seed = randomSeed();
-    const loadout = mission.forcedLoadout !== undefined
+    let loadout = mission.forcedLoadout !== undefined
       ? resolveForcedLoadout(mission.forcedLoadout)
       : buildLoadout(this.save);
+    if (mission.id === DAILY_MISSION_ID) loadout = neutralizeMotorForDaily(loadout);
     this.core = createCoreState(mission, loadout, seed, abilityPoolForLoadout(loadout));
     this.motorLevel = motorLevelFromId(loadout.motor.id);
     this.motorKindColor = motorKindColorFromId(loadout.motor.id);
@@ -449,6 +470,7 @@ export class CombatScene extends Phaser.Scene {
     this.narratorModalObjects = new ManagedObjectGroup();
     this.displayedNarratorLines = null;
     this.narratorLineIdx = 0;
+    this.narratorEventIndex = 0;
   }
 
   private addStarfield(): void {
@@ -570,23 +592,23 @@ export class CombatScene extends Phaser.Scene {
     if (amount < 0.5) return;
     const txt = this.add.text(x, y - px(8), `+${amount.toFixed(0)} HP`, {
       fontFamily: UI_FONT,
-      fontSize: `${String(fontPx(8))}px`,
+      fontSize: `${String(fontPx(11))}px`,
       color: '#44ff88',
     }).setDepth(8).setOrigin(0.5);
     this.floatingTexts.push({ text: txt, vy: -px(50), life: 700, maxLife: 700 });
   }
 
-  /** Fires for ANY hp drop detectHits() sees, weapon fire or the collision shield-burst
-   * alike — detectHits() itself is source-agnostic (a plain hp-before/after
-   * comparison), so no separate tracking of "who caused this" is needed;
+  /** Fires for ANY hp drop detectHits() sees — weapon fire (default enemyRed) or the
+   * collision shield-burst (caller passes shieldBlue, see detectHits) alike;
    * conveyor.ts's advanceEnemies applies the shield-burst to survivors' `.hp` the same
-   * way core/combat.ts's weapon-fire path does. */
-  private spawnDamageFloat(x: number, y: number, amount: number): void {
+   * way core/combat.ts's weapon-fire path does, so only the color is caller-supplied,
+   * not the underlying hp-drop detection. */
+  private spawnDamageFloat(x: number, y: number, amount: number, color: number = PALETTE.enemyRed): void {
     if (amount < 0.5) return;
     const txt = this.add.text(x, y - px(8), `-${amount.toFixed(0)}`, {
       fontFamily: UI_FONT,
-      fontSize: `${String(fontPx(8))}px`,
-      color: cssColor(PALETTE.enemyRed),
+      fontSize: `${String(fontPx(12))}px`,
+      color: cssColor(color),
       stroke: cssColor(PALETTE.backgroundNearBlack),
       strokeThickness: px(1.2),
     }).setDepth(8).setOrigin(0.5);
@@ -603,7 +625,7 @@ export class CombatScene extends Phaser.Scene {
 
   // fallow-ignore-next-line unused-class-member
   override update(_time: number, deltaMs: number): void {
-    if (this.finished) return;
+    if (this.finished) { this.updatePostFinishEffects(deltaMs); return; }
     this.accumulatorMs += Math.min(deltaMs, MAX_CATCH_UP_MS);
     this.thrusterPhase += deltaMs;
     this.targetMarkerPhase += deltaMs;
@@ -652,6 +674,26 @@ export class CombatScene extends Phaser.Scene {
     this.maybeFinish();
   }
 
+  /** Runs instead of the full update() body during the exit-delay hold after
+   * maybeFinish() sets `finished` — the core has already stopped advancing, but
+   * floating numbers, particles, and idle ship motion would otherwise freeze mid-frame
+   * for the whole delay instead of settling naturally. */
+  private updatePostFinishEffects(deltaMs: number): void {
+    this.thrusterPhase += deltaMs;
+    this.targetMarkerPhase += deltaMs;
+    this.renderThruster();
+    this.renderShieldPulseRings(deltaMs);
+    this.shipSprite.setX(px(SHIP_CENTER_X) + this.driftX());
+    this.shipSprite.setY(px(SHIP_Y) + this.bobY());
+    this.updateLasers(deltaMs);
+    this.updateRearLasers(deltaMs);
+    this.updateSideLasers(deltaMs);
+    this.updateEnemyBolts(deltaMs);
+    this.updateBurstParticles(deltaMs);
+    this.updateFloatingTexts(deltaMs);
+    this.updateStars(deltaMs);
+  }
+
   /** Everything `detectCombatFeedback` needs to compare against post-tick state. */
   private snapshotPreTickState(): PreTickSnapshot {
     const timers = new Map<number, number>();
@@ -682,9 +724,14 @@ export class CombatScene extends Phaser.Scene {
 
     if (this.core.ship.hull < before.hull - 0.5) {
       this.cameras.main.shake(120, 0.005);
+      // Below the ship, shield's float above (a single collision can drain both in one
+      // frame once shield is thin — damageShip routes shield-first then overflows to
+      // hull, core/combat.ts) — offset apart so the two numbers never overlap.
+      this.spawnDamageFloat(this.shipSprite.x, this.shipSprite.y + px(20), before.hull - this.core.ship.hull, PALETTE.enemyRed);
     }
     if (this.core.ship.shield < before.shield - 0.5) {
       this.shieldHitFlash = 1.0;
+      this.spawnDamageFloat(this.shipSprite.x, this.shipSprite.y - px(24), before.shield - this.core.ship.shield, PALETTE.shieldBlue);
     }
     if (this.core.stats.collisions > before.collisions) this.spawnCollisionFeedback();
     if (this.core.ship.shield > before.shield + 0.5) {
@@ -987,6 +1034,7 @@ export class CombatScene extends Phaser.Scene {
     const lines = this.core.pendingNarrator;
     if (lines !== null && lines !== this.displayedNarratorLines) {
       this.narratorLineIdx = 0;
+      this.narratorEventIndex = this.core.firedNarratorTicks.length - 1;
       this.displayedNarratorLines = lines;
       this.showNarratorLine(lines, 0);
     }
@@ -1035,7 +1083,7 @@ export class CombatScene extends Phaser.Scene {
         },
       }).setDepth(depth + 2),
     );
-    const arrowRow = NARRATOR_ARROW_TARGETS[this.core.mission.id]?.[idx];
+    const arrowRow = NARRATOR_ARROW_TARGETS[this.core.mission.id]?.[this.narratorEventIndex]?.[idx];
     if (arrowRow !== undefined) {
       const boxBounds = new Phaser.Geom.Rectangle(px(cx - panelW / 2), px(cy - panelH / 2), px(panelW), px(panelH));
       this.narratorModalObjects.add(drawPointerArrow(this, boxBounds, hudRowScreenBounds(arrowRow), 0x00ffee, depth + 2));
@@ -1279,9 +1327,13 @@ export class CombatScene extends Phaser.Scene {
     // frame — pendingVisualEvents is reset at the top of the NEXT advanceTick, so this
     // is the only place that can see every tick's kills, even when several ticks run
     // in one frame (fast-forward / a lagged frame).
+    const burstHitEnemyIds = new Set<number>();
     for (const event of this.core.pendingVisualEvents) {
       if (event.kind === 'enemy-killed' && event.enemyId !== undefined) {
         this.enemyCoinRewards.set(event.enemyId, event.coins ?? 0);
+      }
+      if (event.kind === 'shield-burst' && event.enemyId !== undefined) {
+        burstHitEnemyIds.add(event.enemyId);
       }
     }
     for (const enemy of this.core.enemies) {
@@ -1291,7 +1343,13 @@ export class CombatScene extends Phaser.Scene {
       if (sprite === undefined) continue;
       if (enemy.hp < hpBefore - 0.5) {
         this.spawnHitBurst(sprite.x, sprite.y);
-        this.spawnDamageFloat(sprite.x, sprite.y, hpBefore - enemy.hp);
+        // Shield-burst chip damage (conveyor.ts's advanceEnemies, t1's own mechanic)
+        // renders shieldBlue instead of the default enemyRed — the only other source of
+        // enemy hp loss, weapon fire, never fires alongside it in the same tick (a
+        // burst-killed enemy is pruned before the next weapon-fire phase runs), so there's
+        // no case where one enemy needs both colors at once.
+        const color = burstHitEnemyIds.has(enemy.id) ? PALETTE.shieldBlue : undefined;
+        this.spawnDamageFloat(sprite.x, sprite.y, hpBefore - enemy.hp, color);
       } else if (enemy.hp > hpBefore + 0.5) {
         // regenerateEnemies (guardian self-heal, or a booster feeding the enemy ahead of
         // it) ticks every 100ms and was otherwise silent — accumulate and flush to one
@@ -1587,14 +1645,14 @@ export class CombatScene extends Phaser.Scene {
     };
     if (this.core.status === 'victory') {
       Sound.victory();
-      this.time.delayedCall(600, () => { this.scene.start('ResultScene', sceneData); });
+      this.time.delayedCall(VICTORY_EXIT_DELAY_MS, () => { this.scene.start('ResultScene', sceneData); });
     } else if (this.wasAbandoned) {
       // The player quit voluntarily with a live ship — no death flash/shake/explosion,
       // that visual means "you were destroyed" and this player wasn't.
-      this.time.delayedCall(600, () => { this.scene.start('ResultScene', sceneData); });
+      this.time.delayedCall(ABANDON_EXIT_DELAY_MS, () => { this.scene.start('ResultScene', sceneData); });
     } else {
       this.playDeathAnimation();
-      this.time.delayedCall(1400, () => { this.scene.start('ResultScene', sceneData); });
+      this.time.delayedCall(DEFEAT_EXIT_DELAY_MS, () => { this.scene.start('ResultScene', sceneData); });
     }
   }
 
@@ -1656,10 +1714,11 @@ export class CombatScene extends Phaser.Scene {
     // Confined to the playfield (not cameras.main.flash(), which also washes out both
     // side panels — the HUD is exactly what a player needs to still read at 0 hull) and
     // driven by a tween rather than update()'s own deltaMs accumulator, since `finished`
-    // is set right before this call and short-circuits update() for the rest of the scene.
+    // is set right before this call and update() only runs the cosmetic-effects subset
+    // for the rest of the scene (updatePostFinishEffects), not this animation's own state.
     // An edge vignette (matching renderLowHullVignette's own shape), not a flat fill —
     // a solid rectangle over the whole playfield read as a rendering glitch and buried
-    // every enemy/effect underneath it (fable-fun-review-followup.md's 2nd visual pass).
+    // every enemy/effect underneath it.
     const flashState = { alpha: DEATH_FLASH_ALPHA };
     this.tweens.add({
       targets: flashState,

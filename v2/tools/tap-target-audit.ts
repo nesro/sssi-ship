@@ -60,10 +60,10 @@ const STATES: AuditState[] = [
   { name: 'Hub: dispatch reinforcements', sceneKey: 'HubScene', setup: async (p) => { await cheat(p, 'selectSubscription', 'sub-offensive'); await cheat(p, 'hub.tourSkip'); } },
   { name: 'Hub: settings', sceneKey: 'HubScene', setup: (p) => cheat(p, 'navTo', 'settings') },
   { name: 'Hub: credits', sceneKey: 'HubScene', setup: (p) => cheat(p, 'navTo', 'credits') },
-  // Only step 1 audited, not all 4 — each step's NEXT/SKIP TOUR controls share the same
+  // Only step 1 audited, not all 5 — each step's NEXT/SKIP TOUR controls share the same
   // layout/depth pattern (HubTour.ts), so one step is representative; the actual per-
   // step content (which button is highlighted) is verified visually via
-  // tools/screenshot.ts's hub-tour-step-1..4 shots instead.
+  // tools/screenshot.ts's hub-tour-step-1..5 shots instead.
   { name: 'Hub: button tour, step 1', sceneKey: 'HubScene', setup: (p) => cheat(p, 'hub.showTour') },
   // Same reasoning as above — one step each is representative of the shared HubTour
   // layout; per-step content covered visually by screenshot.ts's hub-shop-tour-step-*/
@@ -156,30 +156,14 @@ const STATES: AuditState[] = [
       await cheat(p, 'startMission', 'm1');
       await waitForMissionReady(p, 'm1');
       await cheat(p, 'combat.fastForward', 6000);
-      await p.waitForTimeout(1600);
-    },
-  },
-  {
-    // The 'w0-branch' TUTORIAL/EXPLORE button layout — structurally distinct from
-    // "Result scene" above (RETRY/MISSIONS/SHOP), never audited before this round.
-    // reset() wipes the save — grouped with the other reset()-based states at the end.
-    name: 'Result scene: w0-branch',
-    sceneKey: 'ResultScene',
-    setup: async (p) => {
-      await cheat(p, 'reset');
-      await driveThroughOnboardingIfShown(p);
-      await cheat(p, 'startMission', 'w0');
-      await waitForMissionReady(p, 'w0');
-      await cheat(p, 'combat.fastForward', 6000); // confirmed via probe: wins ~tick 345
-      await p.waitForTimeout(1600);
+      await waitForSceneActive(p, 'ResultScene', 5000);
     },
   },
   {
     // reset() wipes the save — must run last, same convention this file has always
     // used for its one reset()-based state (every state above assumes unlockAll()'s
-    // baseline). Audits the "skip tutorials" link's tap target on a genuinely fresh
-    // save.
-    name: 'Hub: missions map, fresh save (skip-tutorials link)',
+    // baseline). Audits the missions map's tap targets on a genuinely fresh save.
+    name: 'Hub: missions map, fresh save',
     sceneKey: 'HubScene',
     setup: async (p) => {
       await cheat(p, 'reset');
@@ -270,7 +254,11 @@ let lastPageError: string | null = null;
 function setPageError(message: string): void { lastPageError = message; }
 function takePageError(): string | null { const m = lastPageError; lastPageError = null; return m; }
 
-async function auditState(page: Page, state: AuditState): Promise<number> {
+/** Runs a state's own setup, settling the page and flushing any pending offer twice —
+ * once after setup, once again right before the caller reads the DOM (real time passes
+ * between the two; see combat-m4-turret's race in known-issues.md for why one check
+ * isn't enough). Throws if a page exception happened anywhere in this window. */
+async function runStateSetup(page: Page, state: AuditState): Promise<void> {
   if (state.setup) await state.setup(page);
   await page.waitForTimeout(SETTLE_MS);
   if (state.skipFlush !== true) await flushPendingOffer(page);
@@ -278,31 +266,28 @@ async function auditState(page: Page, state: AuditState): Promise<number> {
   if (errorDuringSetup !== null) {
     throw new Error(`page exception during setup: ${errorDuringSetup}`);
   }
+  if (state.skipFlush !== true) await flushPendingOffer(page);
+}
 
-  const active = await page.evaluate((key) => {
+function isSceneActive(page: Page, sceneKey: string): Promise<boolean> {
+  return page.evaluate((key) => {
     const g = window as unknown as { __game?: { scene: { isActive: (k: string) => boolean } } };
     return g.__game?.scene.isActive(key) === true;
-  }, state.sceneKey);
-  if (!active) {
-    console.log(`\n=== ${state.name}: ${state.sceneKey} not active, skipping ===`);
-    return 0;
-  }
+  }, sceneKey);
+}
 
-  const allBoxes = await evaluateHitBoxes(page);
-  // addModalBackdrop (widgets.ts) is a full-screen click-catcher by design — it exists to
-  // swallow taps *around* a modal, not to be tapped itself, so the 44×44/20px-edge rules
-  // (written for discrete controls) don't apply to it. Anything covering ≥90% of the
-  // screen in both dimensions is treated as a backdrop and excluded, not just from size/
-  // edge checks but from the overlap check too (a modal's own buttons legitimately sit
-  // "inside" it).
-  const isBackdrop = (b: HitBox): boolean =>
-    (b.right - b.left) >= LOGICAL_WIDTH * 0.9 && (b.bottom - b.top) >= LOGICAL_HEIGHT * 0.9;
-  const backdropCount = allBoxes.filter(isBackdrop).length;
-  const boxes = allBoxes.filter((b) => !isBackdrop(b));
-  console.log(`\n=== ${state.name} (${String(boxes.length)} interactive elements`
-    + `${backdropCount > 0 ? `, ${String(backdropCount)} full-screen backdrop(s) excluded` : ''}) ===`);
+// addModalBackdrop (widgets.ts) is a full-screen click-catcher by design — it exists to
+// swallow taps *around* a modal, not to be tapped itself, so the 44×44/20px-edge rules
+// (written for discrete controls) don't apply to it. Anything covering ≥90% of the
+// screen in both dimensions is treated as a backdrop and excluded, not just from size/
+// edge checks but from the overlap check too (a modal's own buttons legitimately sit
+// "inside" it).
+function isBackdrop(b: HitBox): boolean {
+  return (b.right - b.left) >= LOGICAL_WIDTH * 0.9 && (b.bottom - b.top) >= LOGICAL_HEIGHT * 0.9;
+}
+
+function checkTapTargetSizesAndEdges(boxes: HitBox[]): number {
   let failures = 0;
-
   for (const box of boxes) {
     const w = box.right - box.left;
     const h = box.bottom - box.top;
@@ -317,7 +302,11 @@ async function auditState(page: Page, state: AuditState): Promise<number> {
       console.log(`FAIL  ${box.label}  —  ${problems.join('; ')}`);
     }
   }
+  return failures;
+}
 
+function checkOverlaps(boxes: HitBox[]): number {
+  let failures = 0;
   for (let i = 0; i < boxes.length; i++) {
     for (let j = i + 1; j < boxes.length; j++) {
       const a = boxes[i]; const b = boxes[j];
@@ -327,9 +316,87 @@ async function auditState(page: Page, state: AuditState): Promise<number> {
       }
     }
   }
+  return failures;
+}
 
+async function auditState(page: Page, state: AuditState): Promise<number> {
+  await runStateSetup(page, state);
+
+  if (!(await isSceneActive(page, state.sceneKey))) {
+    console.log(`\n=== ${state.name}: ${state.sceneKey} not active, skipping ===`);
+    return 0;
+  }
+
+  const allBoxes = await evaluateHitBoxes(page);
+  const backdropCount = allBoxes.filter(isBackdrop).length;
+  const boxes = allBoxes.filter((b) => !isBackdrop(b));
+  console.log(`\n=== ${state.name} (${String(boxes.length)} interactive elements`
+    + `${backdropCount > 0 ? `, ${String(backdropCount)} full-screen backdrop(s) excluded` : ''}) ===`);
+
+  const failures = checkTapTargetSizesAndEdges(boxes) + checkOverlaps(boxes);
   if (failures === 0) console.log('ok — all elements pass');
   return failures;
+}
+
+/** Regression guard for `HubTour.ts`'s `clearStep()`: a target's label Text (never
+ * interactive before the tour — only tagged so the tour can raise/dim it, same tourId
+ * as its background rectangle) must not become clickable-with-no-handler once the
+ * tour ends. `clearStep()` only calls `setInteractive()` on targets that were actually
+ * enabled beforehand for exactly this reason — a mistaken blanket re-enable would make
+ * the label swallow taps meant for the row underneath it (same depth, rendered on top).
+ * Verified once via a discarded manual probe (docs/known-issues.md); promoted into a
+ * permanent, automated check here so a regression can't land silently. Drives a REAL
+ * click (not just an internal-state read) at the label's own on-screen position, on a
+ * shop tab that ISN'T already active, and confirms the tab actually switches.
+ *
+ * Targets `shop-tab-loadout` specifically, not the last step in `SHOP_TOUR_STEPS` —
+ * `tourSkip()` right after `showShopTour()` ends the tour on its FIRST step (loadout);
+ * a later step's targets are never added to `clearStep()`'s own list at all in that
+ * flow, so checking one would pass regardless of whether the fix this guards is even
+ * present (confirmed by deliberately reintroducing the bug during development — this
+ * check only caught it once retargeted to the step actually visited before skipping). */
+async function checkShopTabLabelClickableAfterTourEnds(page: Page): Promise<number> {
+  await cheat(page, 'navShop', 'weapon');
+  await cheat(page, 'hub.showShopTour');
+  await cheat(page, 'hub.tourSkip');
+
+  const label = await page.evaluate(() => {
+    /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment,
+       @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call,
+       @typescript-eslint/restrict-plus-operands -- runs inside page.evaluate against untyped Phaser internals */
+    const g = window as any;
+    const scene = g.__game.scene.getScene('HubScene');
+    const obj = scene.children.list.find(
+      (o: any) => o.getData('tourId') === 'shop-tab-loadout' && typeof o.text === 'string',
+    );
+    if (!obj) return null;
+    const bounds = obj.getBounds();
+    const dpr = g.__game.config.zoom ? 1 / g.__game.config.zoom : 1;
+    return { x: (bounds.x + bounds.width / 2) / dpr, y: (bounds.y + bounds.height / 2) / dpr };
+    /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment,
+       @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call,
+       @typescript-eslint/restrict-plus-operands */
+  });
+  if (label === null) {
+    console.error('✗ Hub tour regression: shop-tab-loadout label Text not found');
+    return 1;
+  }
+
+  await page.mouse.click(label.x, label.y);
+  await page.waitForTimeout(SETTLE_MS);
+  const tabAfterClick = await page.evaluate(() => {
+    const g = window as unknown as { __game?: { scene: { getScene: (k: string) => Record<string, unknown> } } };
+    const scene = g.__game?.scene.getScene('HubScene');
+    return (scene?.['uiState'] as { tab?: string } | undefined)?.tab;
+  });
+  if (tabAfterClick !== 'loadout') {
+    console.error(
+      `✗ Hub tour regression: clicking the MY LOADOUT tab's label text after the shop tour ended did not switch tabs ` +
+      `(tab is "${String(tabAfterClick)}") — a stale interactive label may be swallowing the tap`,
+    );
+    return 1;
+  }
+  return 0;
 }
 
 async function main(): Promise<void> {
@@ -381,6 +448,10 @@ async function main(): Promise<void> {
     totalFailures += 1;
     console.error(`✗ page exception after ${previousStateName} (run ending): ${trailingError}`);
   }
+
+  // Always runs, independent of any state-name filter on the command line — this is a
+  // standing regression guard, not one of the per-screen STATES above.
+  totalFailures += await checkShopTabLabelClickableAfterTourEnds(page);
 
   await browser.close();
   console.log(`\n${totalFailures === 0 ? '✓' : '✗'} ${String(totalFailures)} failure(s) across ${String(states.length)} state(s).`);

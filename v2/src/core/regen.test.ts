@@ -4,7 +4,8 @@ import { missionById } from '../data/missions';
 import { createAbilityOffer, resolveAbilityAction } from './cards';
 import { regenerateEnemies } from './combat';
 import { FIXTURE_LOADOUT, FIXTURE_MISSION, makeFixtureEnemy } from './fixtures';
-import { resolveForcedLoadout } from '../data/loadouts';
+import { resolveForcedLoadout, STARTER_LOADOUT } from '../data/loadouts';
+import { weaponSpecAtLevel } from '../data/items';
 import { createCoreState } from './state';
 import { advanceTick } from './tick';
 import { resolveNarrator } from './narrator';
@@ -100,16 +101,16 @@ describe('guardian tutorial: unkillable at base DPS, killable after damage card'
 
 describe('scripted first offer (firstOfferIds)', () => {
   it('returns exactly the scripted ids on the first support call', () => {
-    const mission = missionById('t2'); // has firstOfferIds
+    const mission = missionById('t3'); // has firstOfferIds
     const state = createCoreState(mission, FIXTURE_LOADOUT, 1, ALL_ABILITIES);
     // Simulate the counter being incremented (as maybeTriggerSupportCall does)
     state.supportCallsDone = 1;
     const offer = createAbilityOffer(state);
-    expect(offer.abilityIds).toEqual(['w-dmg-30', 'w-rate-20', 'w-cost-25']);
+    expect(offer.abilityIds).toEqual(['w-dmg-30', 's-cap-20', 'g-out-08']);
   });
 
   it('second support call uses normal weighted draw (not scripted)', () => {
-    const mission = missionById('t2');
+    const mission = missionById('t3');
     const state = createCoreState(mission, FIXTURE_LOADOUT, 1, ALL_ABILITIES);
     state.supportCallsDone = 2; // past the first call
     const offer = createAbilityOffer(state);
@@ -118,7 +119,7 @@ describe('scripted first offer (firstOfferIds)', () => {
   });
 
   it('reroll of scripted offer produces a new offer and consumes the budget', () => {
-    const mission = missionById('t2');
+    const mission = missionById('t3');
     const state = createCoreState(mission, FIXTURE_LOADOUT, 99, ALL_ABILITIES);
     state.supportCallsDone = 1;
     state.pendingOffer = createAbilityOffer(state);
@@ -133,23 +134,38 @@ describe('scripted first offer (firstOfferIds)', () => {
 // ---------- Tutorial missions smoke test ----------
 
 describe('tutorial missions run to completion', () => {
-  const TUTORIAL_IDS = ['t1', 't2', 't3', 't4'] as const;
+  // t2 has no forcedLoadout (it runs on real gear) — covered separately below.
+  const FORCED_LOADOUT_TUTORIAL_IDS = ['t1', 't3', 't4'] as const;
 
-  TUTORIAL_IDS.forEach((id) => {
+  function runToEnd(mission: ReturnType<typeof missionById>, loadout: ReturnType<typeof resolveForcedLoadout>, seed: number): string {
+    const state = createCoreState(mission, loadout, seed, ALL_ABILITIES);
+    for (let tick = 0; tick < 2000; tick++) {
+      // All tutorials show a blocking narrator popup at mission-start — resolve it
+      // same as a card offer, or advanceTick pauses forever.
+      if (state.pendingNarrator !== null) resolveNarrator(state);
+      if (state.pendingOffer !== null) resolveAbilityAction(state, 0); // always pick first ability
+      advanceTick(state);
+      if (state.status !== 'running') break;
+    }
+    return state.status;
+  }
+
+  FORCED_LOADOUT_TUTORIAL_IDS.forEach((id) => {
     it(`${id} completes in victory with its forced loadout within 2000 ticks`, () => {
       const mission = missionById(id);
       if (mission.forcedLoadout === undefined) throw new Error(`${id} must define a forcedLoadout`);
       const loadout = resolveForcedLoadout(mission.forcedLoadout);
-      const state = createCoreState(mission, loadout, 77 + TUTORIAL_IDS.indexOf(id), ALL_ABILITIES);
-      for (let tick = 0; tick < 2000; tick++) {
-        // All four tutorials now show a blocking narrator popup at mission-start
-        // (2026-07-17) — resolve it same as a card offer, or advanceTick pauses forever.
-        if (state.pendingNarrator !== null) resolveNarrator(state);
-        if (state.pendingOffer !== null) resolveAbilityAction(state, 0); // always pick first ability
-        advanceTick(state);
-        if (state.status !== 'running') break;
-      }
-      expect(state.status).toBe('victory');
+      const status = runToEnd(mission, loadout, 77 + FORCED_LOADOUT_TUTORIAL_IDS.indexOf(id));
+      expect(status).toBe('victory');
     });
+  });
+
+  it('t2 fails on real starter gear (the intended fail-first beat), and clears after a free pulse→scatter switch', () => {
+    const mission = missionById('t2');
+    const failStatus = runToEnd(mission, STARTER_LOADOUT, 501);
+    expect(failStatus).toBe('defeat');
+    const fixedLoadout = { ...STARTER_LOADOUT, weapon: weaponSpecAtLevel('scatter', 1) };
+    const clearStatus = runToEnd(mission, fixedLoadout, 502);
+    expect(clearStatus).toBe('victory');
   });
 });

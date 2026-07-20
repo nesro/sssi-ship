@@ -43,15 +43,39 @@ A clear rate that is too **high** (> 90% except tutorials) means the mission is 
 and should be made harder. Too **low** means the player will hit a wall — adjust enemy HP,
 coin economy, or enemy count before touching loadout stats.
 
-**t1-t4 note:** since `completesOnDefeat` (see [Mission Progression](09-mission-progression.md))
-makes a tutorial defeat pay the same reward as a victory, "clear rate" no longer maps directly
+**t1/t4 note:** since `completesOnDefeat` (see [Mission Progression](09-mission-progression.md))
+makes a t1/t4 defeat pay the same reward as a victory, "clear rate" no longer maps directly
 to player-facing success the way it does for m1-m6. Measured numbers as of 2026-07-10: **greedy
-strategy is a literal 100.0%** (0/2000 losses) on all four; **random strategy plateaus at
-~99.1-99.3%** on t4 specifically (t1-t3 are 100%), after two independent fix attempts (a
-reactive supply-usage policy, an added support call) failed to close the residual further.
-Whether that ~99% is acceptable, and whether it's still worth chasing now that a
-tutorial "loss" is a valid completion anyway, is an open call — see
+strategy is a literal 100.0%** (0/2000 losses) on all four (t1-t4, as they were tuned then);
+**random strategy plateaus at ~99.1-99.3%** on t4 specifically (t1-t3 are 100%), after two
+independent fix attempts (a reactive supply-usage policy, an added support call) failed to
+close the residual further. Whether that ~99% is acceptable, and whether it's still worth
+chasing now that a t1/t4 "loss" is a valid completion anyway, is an open call — see
 `docs/plans/tutorial-balance-and-doc-cleanup.md`.
+
+**t3 note (2026-07-20):** no longer covered by the t1/t4 note above — retuned to have a
+genuine right/wrong support-card decision with real consequence (`completesOnDefeat:
+false`, see Mission Progression), so its clear rate is now a real, by-design cliff
+rather than a uniform ~100%: sim-verified (2000 runs/pick) at 100.0% with the correct
+card and ~0.0% with any other pick or a skip. `GUARDIAN_REGEN`'s stats (shotDamage 10,
+2s cadence, regen 2.1/tick) were tuned specifically to produce that cliff — see the
+inline comment in `missions.ts` for the exact derivation, and `docs/known-issues.md`'s
+entry for the full before/after reasoning.
+
+**t2 note (2026-07-20, superseded its own 2026-07-20 card-based retune the same day):**
+converted from a scripted-card fix to a real-gear, fail-first-then-shop-fix design (see
+Mission Progression's t2 section) — no longer comparable to the t1/t4 note above at all,
+since it now runs on real gear with no forced loadout. Sim-verified (`runMission`, 2000
+seeds/config, `STARTER_LOADOUT` vs. a scatter-1 weapon swap, no card offers involved):
+pulse-1 (before the shop fix) clears 10.8% of attempts; scatter-1 (after — a free
+same-level kind switch) clears 99.2%, avg hull 12.3% remaining on those wins. The wave
+shape (2 fodder / 8 fodder / 8 fodder half a second later) was tuned specifically to
+produce that cliff — splitting wave 2 into two sub-waves gave a meaningfully wider
+margin than a single equal-sized wave (which clocked in at 5.1%/95.8%, avg hull only
+8.2%) without softening the pulse-1 fail rate. See `docs/known-issues.md` for the full
+tuning history and one known caveat: a player who buys a cheap rear weapon before ever
+attempting t2 can clear the wall on pulse-1 alone, since the wave was tuned against
+bare `STARTER_LOADOUT`, not "starter gear plus any cheap early purchase."
 
 ## Two-tier player model, not smart-vs-dumb
 
@@ -187,9 +211,10 @@ frictionless (median hull ≈100% at clear for both), matching the finding below
    (scatter, 100pp), m6 (ion, 99.8pp). This matches the already-accepted "kinds are
    situational sidegrades — each has a real home mission and a real weak mission"
    reading from the `expert`-archetype known-issues entry (2026-07-15), not a
-   newly-discovered problem. Still not rebalanced — the sweep tool's job was to produce
-   trustworthy data for a deliberate call, not to make that call itself; see
-   `docs/known-issues.md`'s Phase E-2 entry.
+   newly-discovered problem. **Decided 2026-07-19: left as-is** — rebalancing weapon
+   kinds' per-mission matchups touches core damage numbers across all 7 missions and the
+   game's stated design philosophy directly, a bigger call than this sweep's scope; see
+   `docs/known-issues.md`'s Resolved entry for the reasoning.
 
 ## Time-star thresholds
 
@@ -253,10 +278,23 @@ until now) tells a different, larger story: at a fixed pulse/wall/torrent Lv2 lo
 500 runs/tier against a real daily seed, `rush-1` averaged 454.9 coins / 404.9s while
 `rush-3` averaged only 232.5 coins / 101.3s — the slowest motor nets **~2× the fastest
 motor's coins** at identical everything-else. Not the small, easily-dismissed residual
-the "acceptable consequence" framing suggested — see `docs/known-issues.md`'s own entry
-for the full numbers and the two candidate fixes (decouple flowing-wave timing from
-motor speed; freeze motor draw during gate fights). Not fixed here — a real mechanic
-change, needs a deliberate call, not a tuning-number tweak.
+the "acceptable consequence" framing suggested.
+
+**Fixed 2026-07-19.** Root cause: a faster motor's effective timeline speed compresses
+the flowing-wave schedule between gates into less real time regardless of energy draw,
+so "gates reached before death" — the actual score driver — falls monotonically with
+motor tier. A prototyped fix (freeze motor draw during gate fights) was A/B-tested and
+rejected: it barely helped the fastest motor while helping the slowest motor more,
+widening the ratio in most tested card-policy configs (full numbers in
+`docs/known-issues.md`'s Resolved entry). The shipped fix instead neutralizes motor
+tier for the Daily entirely: `src/data/loadouts.ts`'s `neutralizeMotorForDaily()`
+swaps in the loadout's own motor kind's Lv1 spec before every daily run (every kind's
+Lv1 is identical — mult 1.0, draw 0.30), called from both `CombatScene.ts` and
+`tools/simulate.ts`'s `--daily-seed` path. A same-loadout motor-only re-sweep after the
+fix (pulse/wall/torrent Lv2, `rush` 1/2/3, 500 runs each) confirms all three motor
+levels now produce identical results (231.0 avg coins, 283.3s avg survival), since they
+resolve to the same neutralized spec. Motor investment is inert on the Daily rather
+than actively counterproductive; the daily detail panel's UI copy says so explicitly.
 
 ---
 

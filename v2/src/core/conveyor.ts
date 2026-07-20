@@ -40,7 +40,12 @@ export function advanceEnemies(state: CoreState, stats: EffectiveStats): void {
     state.stats.collisions += 1;
   }
   if (totalBurst > 0) {
-    for (const s of survivors) s.hp -= totalBurst;
+    for (const s of survivors) {
+      s.hp -= totalBurst;
+      // Lets the view tell this apart from weapon damage (CombatScene.ts's detectHits) —
+      // a plain hp-before/after comparison can't distinguish the two on its own.
+      state.pendingVisualEvents.push({ kind: 'shield-burst', enemyId: s.id });
+    }
   }
   state.enemies = survivors;
   // A burst-killed enemy (hp driven <= 0 above) must go through the same death

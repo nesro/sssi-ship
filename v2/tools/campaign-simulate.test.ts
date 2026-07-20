@@ -80,15 +80,14 @@ describe('runOneCampaign', () => {
     expect(after.length).toBeGreaterThan(before.length);
   });
 
-  // Fable's review (docs/plans/expert-average-campaign-tuning.md): committing to the
-  // WRONG starter kind could risk a permanently-stuck campaign under the patience cap
-  // (e.g. ion clears m5 at ~0.7%) — this is the concrete regression test for that risk,
-  // confirming `average`'s free-starter-kind choice (pulse/wall/torrent/rush) never
-  // triggers it, matching §3's "never stuck" invariant.
+  // Committing to the WRONG starter kind could risk a permanently-stuck campaign
+  // under the patience cap (e.g. ion clears m5 at ~0.7%) — this confirms `average`'s
+  // free-starter-kind choice (pulse/wall/torrent/rush) never triggers it, matching
+  // §3's "never stuck" invariant.
   // 20s, not vitest's 5s default: each of these runs 30 FULL campaigns (~10-15
   // missions × retries each) — ~3-4s alone, but over 5s whenever the suite shares the
-  // machine with a dev server or a Playwright batch (measured 6.3s, 2026-07-18), which
-  // made exactly this pair the suite's only load-flaky tests.
+  // machine with a dev server or a Playwright batch, which made exactly this pair the
+  // suite's only load-flaky tests.
   it('average (starter-kind, never switches) always completes the campaign — never stuck', () => {
     const N = 30;
     for (let seed = 1; seed <= N; seed++) {
@@ -111,7 +110,7 @@ describe('applyPurchasePolicy', () => {
     // sub-basic Lv3 gates at ★18 (src/data/subscriptions.ts) — a save with 0 stars
     // and enough coins to afford it must still not upgrade past what stars allow.
     const rich = { ...defaultSave(), coins: 100_000 };
-    const next = applyPurchasePolicy(rich, 'average', null);
+    const next = applyPurchasePolicy(rich, 'average', null, null);
     expect(next.ownedSubscriptions['sub-basic']).toBeLessThanOrEqual(2);
   });
 
@@ -123,7 +122,7 @@ describe('applyPurchasePolicy', () => {
 
   it('does nothing when no candidate is affordable', () => {
     const broke = defaultSave();
-    const next = applyPurchasePolicy(broke, 'average', null);
+    const next = applyPurchasePolicy(broke, 'average', null, null);
     expect(next).toBe(broke);
   });
 
@@ -133,7 +132,7 @@ describe('applyPurchasePolicy', () => {
   // never throw.
   it('expert falls back to opportunistic purchases during the tutorial phase (no tuning table entry)', () => {
     const rich = { ...defaultSave(), coins: 5000 };
-    expect(() => applyPurchasePolicy(rich, 'expert', 't2')).not.toThrow();
+    expect(() => applyPurchasePolicy(rich, 'expert', 't2', null)).not.toThrow();
   });
 
   it('average never switches its committed core kind, even fully maxed', () => {
@@ -144,7 +143,7 @@ describe('applyPurchasePolicy', () => {
     const missionStars: Record<string, string[]> = { synthetic: Array.from({ length: 30 }, (_, i) => `s${String(i)}`) };
     let save = { ...defaultSave(), coins: 1_000_000, missionStars };
     for (let i = 0; i < 60; i++) {
-      const next = applyPurchasePolicy(save, 'average', null);
+      const next = applyPurchasePolicy(save, 'average', null, null);
       if (next === save) break;
       save = next;
     }
@@ -152,8 +151,8 @@ describe('applyPurchasePolicy', () => {
   });
 
   // expert exploits the 100% sell-back rule (GAME_DESIGN.md §5) — switching to a
-  // different kind at the SAME level must cost exactly 0, or the "free rebuild" premise
-  // (Fable's review, point 3) doesn't hold.
+  // different kind at the SAME level must cost exactly 0, or the "free rebuild"
+  // premise doesn't hold.
   it('expert-style same-level kind switches cost exactly 0 (100% refund invariant)', () => {
     const save = { ...defaultSave(), coins: 5000, equipped: { ...defaultSave().equipped, weapon: 'pulse-3' } };
     const scatterId = weaponSpecAtLevel('scatter', 3).id;
@@ -161,6 +160,18 @@ describe('applyPurchasePolicy', () => {
     const next = switchItem(save, scatterId);
     expect(next.coins).toBe(save.coins);
     expect(next.equipped.weapon).toBe(scatterId);
+  });
+
+  it('switches pulse-1 to scatter-1 only when t2 was just failed, not merely entered', () => {
+    const save = defaultSave();
+    // Transitioning into t2 for the first time (t1 just cleared) — must NOT switch,
+    // or the mission's own "attempt it on real gear first" premise never happens.
+    const entering = applyPurchasePolicy(save, 'average', 't2', null);
+    expect(entering.equipped.weapon).toBe('pulse-1');
+    // t2 itself was just failed — this is the shop fix the defeat screen redirects to.
+    const afterLoss = applyPurchasePolicy(save, 'average', 't2', 't2');
+    expect(afterLoss.equipped.weapon).toBe('scatter-1');
+    expect(afterLoss.coins).toBe(save.coins);
   });
 });
 

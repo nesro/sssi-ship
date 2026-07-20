@@ -30,7 +30,7 @@ import { LANE_LENGTH, TICKS_PER_SECOND } from '../src/core/constants';
 import { runMission } from '../src/core/replay';
 import type { CoreState, LoadoutSnapshot, MissionSpec } from '../src/core/types';
 import { buildMissionResult } from '../src/core/result';
-import { resolveForcedLoadout } from '../src/data/loadouts';
+import { resolveForcedLoadout, STARTER_LOADOUT } from '../src/data/loadouts';
 import { ALL_MISSIONS, missionById } from '../src/data/missions';
 import { intendedLoadoutForMission } from './loadoutPresets';
 import { greedyPick } from './policies';
@@ -151,12 +151,15 @@ interface DynamicProfile {
   avgFirstEventSeconds: number;
 }
 
-/** Tutorials use their own forced gear (the mission's whole point); every other
- * mission uses its GAME_DESIGN.md §13 intended loadout, same as balance-sweep.ts. */
+/** Forced-loadout tutorials use their own forced gear (the mission's whole point); t2
+ * has no forcedLoadout (it runs on real gear) but also no §13 intended-loadout entry —
+ * STARTER_LOADOUT is what a player actually has on their first real attempt, which is
+ * exactly the pacing this report needs to profile. Every other mission uses its
+ * GAME_DESIGN.md §13 intended loadout, same as balance-sweep.ts. */
 function resolveLoadout(mission: MissionSpec): LoadoutSnapshot {
-  return mission.forcedLoadout !== undefined
-    ? resolveForcedLoadout(mission.forcedLoadout)
-    : intendedLoadoutForMission(mission.id);
+  if (mission.forcedLoadout !== undefined) return resolveForcedLoadout(mission.forcedLoadout);
+  if (mission.campaign === 'tutorial') return STARTER_LOADOUT;
+  return intendedLoadoutForMission(mission.id);
 }
 
 function computeDynamicProfile(mission: MissionSpec, runs: number, baseSeed: number): DynamicProfile {
@@ -361,6 +364,9 @@ function main(): void {
 
   const jsonReport = buildJsonReport(results);
   if (options.json) {
+    // An output path being constructed, not a module import — only unresolved until
+    // the first `--json` run writes the file.
+    // fallow-ignore-next-line unresolved-import
     const jsonPath = new URL('./pacing-report.json', import.meta.url).pathname;
     writeFileSync(jsonPath, JSON.stringify(jsonReport, null, 2), 'utf8');
     console.log(`JSON report written to tools/pacing-report.json`);

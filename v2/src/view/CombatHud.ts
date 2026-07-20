@@ -42,11 +42,11 @@ const ROW_LABELS = [
 
 // Row indices into ROW_LABELS/hudRowScreenBounds — named so callers pointing an arrow
 // at a specific bar (e.g. CombatScene's narrator-modal HUD callouts) don't hardcode a
-// bare number matching this array's order by accident.
-export const HUD_ROW_HULL = 0;
+// bare number matching this array's order by accident. Only SHLD/ENRG are referenced
+// externally today (t1/t2's narrator arrows); HULL/PROG (rows 0/3) have no current
+// caller and aren't declared until one needs them.
 export const HUD_ROW_SHLD = 1;
 export const HUD_ROW_ENRG = 2;
-export const HUD_ROW_PROG = 3;
 
 /** Device-px bounds of a HUD row's label+bar area, for pointing an arrow at it from
  * elsewhere in the scene (drawPointerArrow, widgets.ts) — kept here so callers never

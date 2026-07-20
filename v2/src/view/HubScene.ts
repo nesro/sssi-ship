@@ -4,11 +4,12 @@ import { ALL_MISSIONS, missionById, setDailyMission, totalStarsAvailable } from 
 import { DAILY_MISSION_ID, dailyDateKey, dailySeedForDate, generateDailyMission, timeUntilNextMidnight } from '../data/dailyMission';
 import {
   buildLoadout, buySubscription, buySupplyCharge, dailyBestScore, downgradeSubscription,
-  isDailyAvailable, loadSave, persistSave, resetSave, sellSupplyCharge, skipTutorials, switchItem,
+  isDailyAvailable, loadSave, persistSave, resetSave, sellSupplyCharge, switchItem,
   switchRearWeapon, switchShip, switchSideWeapon, totalStars, unequipShield, unequipWeapon, upgradeSubscription,
 } from '../save/SaveManager';
 import type { SaveData } from '../save/SaveManager';
 import { subscriptionById } from '../data/subscriptions';
+import { DISCORD_LABEL, DISCORD_URL, openExternalLink } from './externalLinks';
 import { cssColor, PALETTE } from './palette';
 import { fontPx, HUB_LEFT_W, LOGICAL_HEIGHT, LOGICAL_WIDTH, px } from './layout';
 import { ShopPreviewPanel } from './ShopPreviewPanel';
@@ -22,7 +23,7 @@ import { Sound } from '../audio/SoundManager';
 import {
   DEFAULT_HUB_UI_STATE, computeDetailHint, computeDispatch, computeGalaxyMap,
   computeKindRows, computeKindRowTrace, computeLevelChips, computeLoadoutRows, computeMissionDetail,
-  computeSettings, computeSupplies, resolveUiState,
+  computeSettings, computeSupplies, isShopNavLocked, resolveUiState,
 } from '../viewmodel/hub';
 import type {
   DailyPanelInput, DispatchCardViewModel, DispatchViewModel, GalaxyMapViewModel, HubNav, HubUIState,
@@ -103,6 +104,14 @@ const NAV_ITEMS: { key: NavItem; label: string; color: number }[] = [
 // deliberately has no step here: supplementary content, not core navigation, same call
 // already made for DAILY MISSION's galaxy-map node.
 const HUB_TOUR_STEPS: TourStep[] = [
+  // No tagged target on screen matches this id on purpose — HubTour.ts's own doc
+  // comment confirms a step with no match just shows its caption and NEXT/SKIP with no
+  // ring or arrow, which is exactly what a general welcome (not about any one button)
+  // needs.
+  {
+    tourId: 'welcome',
+    caption: 'Welcome to Nesro Nova, Commander. This is Command — your hub between runs. A quick tour of the essentials, then you\'re free to fly.',
+  },
   {
     tourId: 'missions',
     caption: 'This is your galaxy map, Commander. Pick a mission to fly — each one pays out coins and stars, and higher stars unlock better gear.',
@@ -133,7 +142,7 @@ const SHOP_TOUR_STEPS: TourStep[] = [
     caption: 'MY LOADOUT shows your whole ship at a glance — every system you currently have equipped.',
   },
   {
-    tourId: 'shop-tab-weapon',
+    tourId: 'shop-tab-ship',
     caption: 'Every other tab works the same way: browse kinds and levels, then buy or switch — spend coins earned from missions.',
   },
   {
@@ -443,17 +452,6 @@ export class HubScene extends Phaser.Scene {
     this.setNav('settings');
   }
 
-  /** Dev-only: called by __cheat.hub.skipTutorials() — headless equivalent of tapping
-   * the missions screen's "skip tutorials" link (renders only while none of t1-t4 are
-   * completed), so it's a no-op (via the real skipTutorials() mutator's own idempotent
-   * completedMissionIds merge) if called when the link wouldn't be showing. */
-  // fallow-ignore-next-line unused-class-member
-  cheatSkipTutorials(): void {
-    this.save = skipTutorials(this.save);
-    persistSave(this.save);
-    this.setNav('missions');
-  }
-
   /** Dev-only: called by __cheat.navShop(tab) to jump directly to a shop tab. */
   // fallow-ignore-next-line unused-class-member
   cheatNavShop(tab: string): void {
@@ -516,13 +514,26 @@ export class HubScene extends Phaser.Scene {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(16))}px`, color: cssColor(PALETTE.weaponCyan),
     }).setOrigin(0.5, 0.5).setDepth(2));
 
+    // Above the nav buttons, not below them: HubTour's popup card (PANEL_CY=445,
+    // HubTour.ts) occupies a fixed y=370-520 band on every step regardless of which nav
+    // button is highlighted, and the 5 nav buttons already fill the space up to y=398 —
+    // there's no room below them that isn't also the tour's own footprint.
+    this.addC(addTextButton(this, {
+      x: px(LOGICAL_WIDTH / 2), y: px(98), size: 11,
+      label: DISCORD_LABEL, color: 0x8899ff,
+      onClick: () => { openExternalLink(DISCORD_URL); },
+    }));
+
     const BTN_GAP = 64;
     const totalH = (NAV_ITEMS.length - 1) * BTN_GAP;
     const startY = Math.round((LOGICAL_HEIGHT - totalH) / 2);
+    const shopLocked = isShopNavLocked(this.save);
     NAV_ITEMS.forEach((item, i) => {
-      this.addC(addTextButton(this, {
+      const locked = item.key === 'shop' && shopLocked;
+      const btn = this.addC(addTextButton(this, {
         x: px(LOGICAL_WIDTH / 2), y: px(startY + i * BTN_GAP),
-        label: item.label, color: item.color, size: 22,
+        label: locked ? `${item.label} (LOCKED)` : item.label,
+        color: locked ? 0x555577 : item.color, size: 22,
         onClick: () => {
           // Ship Configuration always opens on My Loadout — cheatNavShop sets its
           // own tab right before calling setNav, so this only affects real clicks.
@@ -530,6 +541,13 @@ export class HubScene extends Phaser.Scene {
           this.setNav(item.key);
         },
       }).setData('tourId', item.key)); // matched by HUB_TOUR_STEPS/HubTour.ts
+      if (locked) {
+        // disableInteractive (not just the onClick guard above) also suppresses
+        // addTextButton's own pointerover/pointerout hover handlers, which would
+        // otherwise flash the button back to full alpha on touch/hover.
+        btn.disableInteractive();
+        btn.setAlpha(0.5);
+      }
     });
   }
 
@@ -573,10 +591,11 @@ export class HubScene extends Phaser.Scene {
     const gfx = this.addC(this.add.graphics().setDepth(2));
     this.renderGalaxyConnections(gfx, map);
     map.missions.forEach((mission) => { this.renderGalaxyNode(gfx, mission); });
+    this.renderCampaignLabels();
 
     this.addC(this.add.rectangle(0, px(INFO_PANEL_TOP - 1), px(LOGICAL_WIDTH), px(1), 0x222244).setOrigin(0, 0));
     const missionDetail = computeMissionDetail(this.save, this.uiState.selectedMissionId, daily);
-    this.renderMissionInfoPanel(missionDetail, map.showSkipTutorialsHint);
+    this.renderMissionInfoPanel(missionDetail);
     this.lastViewModel = { panel: 'missions', galaxyMap: map, missionDetail };
   }
 
@@ -592,6 +611,19 @@ export class HubScene extends Phaser.Scene {
       gfx.lineTo(px(b.x), px(b.y));
       gfx.strokePath();
     }
+  }
+
+  /** Static section captions above the two node clusters — GALAXY_NODES positions t1-t4
+   * top-left and m1-m6 to the right, so fixed coordinates (not per-mission math) are
+   * enough for this minimal grouping; a future multi-act campaign would need real
+   * layout logic instead. */
+  private renderCampaignLabels(): void {
+    this.addC(this.add.text(px(115), px(82), 'TUTORIAL', {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(PALETTE.generatorAmber),
+    }).setOrigin(0.5, 0.5));
+    this.addC(this.add.text(px(370), px(82), 'ACT 1', {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(PALETTE.weaponCyan),
+    }).setOrigin(0.5, 0.5));
   }
 
   private renderGalaxyNode(gfx: Phaser.GameObjects.Graphics, mission: GalaxyMapViewModel['missions'][number]): void {
@@ -644,28 +676,16 @@ export class HubScene extends Phaser.Scene {
     }
   }
 
-  private renderMissionInfoPanel(detail: MissionDetailViewModel | null, showSkipTutorialsHint: boolean): void {
+  private renderMissionInfoPanel(detail: MissionDetailViewModel | null): void {
     this.addC(this.add.rectangle(0, px(INFO_PANEL_TOP), px(LOGICAL_WIDTH), px(INFO_PANEL_H), 0x06060f, 0.92).setOrigin(0, 0));
 
     if (detail === null) {
       // Onboarding lives here, not a separate blocking scene — this is the very first
       // thing a new player's eye lands on once they open the missions screen, and it's
       // empty space otherwise.
-      const promptY = showSkipTutorialsHint ? INFO_PANEL_TOP + INFO_PANEL_H / 2 - 14 : INFO_PANEL_TOP + INFO_PANEL_H / 2;
-      this.addC(this.add.text(px(LOGICAL_WIDTH / 2), px(promptY), 'Select a mission', {
+      this.addC(this.add.text(px(LOGICAL_WIDTH / 2), px(INFO_PANEL_TOP + INFO_PANEL_H / 2), 'Select a mission', {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(11))}px`, color: cssColor(0x445566),
       }).setOrigin(0.5));
-      if (showSkipTutorialsHint) {
-        this.addC(addTextButton(this, {
-          x: px(LOGICAL_WIDTH / 2), y: px(INFO_PANEL_TOP + INFO_PANEL_H / 2 + 20),
-          label: 'Already know how to play? Skip the tutorials →', color: 0x8888aa, size: 11,
-          onClick: () => {
-            this.save = skipTutorials(this.save);
-            persistSave(this.save);
-            this.rebuildContent();
-          },
-        }));
-      }
       return;
     }
 
@@ -762,6 +782,14 @@ export class HubScene extends Phaser.Scene {
     const bestScoreY = durationY + 18;
     this.addC(this.add.text(px(panelX), px(bestScoreY), `Best: ${String(daily.bestScore)} coins`, {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(11))}px`, color: cssColor(PALETTE.generatorAmber),
+    }));
+
+    // Motor is neutralized to Lv1 for this mission only (neutralizeMotorForDaily,
+    // src/data/loadouts.ts) — a faster motor otherwise scores worse here, so the copy
+    // says so rather than let a player wonder why their upgraded motor did nothing.
+    const motorNoteY = bestScoreY + 16;
+    this.addC(this.add.text(px(panelX), px(motorNoteY), 'Motor governed to baseline here', {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(9))}px`, color: cssColor(0x667788),
     }));
 
     const missionId = this.uiState.selectedMissionId;

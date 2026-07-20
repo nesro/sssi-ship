@@ -8,7 +8,7 @@ import type { ShopSystemConfig } from './shopSystems';
 import {
   computeCumulativeCost, computeDispatch, computeGalaxyMap, computeKindRows, computeKindRowTrace,
   computeLevelChips, computeLoadoutRows, computeMissionDetail, computeSettings, computeSupplies,
-  DEFAULT_HUB_UI_STATE, resolveUiState,
+  DEFAULT_HUB_UI_STATE, isShopNavLocked, resolveUiState,
 } from './hub';
 import type { DailyPanelInput, HubUIState } from './hub';
 import { SUBSCRIPTIONS } from '../data/subscriptions';
@@ -19,14 +19,24 @@ beforeEach(() => {
   resetSave();
 });
 
+describe('isShopNavLocked', () => {
+  it('locks a fresh save, unlocks once t2 has been failed once', () => {
+    expect(isShopNavLocked(defaultSave())).toBe(true);
+    expect(isShopNavLocked({ ...defaultSave(), t2FailedOnce: true })).toBe(false);
+  });
+
+  it('also unlocks if t2 was won outright without ever failing it', () => {
+    expect(isShopNavLocked({ ...defaultSave(), completedMissionIds: ['t1', 't2'] })).toBe(false);
+  });
+});
+
 function uiState(overrides: Partial<HubUIState> = {}): HubUIState {
   return { ...DEFAULT_HUB_UI_STATE, ...overrides };
 }
 
-// 2026-07-18 fix: targetsLabel (shopSystems.ts) used to check `maxTargets === Infinity`.
-// The JSON-safety fix (core/constants.ts's HIT_ALL_TARGETS) replaced the "hit everyone"
-// sentinel with a large finite number, so this must still read as "∞ targets", not a
-// literal 9-quadrillion in the shop UI.
+// targetsLabel (shopSystems.ts) must treat HIT_ALL_TARGETS (core/constants.ts — a
+// large finite number, not a literal Infinity, for JSON-safety) as "∞ targets", not
+// print the literal 9-quadrillion value in the shop UI.
 describe('shop detail lines show "∞ targets" for hit-everyone weapons', () => {
   it('front weapon: nova', () => {
     const lines = WEAPON_SYSTEM.detailLines('nova', 1);
@@ -285,13 +295,16 @@ describe('reachable-state matrix corrections', () => {
     expect(flak?.badge).toEqual({ kind: 'cost', label: '-30⬤', coins: 30, affordable: true });
   });
 
-  it('rear-weapon: no kind row is ever locked — every kind\'s Lv1 needs 0 stars since the 2026-07-10 redesign', () => {
+  it('rear-weapon: a free kind\'s row is never locked; a kind-gated one is locked until its gate is met', () => {
     const save = defaultSave(); // 0 stars
     const rows = computeKindRows({ config: REAR_WEAPON_SYSTEM, save, playerStars: 0 }, null);
     const grenade = rows.find((r) => r.kind === 'grenade');
-    const cluster = rows.find((r) => r.kind === 'cluster');
+    const cluster = rows.find((r) => r.kind === 'cluster'); // gated at 5★ — items.ts's REAR_WEAPON_KIND_UNLOCK_STARS
     expect(grenade?.rowState).not.toBe('locked');
-    expect(cluster?.rowState).not.toBe('locked'); // cluster-1 now needs 0★ too — see computeLevelChips's 'locked' test for Lv2+ gating
+    expect(cluster?.rowState).toBe('locked');
+
+    const unlockedRows = computeKindRows({ config: REAR_WEAPON_SYSTEM, save, playerStars: 5 }, null);
+    expect(unlockedRows.find((r) => r.kind === 'cluster')?.rowState).not.toBe('locked');
   });
 });
 
@@ -354,13 +367,15 @@ describe('computeLevelChips', () => {
   });
 });
 
-// A price tie within a system would let a switch land on a coincidental net-zero
-// Redesigned 2026-07-10 (docs/plans/game-identity-and-design-review-followup.md):
-// kinds are situational sidegrades, not a tier ladder — every kind now shares one
-// price/star ladder per system, by design (a lateral kind switch at the same level
-// costs 0, not a coincidence to guard against). The invariant that still matters is
-// level-to-level strict increase *within* one kind, and that every kind matches every
-// other kind's ladder exactly (no kind is quietly cheaper/pricier than its siblings).
+// Kinds are situational sidegrades, not a tier ladder — every kind shares one price
+// ladder per system (a lateral kind switch at the same level costs 0, not a coincidence
+// to guard against). Stars used to be identical across kinds too, but weapon/rear-weapon
+// now layer a kind-unlock gate on top (items.ts's WEAPON_KIND_UNLOCK_STARS/
+// REAR_WEAPON_KIND_UNLOCK_STARS): a gated kind's ladder is `max(sharedLadder, gate)`,
+// which can plateau at the bottom (several levels tied at the gate value) rather than
+// strictly increasing. A kind's own level-1 stars requirement doubles as its gate value,
+// since every ungated ladder starts at 0 — so these tests derive "is this kind gated"
+// from the data itself instead of hardcoding which kinds are free.
 describe('price and star table invariants', () => {
   const ALL_SYSTEMS = [WEAPON_SYSTEM, REAR_WEAPON_SYSTEM, SIDE_WEAPON_SYSTEM, SHIELD_SYSTEM, GENERATOR_SYSTEM, MOTOR_SYSTEM, SHIP_SYSTEM];
 
@@ -368,27 +383,49 @@ describe('price and star table invariants', () => {
   // Easter egg (hidden until campaign completion — see hasCompletedCampaign,
   // SaveManager.ts), not a real situational sidegrade, so this invariant doesn't apply to
   // it — its flat joke pricing is intentional, not a bug this test should catch.
-  it('every kind within a system shares an identical price/star ladder — no kind is a hidden tier', () => {
+  it('every kind within a system shares an identical price ladder — no kind is a hidden tier', () => {
     for (const config of ALL_SYSTEMS) {
       const [firstKind, ...restKinds] = config.kinds;
       if (firstKind === undefined) continue;
       const referencePrices = Array.from({ length: config.maxLevel }, (_, i) => config.itemPrice(firstKind, i + 1));
-      const referenceStars = Array.from({ length: config.maxLevel }, (_, i) => config.itemStarsRequired(firstKind, i + 1));
       for (const kind of restKinds.filter((k) => k !== 'y2010')) {
         for (let level = 1; level <= config.maxLevel; level++) {
           expect(config.itemPrice(kind, level)).toBe(referencePrices[level - 1]);
-          expect(config.itemStarsRequired(kind, level)).toBe(referenceStars[level - 1]);
         }
       }
     }
   });
 
-  it('every kind\'s price and star requirement strictly increase level to level', () => {
+  it('every kind\'s star ladder is the shared ladder floored at its own kind-unlock gate', () => {
+    for (const config of ALL_SYSTEMS) {
+      const [firstKind, ...restKinds] = config.kinds;
+      if (firstKind === undefined) continue;
+      const referenceStars = Array.from({ length: config.maxLevel }, (_, i) => config.itemStarsRequired(firstKind, i + 1));
+      expect(referenceStars[0]).toBe(0); // the reference kind is always free at Lv1
+      for (const kind of restKinds.filter((k) => k !== 'y2010')) {
+        const gate = config.itemStarsRequired(kind, 1);
+        for (let level = 1; level <= config.maxLevel; level++) {
+          expect(config.itemStarsRequired(kind, level)).toBe(Math.max(referenceStars[level - 1] ?? 0, gate));
+        }
+      }
+    }
+  });
+
+  it('every kind\'s price strictly increases level to level', () => {
     for (const config of ALL_SYSTEMS) {
       for (const kind of config.kinds.filter((k) => k !== 'y2010')) {
         for (let level = 2; level <= config.maxLevel; level++) {
           expect(config.itemPrice(kind, level)).toBeGreaterThan(config.itemPrice(kind, level - 1));
-          expect(config.itemStarsRequired(kind, level)).toBeGreaterThan(config.itemStarsRequired(kind, level - 1));
+        }
+      }
+    }
+  });
+
+  it('every kind\'s star requirement never decreases level to level', () => {
+    for (const config of ALL_SYSTEMS) {
+      for (const kind of config.kinds.filter((k) => k !== 'y2010')) {
+        for (let level = 2; level <= config.maxLevel; level++) {
+          expect(config.itemStarsRequired(kind, level)).toBeGreaterThanOrEqual(config.itemStarsRequired(kind, level - 1));
         }
       }
     }
@@ -528,15 +565,19 @@ describe('computeGalaxyMap / computeMissionDetail', () => {
     expect(missing).toEqual([]);
   });
 
-  it('t1 is unlocked from the start; m1 is locked until t1 clears', () => {
+  it('t1 is unlocked from the start; m1 stays locked until the whole tutorial chain clears', () => {
     const save = defaultSave();
     const map = computeGalaxyMap(save, null, null);
     expect(map.missions.find((m) => m.id === 't1')?.unlocked).toBe(true);
     expect(map.missions.find((m) => m.id === 'm1')?.unlocked).toBe(false);
 
     const afterT1 = computeGalaxyMap({ ...save, completedMissionIds: ['t1'] }, null, null);
-    expect(afterT1.missions.find((m) => m.id === 'm1')?.unlocked).toBe(true);
-    expect(afterT1.missions.find((m) => m.id === 'm3')?.unlocked).toBe(false);
+    expect(afterT1.missions.find((m) => m.id === 't2')?.unlocked).toBe(true);
+    expect(afterT1.missions.find((m) => m.id === 'm1')?.unlocked).toBe(false);
+
+    const afterT4 = computeGalaxyMap({ ...save, completedMissionIds: ['t1', 't2', 't3', 't4'] }, null, null);
+    expect(afterT4.missions.find((m) => m.id === 'm1')?.unlocked).toBe(true);
+    expect(afterT4.missions.find((m) => m.id === 'm3')?.unlocked).toBe(false);
   });
 
   it('a locked mission shows "???" as its label', () => {
@@ -565,34 +606,6 @@ describe('computeGalaxyMap / computeMissionDetail', () => {
     expect(detail?.stars[0]?.description).toBeTruthy();
   });
 
-  // The "skip tutorials" link (HubScene's missions screen) replaced a separate
-  // OnboardingScene prompt (2026-07-17, playtest feedback) — same all-or-nothing
-  // semantics as skipTutorials() itself, so this flag is what decides whether the link
-  // renders at all.
-  describe('showSkipTutorialsHint', () => {
-    it('is true on a fresh save — no tutorial completed yet', () => {
-      const map = computeGalaxyMap(defaultSave(), null, null);
-      expect(map.showSkipTutorialsHint).toBe(true);
-    });
-
-    it('is false once any single tutorial is completed — not all-or-nothing to earn, only to lose', () => {
-      const save = { ...defaultSave(), completedMissionIds: ['t1'] };
-      const map = computeGalaxyMap(save, null, null);
-      expect(map.showSkipTutorialsHint).toBe(false);
-    });
-
-    it('is false after skipTutorials() marks all four completed', () => {
-      const save = { ...defaultSave(), completedMissionIds: ['t1', 't2', 't3', 't4'] };
-      const map = computeGalaxyMap(save, null, null);
-      expect(map.showSkipTutorialsHint).toBe(false);
-    });
-
-    it('is unaffected by non-tutorial mission completion', () => {
-      const save = { ...defaultSave(), completedMissionIds: ['w0'] };
-      const map = computeGalaxyMap(save, null, null);
-      expect(map.showSkipTutorialsHint).toBe(true);
-    });
-  });
 });
 
 describe('daily mission — galaxy node and detail panel', () => {
@@ -606,8 +619,8 @@ describe('daily mission — galaxy node and detail panel', () => {
     };
   }
 
-  /** The daily's galaxy node is gated on completing m1 (B2, 2026-07-18) — a save that
-   * has passed that gate. */
+  /** The daily's galaxy node is gated on completing m1 — a save that has passed that
+   * gate. */
   function m1ClearedSave(): ReturnType<typeof defaultSave> {
     const save = defaultSave();
     return { ...save, completedMissionIds: [...save.completedMissionIds, 'm1'] };

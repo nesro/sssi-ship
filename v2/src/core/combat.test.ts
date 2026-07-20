@@ -294,8 +294,8 @@ describe('fireShipWeapon state-based damage bonuses', () => {
     expect(same).toBeCloseTo(base);
   });
 
-  // ZERO BARRIER's real modifier — regression for the 2026-07-18 fix (card used to
-  // wire into lowHullDmgMult, so it silently fired on low hull instead of zero shield).
+  // ZERO BARRIER's real modifier: must gate on zero shield, not low hull
+  // (lowHullDmgMult is a separate, unrelated modifier family).
   it('shieldZeroDmgMult: bonus at shield <= 0, none while any shield remains', () => {
     const base = oneShotDmg({}, (s) => { s.ship.shield = 1; });
     const boosted = oneShotDmg({ shieldZeroDmgMult: 1.4 }, (s) => { s.ship.shield = 0; });
@@ -304,9 +304,8 @@ describe('fireShipWeapon state-based damage bonuses', () => {
     expect(same).toBeCloseTo(base);
   });
 
-  // PEAK CONDITION's real modifier — regression for the 2026-07-18 fix (card used to
-  // wire into shieldActiveDmgBonus, so it silently fired at ANY nonzero shield, not
-  // only a full one).
+  // PEAK CONDITION's real modifier: must gate on shield at full capacity, not merely
+  // nonzero shield (shieldActiveDmgBonus is a separate modifier for that case).
   it('shieldFullDmgBonus: bonus only at shield >= capacity, not merely shield > 0', () => {
     const capacity = FIXTURE_LOADOUT.shield?.capacity ?? 0;
     const base = oneShotDmg({}, (s) => { s.ship.shield = capacity - 1; });
@@ -327,12 +326,10 @@ describe('fireShipWeapon state-based damage bonuses', () => {
     expect(state.stats.damageDealt).toBeCloseTo(FIXTURE_WEAPON.damagePerShot);
   });
 
-  // Missing Phase A test plan item (fable-review-fixes-2026-07-18.md): "no
-  // double-stacking with lowHullDmgMult family" — ZERO BARRIER (shieldZeroDmgMult) and
-  // a low-hull card (lowHullDmgMult) are independent modifiers gated on unrelated state
-  // (shield vs. hull), so a run carrying both can genuinely have both trigger at once
-  // (low hull AND zero shield simultaneously) — verify they compose multiplicatively,
-  // each applying exactly once, not double-counted or interfering with each other.
+  // ZERO BARRIER (shieldZeroDmgMult) and a low-hull card (lowHullDmgMult) are
+  // independent modifiers gated on unrelated state (shield vs. hull), so a run
+  // carrying both can genuinely have both trigger at once — verify they compose
+  // multiplicatively, each applying exactly once.
   it('shieldZeroDmgMult and lowHullDmgMult apply independently and exactly once when both trigger conditions hold at once', () => {
     const base = oneShotDmg({}, (s) => { s.ship.hull = Math.ceil(s.ship.maxHull * 0.5); s.ship.shield = 1; });
     const bothActive = oneShotDmg(
@@ -756,9 +753,8 @@ describe('fireShipWeapon coin and energy on-kill modifiers', () => {
     expect(state.stats.damageDealt).toBeCloseTo(FIXTURE_WEAPON.damagePerShot * 2);
   });
 
-  // Regression for the 2026-07-18 fix: the view's coin popup used to read an enemy's
-  // raw spec coinReward on ANY death, including collision self-deaths that never
-  // credit coins. It now reads this event instead.
+  // The view's coin popup must read this event's credited coins, not an enemy's raw
+  // spec coinReward — a collision self-death never credits coins at all.
   it('a real weapon kill emits an enemy-killed visual event carrying the actual credited coins', () => {
     const state = freshState();
     state.modifiers = { ...state.modifiers, blockerCoinMult: 2 };

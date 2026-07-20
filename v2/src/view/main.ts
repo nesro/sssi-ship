@@ -49,7 +49,7 @@ if (import.meta.env.DEV) {
      * impossible "63/50" in the hub header. */
     unlockAll: () => {
       const save = loadSave();
-      const starredMissions = ALL_MISSIONS.filter((m) => m.forcedLoadout === undefined);
+      const starredMissions = ALL_MISSIONS.filter((m) => m.campaign === 'act1');
       const allStars: Record<string, string[]> = Object.fromEntries(
         starredMissions.map((m) => [m.id, m.stars.map((s) => s.id)]),
       );
@@ -201,7 +201,7 @@ if (import.meta.env.DEV) {
      * HubScene-only cheats — no-op (logged) if it isn't currently active.
      * Usage: __cheat.hub.showTour() · __cheat.hub.showShopTour() ·
      *        __cheat.hub.showDispatchTour() · __cheat.hub.tourNext() ·
-     *        __cheat.hub.tourSkip() · __cheat.hub.skipTutorials()
+     *        __cheat.hub.tourSkip()
      */
     hub: {
       showTour: () => { callHubCheat('cheatShowTour'); },
@@ -210,9 +210,6 @@ if (import.meta.env.DEV) {
       tourNext: () => { callHubCheat('cheatTourNext'); },
       tourSkip: () => { callHubCheat('cheatTourSkip'); },
       toggleAudio: (kind: 'music' | 'sfx') => { callHubCheat('cheatToggleAudio', kind); },
-      /** Headless equivalent of tapping the missions screen's "skip tutorials" link
-       * (renders only while none of t1-t4 are completed — see HubScene.ts). */
-      skipTutorials: () => { callHubCheat('cheatSkipTutorials'); },
     },
     /**
      * Daily-mission-only cheats (src/data/dailyMission.ts).
@@ -253,7 +250,7 @@ if (import.meta.env.DEV) {
       'inspect() · equip(id) · buySupply(id) · navShop(tab) · navTo(nav) · selectSubscription(id) · selectMission(id) · startMission(id) · ' +
       'combat.{fastForward,fastForwardToOffer,fastForwardToNarrator,dismissNarrator,narratorNext,markTarget,setToggle,inspect,' +
       'showExitConfirm,confirmExit,pickCard,rerollCard,skipCard,activateAbility,fireSideWeapon,activateSupply} · ' +
-      'alpha.continue() · hub.{showTour,showShopTour,showDispatchTour,tourNext,tourSkip,toggleAudio,skipTutorials} · daily.{play,markPlayed,clear}',
+      'alpha.continue() · hub.{showTour,showShopTour,showDispatchTour,tourNext,tourSkip,toggleAudio} · daily.{play,markPlayed,clear}',
   );
 }
 

@@ -81,11 +81,10 @@ describe('fireSideWeapon targets front-most enemies', () => {
   });
 });
 
-// ── fireSideWeapon: active timed boosts (2026-07-18 fix) ────────────────────────
-// This call used to compute stats with no boost args at all (defaulting to 1×) and
-// read raw `sideWeapon.damagePerShot` instead of the boosted `stats.sideWeaponDamage`
-// — a Rage-Protocol-style damage-mult effect silently never applied to a side-weapon
-// shot even though it does apply to the auto-firing front/rear weapons.
+// ── fireSideWeapon: active timed boosts ────────────────────────
+// A manual-fire side weapon must feel the same active damage-mult window (e.g. a
+// Rage-Protocol-style effect) an auto-firing front/rear weapon does — computed via
+// the boosted `stats.sideWeaponDamage`, not raw `sideWeapon.damagePerShot`.
 
 describe('fireSideWeapon applies active damage-mult boosts', () => {
   it('multiplies damage by a live damage-mult effect', () => {

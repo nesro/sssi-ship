@@ -108,10 +108,8 @@ const PACING_SPREAD_TARGET_PP = 40;
 const PACING_SPREAD_WEIGHT = 70; // of pacing-shape's 100 points
 const PACING_FINALE_HARDEST_WEIGHT = 30; // of pacing-shape's 100 points, the rest
 
-// Tutorials cleared before m1 (confirmed route policy) — hardcoded, not derived from
-// MISSION_UNLOCK_EDGES, because the graph is agnostic to route order (m1 unlocks
-// immediately after t1 regardless); this array *is* the confirmed policy choice, not
-// something the graph shape alone determines.
+// The only route through the campaign — MISSION_UNLOCK_EDGES is a single forced chain
+// with no shortcuts, so this array mirrors the graph rather than choosing among options.
 const MISSION_ROUTE = ['t1', 't2', 't3', 't4', 'm1', 'm2', 'm3', 'm3b', 'm4', 'm5', 'm6'];
 const MISSIONS_WITH_INTENDED_TARGET = new Set(['m1', 'm2', 'm3', 'm3b', 'm4', 'm5', 'm6']);
 
@@ -204,6 +202,24 @@ function targetCandidateForKind(save: SaveData, system: EquipSlotSystem, kind: s
     system, cost: target.price - currentPrice, starsRequired: target.starsRequired ?? 0,
     apply: (s) => switchItem(s, targetId),
   };
+}
+
+/** Same as `targetCandidateForKind`, but falls back to climbing the CURRENTLY EQUIPPED
+ * kind at the same target level when the recommended kind is star-locked — items.ts's
+ * kind-unlock gate (WEAPON_KIND_UNLOCK_STARS et al.) means `expert`'s tuned kind isn't
+ * always affordable yet. Without this, `applyPurchasePolicy` would find zero targeted
+ * candidates and buy nothing at all — not even a same-kind level-up — until enough
+ * stars accumulate, stalling `expert` even though real progress is available. */
+function targetCandidateForKindOrCurrent(
+  save: SaveData, system: EquipSlotSystem, recommendedKind: string, level: number,
+): PurchaseCandidate | null {
+  const primary = targetCandidateForKind(save, system, recommendedKind, level);
+  if (primary === null || !isStarLocked(primary.starsRequired, save)) return primary;
+  const config = CATALOG_SYSTEMS[system];
+  const currentId = save.equipped[system];
+  const currentKind = config.kinds.find((kind) => itemsForKind(system, kind).some((item) => item.spec.id === currentId));
+  if (currentKind === undefined || currentKind === recommendedKind) return primary;
+  return targetCandidateForKind(save, system, currentKind, level);
 }
 
 function nextRearWeaponUpgrade(save: SaveData): PurchaseCandidate | null {
@@ -308,10 +324,10 @@ function buildExpertTargetedCandidates(save: SaveData, nextMissionId: string): P
   const recommended = RECOMMENDED_KIND_PER_MISSION[nextMissionId];
   if (levels === undefined || recommended === undefined) return [];
   return [
-    targetCandidateForKind(save, 'weapon', recommended.weapon, levels.weaponLevel),
-    targetCandidateForKind(save, 'shield', recommended.shield, levels.shieldLevel),
-    targetCandidateForKind(save, 'generator', recommended.generator, levels.generatorLevel),
-    targetCandidateForKind(save, 'motor', recommended.motor, levels.motorLevel),
+    targetCandidateForKindOrCurrent(save, 'weapon', recommended.weapon, levels.weaponLevel),
+    targetCandidateForKindOrCurrent(save, 'shield', recommended.shield, levels.shieldLevel),
+    targetCandidateForKindOrCurrent(save, 'generator', recommended.generator, levels.generatorLevel),
+    targetCandidateForKindOrCurrent(save, 'motor', recommended.motor, levels.motorLevel),
   ].filter((c): c is PurchaseCandidate => c !== null);
 }
 
@@ -419,7 +435,18 @@ function nextExpertSubscriptionUpgrade(save: SaveData): PurchaseCandidate | null
  * (whole-catalog-cheapest, no kind commitment — that framing was specifically about
  * the primary loadout identity) when none of the 4 core systems currently have an
  * affordable, unlocked next level. */
-function applyPurchasePolicy(save: SaveData, archetype: Archetype, nextMissionId: string | null): SaveData {
+function applyPurchasePolicy(
+  save: SaveData, archetype: Archetype, nextMissionId: string | null, justFailedMissionId: string | null,
+): SaveData {
+  // t2's defeat screen hard-navigates every player to this exact free switch (see
+  // ResultScene's defeat-shop-redirect) — every archetype takes it right after a t2
+  // loss, not just the ones that would otherwise choose to switch weapon kinds on
+  // their own. Keyed on justFailedMissionId, not nextMissionId: the latter is also
+  // 't2' the moment t1 clears (about to start t2 for the first time), and the whole
+  // point of this mission is that the player attempts it on real starter gear first.
+  if (justFailedMissionId === 't2' && save.equipped.weapon === 'pulse-1') {
+    return switchItem(save, 'scatter-1');
+  }
   if (archetype === 'expert') {
     const hasTarget = nextMissionId !== null && MISSIONS_WITH_INTENDED_TARGET.has(nextMissionId);
     const targeted = hasTarget ? buildExpertTargetedCandidates(save, nextMissionId) : [];
@@ -531,7 +558,8 @@ function runOneCampaign(archetype: Archetype, campaignSeed: number): CampaignRec
       save = applyMissionResult(save, result).save;
 
       const nextMissionId = cleared ? (MISSION_ROUTE[missionIndex + 1] ?? null) : missionId;
-      save = applyPurchasePolicy(save, archetype, nextMissionId);
+      const justFailedMissionId = cleared ? null : missionId;
+      save = applyPurchasePolicy(save, archetype, nextMissionId, justFailedMissionId);
     }
 
     missionLog.push(

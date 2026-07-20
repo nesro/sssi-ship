@@ -14,13 +14,10 @@ import {
   weaponSpecAtLevel,
 } from './items';
 
-// docs/plans/overdrive-and-reserve-trap-fixes.md — regression tests for the
-// 2026-07-11 overdrive trap fix: Overdrive Lv1 used to draw more energy than any
-// generator could produce at any level, permanently locking the ship into max
-// brownout with a shield that never pulses (energy.ts's pulseShield only fires at
-// full capacity). `pnpm tune`'s dominant-kind check caught it (100pp clear-rate spread
-// on m1-m5). These tests lock in the fix's two invariants so this exact trap class
-// can't silently return.
+// A motor kind's Lv1 must never draw more energy than any generator can produce at
+// any level — that would permanently lock the ship into max brownout with a shield
+// that never pulses (energy.ts's pulseShield only fires at full capacity). These
+// tests lock in that invariant so this trap class can't silently return.
 
 describe('motor kinds — no free-tap trap (items.test.ts)', () => {
   it('every kind shares rush-1\'s safe Lv1 stats (mult 1.0, draw 0.30) — the established pattern', () => {
@@ -42,7 +39,7 @@ describe('motor kinds — no free-tap trap (items.test.ts)', () => {
   });
 });
 
-// 2026-07-18 fix: `ReplayRecord` embeds the full loadout spec and gets JSON-serialized;
+// `ReplayRecord` embeds the full loadout spec and gets JSON-serialized;
 // JSON.stringify(Infinity) === "null", which would silently break an "all targets"
 // weapon (nova, y2010, orbital) the moment a replay round-trips through storage. Every
 // catalog spec's maxTargets must be a real finite number (HIT_ALL_TARGETS, not

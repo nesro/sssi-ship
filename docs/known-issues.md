@@ -160,106 +160,35 @@ actual player could ever see. Worth a look if `combat-w0`'s screenshot is ever s
 showing this again, or if `NarratorBar`/`CombatScene`'s scene-teardown ordering is
 touched for an unrelated reason.
 
-### `combat-m4-turret`'s card-overlay race is real and intermittent — `flushPendingOffer` doesn't fully close the window
-Found 2026-07-17/18 during the `advanceUntil` fix round below (Fable's review). A support
-call can open a real, non-auto-resolving `CardOverlay` in the gap between
-`flushPendingOffer`'s own check (`tools/screenshot.ts`) and the actual
-`page.screenshot()` call — the exact race class `flushPendingOffer`'s own comment already
-describes as previously found/fixed once (`playwrightHarness.ts:114-121`), recurring
-here. Confirmed genuinely intermittent, not something the `advanceUntil` fix caused or
-fixes: one run of `pnpm screenshot -- combat-m4-turret` captured the
-DISPATCH REINFORCEMENTS overlay instead of the intended turret combat frame; a
-subsequent run captured the turret correctly. Not fixed here — a deterministic fix means
-either polling for offer-settled state with a real timeout/retry (not a single
-timing-based flush) or restructuring how support-call scheduling interacts with the
-harness's real-frame waits, a bigger change than this round's scope (found via a
-downstream review of an unrelated fix, not this round's actual focus).
-
-### The same silent-timeout disease also affects `fastForwardToOffer`/`fastForwardToNarrator`, not just `advanceUntil`
-Found 2026-07-17/18 (Fable's review of the `advanceUntil` fix below) — `advanceUntil`
-was fixed to throw instead of silently returning on failure, but the same *shape* of bug
-exists in a handful of shots (`tools/screenshot.ts`) built on
-`fastForwardToOffer`/`fastForwardToNarrator` instead: those cheats already stop
-(non-erroring) the instant their target condition is met or the tick budget runs out,
-and most call sites don't check which actually happened. `combat-card-overlay` already
-has a manual post-check guard (added in an earlier round, `screenshot.ts:573-578`) — the
-remaining unguarded sites are `combat-card-reroll-exhausted` (calls `rerollCard` twice
-after `fastForwardToOffer(300)` with no check that an offer actually opened first), the
-four `combat-t*-narrator-modal` shots (30-tick budgets, would screenshot plain combat
-mislabeled as a modal if the narrator never appears), and `combat-narrator-modal`
-itself. Not fixed here — each site needs the same per-site "does this call actually want
-hard failure, or does it have a legitimate reason to tolerate a miss" analysis
-`advanceUntil`'s fix required, not a blanket change to the two cheats' own behavior
-(some real callers may depend on the current stop-without-erroring semantics elsewhere;
-not audited).
-
-### No permanent regression test for "a coach-mark tour's targets stay clickable after it ends"
-Flagged by Fable's review of the HubTour multi-target fix (see Resolved, same date). The
-fix's key correctness property — `clearStep()` only re-enabling input on targets that
-were actually enabled beforehand, so a label Text never gets silently made
-clickable-with-no-handler and starts swallowing taps — was verified with a one-off
-Playwright probe (click a shop tab's label text after ending its tour, confirm the tab
-still switches) that was run and discarded, not checked into `tools/tap-target-audit.ts`
-or anywhere else repeatable. If a future change to `HubTour.ts` reintroduces the blind
-`setInteractive()` pattern, nothing in the harness would catch it. Worth promoting into a
-permanent state/check if `HubTour.ts` gets touched again.
-
-### m6's boss-time T2/T3 use conservative intra-distribution steps — a reference-tier re-anchor remains an open design alternative
-Added 2026-07-18, while fixing the duplicate time-star thresholds (B1,
-`docs/plans/fable-review-fixes-2026-07-18.md`). m6's `m6-boss-t1/t2/t3` were all
-literally 317s; the fix stepped T2/T3 evenly through the intended loadout's own
-measured boss-kill-tick spread (317 → 312.7 → 308.3 → 304, from a 2000-run probe of
-`state.bossKillTick` percentiles). This deliberately does NOT mirror m1-m4's
-`timeStarT2Loadout` reference-tier anchoring: the same probe measured the t2/t3
-reference tiers killing the boss at ~204s/~189s median — anchoring m6's T2/T3 there
-would roughly HALVE the finale's boss-time requirements, a real difficulty redesign of
-the campaign's one intended test, not a de-dup fix. That stronger re-anchor (four
-genuinely gear-gated boss-time tiers, matching the finish-time stars' philosophy) is a
-legitimate design direction if Tomáš wants it — it just needs a deliberate decision,
-because it changes what the finale's stars mean.
-
-### Daily Mission — a faster motor scores WORSE than a slower one at the same weapon/shield/generator tier — now CONFIRMED and quantified, not fixed
-Found 2026-07-17 (Fable's design review), residual after the gate-based fix (see
-[Balance & Tuning](design/13-balance-and-tuning.md)'s tuning log) closed the main
-motor-vs-gear inversion. Two smaller channels still couple motor tier to score in the
-wrong direction: (1) the flowing waves between gates are still motor-timed, so a faster
-motor still reaches later-round waves sooner in real time; (2) motor energy draw
-continues during a gate fight even though the timeline is frozen and gains nothing from
-it, pushing a fast/heavy motor toward brownout exactly when DPS matters most.
-
-**Confirmed 2026-07-18 (E-4, `docs/plans/fable-review-fixes-2026-07-18.md`)** — the
-motor-only sweep proposed but never run is now done: same weapon/shield/generator
-(pulse/wall/torrent, all Lv2), only motor level (`rush` 1/2/3) varied, 500 runs each
-against today's real daily seed (throwaway script, run then deleted per this repo's own
-convention). Result is not a small residual — it's a large, monotonic inversion:
-
-| Motor | Avg raw coins | Avg survival |
-|---|---|---|
-| rush-1 (slowest) | 454.9 | 404.9s |
-| rush-2 | 277.6 | 160.0s |
-| rush-3 (fastest) | 232.5 | 101.3s |
-
-The slowest motor nets **~2× the fastest motor's coins** at identical weapon/shield/
-generator investment — a player who spent coins upgrading their motor tier would
-score *worse* on the Daily than one who never touched it. This is the single largest
-un-reconciled economy inversion found in this project's balance history and is
-**squarely owner-gated**: fixing it means picking one of at least two real designs —
-decouple the daily's flowing-wave timing from motor speed entirely (its own escalation
-curve, not `timelineMultiplier`), or freeze motor draw during gate fights (mirroring how
-the timeline itself already freezes) — either is a real mechanic change to
-`dailyMission.ts`/`core/timeline.ts`, not a tuning-number tweak, and needs a deliberate
-call before implementation. Not fixed this round (E-4's own scope was measurement, not
-a fix) — logged here with real numbers instead of the "not verified... proposed but not
-run" state this entry used to describe.
-
 ### Daily Mission — replay records don't pin which day's generated mission they belong to
-Found 2026-07-17 (Fable's design review). `ReplayRecord` stores `missionId: 'daily'` +
-seed but nothing identifying which calendar day's generated `MissionSpec` produced it —
-replaying it later resolves against whatever daily is currently registered via
-`setDailyMission`, which may be a different day's mission (or throw, if none is
-registered). Currently latent: the replay-playback UI doesn't exist yet
-([Status](design/14-status.md): "Record exists; playback scene not built"). Worth fixing
-(e.g. store the date key or seed in the record) before that UI is built.
+`ReplayRecord` stores `missionId: 'daily'` + `seed` but nothing identifying which
+calendar day's generated `MissionSpec` produced it — replaying it later resolves
+against whatever daily is currently registered via `setDailyMission`, which may be a
+different day's mission (or throw, if none is registered). Currently latent: nothing
+in live play persists a `ReplayRecord` yet ([Status](design/14-status.md): "Record
+exists; playback scene not built") — only the headless simulator's `runMission()` ever
+builds one.
+
+**2026-07-19: attempted a fix, found it was wrong, reverted before landing it.** First
+attempt: a `missionForReplay(record)` helper that special-cased daily records to call
+`generateDailyMission(record.seed)` instead of `missionById('daily')`. This is
+incorrect — `record.seed` is `CoreState`'s own RNG seed (`randomSeed()` in
+`CombatScene.ts`, a fresh `crypto.getRandomValues()` value every run) and has no
+relationship to the *day*-seed (`dailySeedForDate(date)`) that actually generated the
+mission spec via `generateDailyMission`. These are two conceptually separate seeds
+that happen to share a field name pattern; conflating them would silently reconstruct
+the WRONG mission (right shape, wrong escalation curve) instead of failing loudly.
+
+**What a real fix needs:** either (a) a new field on `ReplayRecord` carrying the
+day-seed (or date key) itself, threaded from wherever `setDailyMission` registers
+today's spec through to whatever eventually persists a live replay — no such path
+exists yet, since nothing persists live replays at all — or (b) embed the full
+`MissionSpec` in `ReplayRecord` directly instead of resolving by `missionId`, which
+sidesteps the whole "which generation" question for the daily case (and, as a bonus,
+for any other mission) at the cost of a real, larger `ReplayRecord` and a
+`verifyReplay` signature change. Both are genuine design decisions, not a quick data
+tweak, and neither has a current caller to validate against — deferred rather than
+guessed at a second time.
 
 ### Coverage sweep (`docs/plans/comprehensive-coverage-sweep.md`) — deliberately deferred items
 Not silently dropped — named here per the plan's own "no silent caps" principle. None
@@ -292,78 +221,6 @@ layout is still unverified (would need ~7 real picks in one run; not chased furt
   of the pre-execution plan), but a literal every-kind-every-level sweep (100+
   combinations) was never done either way; the shared row/chip template is verified,
   individual items are not exhaustively re-checked.
-- **NarratorBar reveal-timing waits are a wall-clock patch, not a root-cause fix.**
-  `combat-t1`/`t2`/`t3`/`t4`'s fixed `waitForTimeout(5500)` (sized off the longest
-  current `story.ts` line, 128 chars at ~25 chars/s) will silently under-shoot again if a
-  future line exceeds that, and could over-shoot into the bar's own 5000ms auto-hide
-  window for a *short* line (capturing nothing instead of truncated text — lower
-  severity, but still not what the shot claims to show). The real fix (matching the
-  harness's own "read state back, don't guess a fixed number" principle used everywhere
-  else) is a `combat.inspect()`-style extension exposing `NarratorBar`'s reveal progress
-  to poll against instead of sleeping a fixed duration. Not implemented this round.
-
-### `w0` (Calibration Run) is unreachable, and `firstBranchChoice` is a dead field
-Found 2026-07-16 while planning `docs/plans/first-open-and-tutorial-tour.md`. `w0` has
-no entry in `GALAXY_NODES` (`viewmodel/hub.ts`'s `computeGalaxyMap` silently skips it)
-and nothing redirects a fresh save to it — its only intended launcher is the unbuilt
-`WelcomeScene` (`docs/design/14-status.md`: "content not written yet," blocked on
-Tomáš). Its victory screen still asks a real TUTORIAL/EXPLORE branch question
-(`ResultScene.ts:57-76`, `viewmodel/result.ts`'s `'w0-branch'` kind) and persists
-`save.firstBranchChoice` — but nothing anywhere ever *reads* that field. Two stale
-comments in `SaveManager.ts:42,44` describe behavior that was never implemented:
-`w0Completed` "gates the hub from redirecting again" (no such redirect exists) and
-`firstBranchChoice` is "used to open the right hub section on first load" (it opens
-nothing). Not fixed here — `first-open-and-tutorial-tour.md` built an independent
-tutorials-or-skip path (originally a separate `OnboardingScene`, since redesigned
-2026-07-17 onto the galaxy screen itself — see [Status](design/14-status.md)) that asks
-a similar question without touching `w0`, since `w0`/`WelcomeScene` stay blocked on
-content. **When
-`WelcomeScene` ships and `w0` becomes reachable, reconcile the two** — most likely
-retire `w0`'s branch-choice screen (or gate it behind `onboardingSeen` already being
-true so a player never sees the same choice twice) rather than keep both live.
-
-### `expert` archetype's campaign pacing-shape score doesn't respond to mission-density tuning
-`docs/plans/fable-fun-review-followup.md`'s Item 7 section, "Measured outcome" note.
-`expert` always plays its `pnpm tune`-recommended gear, which for any mission whose
-difficulty comes from a targeting/single-target-weapon constraint (m3b's booster being
-the first example) will tend to converge on whichever weapon kind trivially counters that
-constraint (`nova`, which hits every enemy on screen). This isn't fixable per-mission —
-it's a property of the campaign economy's gear-choice model. `average` isn't affected
-(stays on its starter kind). No fix attempted; flagged as a structural gap for whoever
-next works on campaign pacing.
-
-**Partially investigated 2026-07-15 (see the Reserve generator fix below):** dug into
-`pnpm tune`'s "dominant kind" signal, which had been flagging on every mission every run
-this whole session and was assumed related. Found two *separate* things tangled
-together: (1) the Reserve generator was a genuine trap (fixed, see below) — unrelated to
-`expert`'s pacing-shape specifically, since `intendedLoadoutForMission` never uses
-Reserve. (2) Even after that fix, 5/7 missions still show 60-100pp weapon-kind spread
-(`pnpm tune`'s own full grid: e.g. m3 — ion=100%, pulse=~70-79%, scatter=~49-57%,
-nova=~19-21%, *with every generator held at its best*), confirming each mission genuinely
-has one dominant weapon kind, which is what lets `expert` "solve" it. This appears to be
-the intended "kinds are situational sidegrades" design working as built (each kind has a
-real home-mission and a real weak-mission), not a bug — but it's also structurally what
-keeps `expert`'s pacing-shape flat. Deliberately not touched further: rebalancing weapon
-kinds' per-mission matchups is a much bigger, riskier undertaking (core weapon damage
-numbers, verified across 7 missions) than this pass, and touches the game's stated
-design philosophy directly — needs a real decision, not a data tweak.
-
-**Phase E-2 (2026-07-18, `docs/plans/fable-review-fixes-2026-07-18.md`) — sweep artifact
-built, decision on rebalancing still deliberately deferred.** `pnpm tune` now has a
-cross-mission summary table + a non-zero exit on any dominant-kind flag (matching
-`pnpm balance`/`pnpm pacing`'s own convention) — see
-[Balance & Tuning](design/13-balance-and-tuning.md)'s point 6 for the full write-up.
-Building it found and fixed a real bug in the tool itself (the campaign-completion-gated
-`y2010` Easter egg was in the weapon tournament, winning m3/m6 and silently feeding a
-mechanically-impossible-for-a-first-playthrough recommendation into
-`RECOMMENDED_KIND_PER_MISSION`, which `expert`'s own campaign sim then acts on). Fresh,
-y2010-excluded data supersedes this entry's 2026-07-11-era "pulse worst on m1/m2"
-framing (both missions now show pulse recommended, non-dominant spread — consistent
-with the nova-trap and Reserve-generator fixes that landed after that original finding,
-never re-checked until now) while confirming the broader pattern is still real: m3
-(ion), m3b (nova), m4 (ion), m5 (scatter), m6 (ion) each show a genuine dominant kind.
-Still no rebalancing — that remains an owner-gated design decision, now with
-trustworthy, current data to decide from rather than a stale 2026-07-11 snapshot.
 
 ### Manual playtest of m1/m3/m5's reshaped pacing — needs a human, not simulation
 `docs/plans/mission-design-and-testing.md`'s "Open item 1." The simulator is structurally
@@ -409,6 +266,490 @@ exit on a clean run is expected until/unless someone decides to invest further d
 effort in either mission's approach-phase pacing specifically.
 
 ## Resolved
+
+### Tutorials were skippable, and no forced sequence existed — fixed 2026-07-20
+Tomáš's directive: "I wanted you to balance all the game and I would just review. But
+this doesn't work at all. Let's always force players through tutorial missions, no skip
+available." Removed `SaveManager.ts`'s `skipTutorials()` mutator, `viewmodel/hub.ts`'s
+`showSkipTutorialsHint`/the galaxy screen's "skip tutorials" link, the
+`__cheat.hub.skipTutorials()` dev hook, and the `MISSION_UNLOCK_EDGES` `['t1','m1']`
+shortcut edge (replaced with `['t4','m1']`) — the campaign is now a single forced chain,
+t1→t2→t3→t4→m1→…→m6, with no way into act1 except finishing every tutorial. Also
+retired `w0`'s TUTORIAL/EXPLORE branch-choice screen and the `save.firstBranchChoice`
+field it wrote (`ResultScene.ts`'s `'w0-branch'` button kind, `viewmodel/result.ts`) —
+both were already confirmed dead (nothing ever read `firstBranchChoice`, `w0` has no
+launcher) per this file's former `w0`/`firstBranchChoice` entry, folded into this fix
+since removing the only other skip/branch concept in the game made keeping a second,
+already-nonfunctional one inconsistent. Added `MissionSpec.campaign?: 'tutorial' |
+'act1'` as the real "is this mission a tutorial" source of truth (deliberately NOT
+reused from `forcedLoadout !== undefined`, which answers a different question and
+diverges once t2 below drops its forced loadout) — six call sites across
+`save/SaveManager.ts`, `viewmodel/hub.ts`, `viewmodel/result.ts`, `view/main.ts`, and
+`data/missions.ts` switched from the old `forcedLoadout`-based check to
+`campaign === 'tutorial'`. `HubScene.ts`'s galaxy map now renders "TUTORIAL"/"ACT 1"
+section labels above their node clusters (fixed coordinates, not per-mission layout
+math — a minimal foundation per Tomáš's "just some 'level', for now" framing, not a
+full multi-act system).
+
+### t2 converted to a real-gear, fail-first-then-shop-fix mission — fixed 2026-07-20
+Tomáš's own idea, investigated and design-reviewed (with a Fable-model consult) before
+implementation: "there will be tutorial missions that you fail first, then you will be
+navigated to the shop to buy upgrade and then you will finish the level." Applied to t2
+("Weapon Systems") as the first instance of this pattern — t3/t4 are NOT converted,
+left exactly as they were. Key findings from investigation: a fresh save starts with 0
+coins, but every kind of a given system is priced identically at a given level, so a
+same-level kind switch (e.g. pulse-1 → scatter-1, both 100 coins) is always net-zero —
+the shop-fix requires no coins at all, only a switch. `ResultScene.ts` already had a
+SHOP button on every result screen; no new navigation plumbing was needed for the "go to
+the shop" half of the idea.
+
+**What changed:** t2 dropped `forcedLoadout` entirely (now runs on the player's real,
+equipped gear — provably identical to the old forced pulse-1 loadout for a first
+attempt, since under the new no-skip chain t1 is the only mission that can precede it,
+and t1's 30-coin reward can't afford any tier change). Dropped the mid-mission card
+offer (`supportCallTicks`, `firstOfferIds`, and the two narrator lines describing it) —
+the fix now happens in the shop between attempts, not via a card mid-run. Retuned the
+wave shape: `runMission` sweeps (2000 seeds/config) found a single `count: 16` wave gave
+pulse-1 a 5.1% clear / scatter-1 95.8% clear, but only an 8.2% average hull margin on
+scatter wins (4.2% of players who did the intended fix still lost) — a Fable review
+flagged that margin as too thin for a mission's first fail→fix loop. Splitting wave 2
+into two sub-waves of 8, half a second apart, at a slightly reduced wave-1 count (3→2)
+gave a materially better result: pulse-1 clears 10.8% (still a firm fail), scatter-1
+clears 99.2% (only 0.8% loss-after-the-intended-fix), avg hull 12.3% on wins — shipped
+with this shape. Dropped the hull-above-50% star (unreachable at that margin, same
+reasoning as the earlier t2/t3 retune below); kept all-kills (100% reachable on every
+win). Added `MissionSpec.defeatHint?: string` (a teaching line shown on the defeat
+screen) and a new `ResultViewModel.buttons.kind === 'defeat-shop-redirect'` state — per
+Fable's read of Tomáš's literal wording ("you WILL be navigated"), t2's defeat screen
+skips the usual RETRY/MISSIONS/SHOP row entirely and shows only the hint text plus a
+single GO TO SHOP button (`ResultScene.ts`).
+
+**Known caveat, fixed 2026-07-20:** the wave was tuned against bare `STARTER_LOADOUT`
+(no rear weapon). A player who buys the cheap 30-coin rear weapon before ever
+attempting t2 (a real, if unlikely, path — nothing stops a player from browsing the
+shop after t1 before diving into t2) clears the wall on pulse-1 alone (confirmed via
+probe: 100%), skipping the intended fail state entirely. Found via `pnpm campaign`'s
+retry-count report showing t2 clearing on attempt 1 essentially every time — traced to
+the campaign simulator's own "buy the cheapest affordable thing" purchase policy
+reflexively buying that rear weapon with t1's leftover coins. `tools/campaign-simulate.ts`
+was updated so its purchase-policy simulation applies the same free pulse→scatter fix
+every archetype would get from the mission's own defeat-shop-redirect screen, keyed
+specifically on "t2 was just failed" (not "t2 is about to start") so the simulated
+economy still experiences the real fail-first attempt before ever fixing it —
+`applyPurchasePolicy`'s new `justFailedMissionId` parameter.
+
+Initially judged acceptable (a first-time player following the natural "NEXT MISSION"
+flow never sees the shop before their first t2 attempt), but Tomáš asked to close the
+gap outright rather than rely on the common-path argument: the hub's main-menu SHOP
+button is now locked (dimmed, labeled "(LOCKED)", non-interactive —
+`isShopNavLocked`, `viewmodel/hub.ts`) until `SaveData.t2FailedOnce` is set (a new
+field, set in `applyMissionResult` the moment t2 is lost — `save/SaveManager.ts`) or
+t2 has been won outright. Only the main-menu button is gated, not `HubScene`'s
+`setNav()` itself — t2's own defeat-shop-redirect screen (`ResultScene.ts`'s GO TO SHOP
+button) navigates via `initialNav: 'shop'`, which routes through `setNav()` directly
+and is completely unaffected, as are the `__cheat.navShop`/`showShopTour` dev hooks.
+Verified with a real (non-cheat) mouse click on the redirect button after fast-forwarding
+t2 to a defeat — lands on `nav: 'shop'` correctly. `hub-main-menu-fresh`'s screenshot
+now shows SHIP CONFIGURATION dimmed/locked; the `unlockAll()`-baseline `hub-main-menu`
+shot (t2 already completed) shows it fully active, confirming both states render
+correctly. New tests: `SaveManager.test.ts` (`t2FailedOnce` set only on a t2 defeat,
+never on a win or any other mission) and `hub.test.ts` (`isShopNavLocked`). Full
+lint/build:dry/test (736/736)/lint:comments/campaign/audit-taps/screenshot (77/77) all
+clean.
+
+**Verification:** lint/build/test/lint:comments/balance/campaign/audit-taps/screenshot
+all clean; `pnpm campaign` still 100%/100% completion for both archetypes; a defeat
+screenshot (`result-scene-t2-shop-redirect`) confirmed the redirect UI renders
+correctly (initial version had the defeat hint text overflowing off-screen — fixed by
+switching from the plain `addLabel` widget to a `wordWrap`-configured `Phaser.Text`,
+matching the pattern already used elsewhere in the view layer for long strings).
+
+### t2/t3's support-card decision had no real consequence — fixed 2026-07-20
+Tomáš's directive: "if you cannot make a decision, you must not fail. but the tutorial
+with decision MUST fail if you make the wrong decision. don't make this game too easy."
+t2 ("Weapon Systems") and t3 ("Support Cards") both present a scripted 3-card choice and
+claim in their own blurb/narrator text that picking correctly matters ("the right card
+fixes that" / "you need the right card to break through") — but `completesOnDefeat:
+true` applied uniformly to all four tutorials (t1-t4) meant NOTHING you picked, including
+skipping the card entirely, could ever fail the mission. Verified before touching
+anything: 500-run sims forcing every possible pick (including skip) on both missions all
+landed at 100% clear with near-identical hull remaining — the "decision" had zero teeth.
+
+**t3's specific root cause turned out to be different than the mission's own code
+comment claimed.** The comment said the regen guardian was "unkillable by shooting
+alone" — untrue as tuned: pulse-1's base DPS (10/5-tick cycle) actually does out-damage
+the nominal 22 HP/s regen once cycle-boundary math is accounted for, so the guardian
+quietly dies to *any* pick eventually. A Fable-model review (asked for a second opinion
+given this touches balance data and reverses a documented "tutorials can't fail" rule)
+caught this before I shipped a fix built on the wrong diagnosis, and traced the real
+mechanism: the guardian was surviving long enough to walk its slow (speed 0.3) approach
+into a harmless collision, ending the mission in victory regardless of DPS — the
+"problem enemy" was suiciding into the ship's shield.
+
+**Fix**, sim-verified (Fable ran 2000 runs/pick, independently reconfirmed with my own
+1000-run sim before landing): both missions now set `completesOnDefeat: false` — a real
+decision tutorial with no way to fail teaches nothing, so a wrong pick is a genuine,
+intended failure requiring a retry, same semantics every main mission already uses.
+- **t2**: replaced the offered cards with `['sit-swarm-sense', 'w-dmg-30', 'w-cost-25']`
+  — `sit-swarm-sense` ("hits 3 extra enemies when 6+ are present") is a real,
+  thematically-exact fix for "single-target fire bogs down against a dense wall,"
+  unlike the old `w-rate-20`/`w-dmg-30`/`w-cost-25` trio, none of which changed the
+  weapon's single-target nature. Wave 2's fodder count went 8 → 17 (the exact tuned
+  cliff — 16 leaks 7-13% wrong-pick wins, 18 makes even `w-rate-20` viable again if ever
+  re-added). Result: sit-swarm-sense 100% clear, either other pick or skip 0%.
+- **t3**: `GUARDIAN_REGEN`'s `shotDamage` 2→10 and `ticksBetweenShots` 3s→2s (regen
+  2.2→2.1/tick, hp/speed unchanged) — the guardian's own fire is now what fails a wrong
+  pick, well before its slow approach would ever collide. Result: `w-dmg-30` 100%
+  clear, `s-cap-20`/`g-out-08`/skip 0%.
+- Dropped now-permanently-unreachable stars (a real wrong-pick-fails design means the
+  survivable path takes real damage): t2 lost `hull-90`/`shield-unbroken`, t3 lost
+  `shield-unbroken`. Same reasoning t1's own comment already gives for dropping its
+  unreachable all-kills star. Tutorial stars are internal-only bookkeeping anyway —
+  `totalStarsAvailable()` excludes every `forcedLoadout` mission, and ResultScene never
+  surfaces tutorial stars to the player (`TRAINING MISSION / No stars awarded`, always,
+  regardless of what's reachable) — confirmed pre-existing, not something this changed.
+- t2/t3's bottom-bar `NOVAK COMMAND` lines (`story.ts`) were softened — t3's especially:
+  it previously said "A damage boost is what breaks its regen — take it," an outright
+  answer that would have trivialized the now-real decision. Both now hint at the
+  *category* of the right answer without naming it, matching the existing blocking-modal
+  narrator lines' restraint (Fable's explicit recommendation: let the failure + a correct
+  retry teach itself; don't spoil the only puzzle these tutorials have).
+- t1 (no decision — no weapon) and t4 (use the preloaded supplies or don't, a spectrum
+  rather than a right/wrong pick) were deliberately left alone — completesOnDefeat stays
+  true for both, matching Tomáš's own rule that a no-decision tutorial must not fail.
+- **Not implemented, flagged for later**: Fable noted t2's tick-0 narrator modal is 6
+  lines a player re-taps through on every retry — not missing failure-explanation (there
+  should be none), but retry friction. Worth a "skip already-seen tutorial narration on
+  retry" mechanism if playtesting shows this annoys people; needs new save/session state
+  to track "seen before," out of scope for this fix.
+
+Verified: `lint`/`build:dry`/`lint:comments`/`test` (727/727) clean, `pnpm balance`
+(m1-m6 unaffected), `pnpm campaign` (100%/100%, both archetypes use `greedyPick` for
+cards so they reliably pick the right one — this sim was never meant to model a
+consistently-bad-choices player), full `pnpm screenshot` batch (78/78) and `pnpm
+audit-taps` (22/22) clean, plus a manual playthrough-equivalent probe: card offer
+screen renders correctly (SWARM SENSE included, no overflow), a wrong pick reaches a
+real SHIP DESTROYED/RETRY screen, a right-pick retry reaches MISSION COMPLETE, and — the
+part that actually matters — a wrong-pick defeat leaves t3 locked on the galaxy map
+while a right-pick victory unlocks it, confirmed via two clean (no `unlockAll`)
+progression runs.
+
+### `pnpm dlx fallow` full clean sweep — fixed 2026-07-19
+Went through every category `fallow` was flagging, not just the health-threshold
+failure: 5 unused exports (`HUD_ROW_HULL`/`HUD_ROW_PROG` in `CombatHud.ts` had no
+caller at all — deleted, keeping `HUD_ROW_SHLD`/`HUD_ROW_ENRG` which t1/t2's narrator
+arrows do use; `BASE_URL`/`BOOT_TIMEOUT_MS` in `playwrightHarness.ts` and `ROUND_COUNT`
+in `dailyMission.ts` are only ever used inside their own file — de-exported, no
+behavior change), 1 false-positive unresolved import (`pacing-report.ts`'s
+`new URL('./pacing-report.json', import.meta.url)` is constructing an output path to
+write, not importing a module — fallow's static analysis flags the `new URL(...,
+import.meta.url)` idiom heuristically and can't tell the two apart; suppressed inline
+with `// fallow-ignore-next-line unresolved-import`), and 1 real complexity violation
+(`screenshot.ts`'s `main()`, cognitive complexity 27 vs. threshold 25 — split into
+`resolvePendingShots`/`launchPage`/`runOneShot`/`runShotSetupAndCapture`/
+`runShotCleanup`/`reportStrayError`, same pattern as the earlier `tap-target-audit.ts`
+`auditState` split). Verified: full 76-shot `pnpm screenshot` batch and `pnpm
+audit-taps` (22 states) both pass identically to before the refactor; `lint`/
+`lint:comments`/`build:dry`/`test` (727/727) clean; `pnpm dlx fallow` now exits 0.
+
+**Left alone, not a fallow failure:** the "5 refactoring targets" list (`src/core/
+combat.ts`, `src/data/cards.ts`, `src/viewmodel/shopSystems.ts`, `src/core/cards.ts`,
+`tools/campaign-simulate.ts`) is an advisory ROI ranking, not a threshold violation —
+`pnpm dlx fallow` exits 0 with these still listed. Splitting `combat.ts`/`core/cards.ts`
+specifically means restructuring the deterministic core simulation module the tick-phase
+determinism contract and every replay hash depend on — a real architecture change, not a
+mechanical cleanup, and squarely the kind of core/ touch this project's own convention
+says needs a Fable pre-implementation review first. Not attempted here; flagged for a
+dedicated pass if wanted.
+
+### m6's boss-time T2/T3 use conservative intra-distribution steps — decision: leave as-is, 2026-07-19
+Added 2026-07-18 while fixing the duplicate time-star thresholds
+(`docs/plans/fable-review-fixes-2026-07-18.md`). m6's `m6-boss-t1/t2/t3` were all
+literally 317s; the fix stepped T2/T3 evenly through the intended loadout's own
+measured boss-kill-tick spread (317 → 312.7 → 308.3 → 304). This deliberately does NOT
+mirror m1-m4's `timeStarT2Loadout` reference-tier anchoring: the same probe measured the
+t2/t3 reference tiers killing the boss at ~204s/~189s median — anchoring m6's T2/T3
+there would roughly HALVE the finale's boss-time requirements, a real difficulty
+redesign of the campaign's one intended test, not a de-dup fix.
+
+**Decision (2026-07-19):** Tomáš authorized making this call directly rather than
+holding it. Leaving the conservative intra-distribution steps as-is — a stronger
+reference-tier re-anchor changes what the finale's stars mean, and that's not a call to
+make without his sign-off. No code changed; this closes the open question raised
+2026-07-18.
+
+### Dominant weapon kind per mission (m3/m3b/m4/m5/m6) — decision: leave alone, 2026-07-19
+`docs/plans/fable-fun-review-followup.md`'s Item 7: `expert` archetype's campaign
+pacing-shape score doesn't respond to mission-density tuning because it always plays
+`pnpm tune`'s recommended gear, which converges on whichever weapon kind trivially
+counters each mission's difficulty constraint. Investigated 2026-07-15 and again in
+Phase E-2 (2026-07-18): confirmed via `pnpm tune`'s full grid that 5/7 missions
+(m3=ion, m3b=nova, m4=ion, m5=scatter, m6=ion) genuinely have one dominant weapon kind
+at every generator level, not a measurement artifact — the "kinds are situational
+sidegrades" design working as built (each kind has a real home-mission and a real
+weak-mission). This is what keeps `expert`'s pacing-shape flat, and rebalancing it means
+touching core weapon damage numbers across all 7 missions, a real design-philosophy
+question, not a tuning tweak.
+
+**Decision (2026-07-19):** Tomáš authorized making this call directly rather than
+holding it. Leaving weapon-kind balance alone — this is squarely a bigger
+design-philosophy question (whether kinds should be more interchangeable across
+missions) than a tuning-data problem, and the current "situational sidegrade" design is
+working as intended, just at the cost of `expert`'s pacing-shape metric never moving.
+No code changed; this closes the open question raised 2026-07-15/07-18.
+
+### Daily Mission — a faster motor scores WORSE than a slower one at the same weapon/shield/generator tier — fixed 2026-07-19
+Confirmed 2026-07-18 (E-4) as a large, monotonic inversion (rush-1 nets ~2× rush-3's
+coins at identical weapon/shield/generator), owner-gated between two candidate fixes:
+decouple flowing-wave timing from motor speed, or freeze motor draw during gate fights.
+Tomáš authorized making this call directly (2026-07-19).
+
+**A Fable-model review prototyped and A/B-tested the draw-freeze candidate before it was
+implemented, and rejected it**: freezing motor energy draw during `blocksConveyor` gate
+fights barely helps the fastest motor (+6-13%, since rush-3 dies to wave-compression at
+~100s, well before brownout becomes the limiting factor) while helping the slowest
+motor substantially more (+7-38%), *widening* the rush1/rush3 ratio in 2 of 3 tested
+card-policy configs instead of closing it:
+
+| Config | rush-1 | rush-2 | rush-3 | rush1/rush3 ratio |
+|---|---|---|---|---|
+| greedy cards | 231.0 → 247.8 | 206.7 → 207.0 | 206.6 → 206.8 | 1.12x → 1.20x |
+| random cards | 479.5 → 553.1 | 291.3 → 424.2 | 239.3 → 271.1 | 2.00x → 2.04x |
+| no cards | 502.4 → 691.3 | 251.3 → 537.2 | 232.3 → 246.9 | 2.16x → 2.80x |
+
+(columns: baseline → with draw-freeze applied.) Root cause is structural, not a small
+secondary channel: daily score is driven by "gates reached before death," and a faster
+motor's effective timeline speed monotonically compresses the flowing-wave schedule
+between gates into less real time regardless of energy draw — measured across the whole
+motor system, not just rush (sentinel-5 nets 770 avg coins over 22.9-minute runs vs.
+rush-1's 494 and rush-3's 239).
+
+**Fix actually shipped: neutralize motor tier for the Daily entirely**, rather than
+patch either timing channel. `src/data/loadouts.ts`'s `neutralizeMotorForDaily()`
+replaces a loadout's motor with its own kind's Lv1 spec (every kind's Lv1 is identical:
+mult 1.0, draw 0.30) before the run starts — wired into both `CombatScene.ts`'s real
+daily path and `tools/simulate.ts`'s `--daily-seed` path, so motor level becomes
+score-neutral on the Daily instead of actively punishing investment, without touching
+`core/`, `timeline.ts`, or any campaign mission's tuning. Verified via a same-loadout
+motor-only sweep (pulse/wall/torrent Lv2, `rush` 1/2/3, 500 runs each against a fixed
+daily seed): all three motor levels now produce identical results (231.0 avg coins,
+283.3s avg survival) since they all resolve to the same neutralized Lv1 spec. Added
+honest UI copy ("Motor governed to baseline here") to the daily detail panel
+(`HubScene.ts`) so a player isn't left wondering why an upgraded motor did nothing.
+`docs/design/13-balance-and-tuning.md`'s Daily Mission tuning log updated with the
+final outcome.
+
+### NarratorBar reveal-timing waits were a wall-clock patch — already fixed, entry was stale
+Part of the "Coverage sweep — deliberately deferred items" bundle: `combat-t1`/`t2`/
+`t3`/`t4`'s screenshot shots supposedly used a fixed `waitForTimeout(5500)` sized off
+the longest current `story.ts` line, which would silently under/over-shoot if a future
+line changed length. Checked 2026-07-19 while working through the coverage-sweep
+bundle: this no longer describes the current code at all. t1/t2/t3 need no bottom-bar
+wait whatsoever (tutorial mission-start narration moved into the blocking modal in an
+earlier session); t4 already polls via `waitForNarratorFullyRevealed`
+(`playwrightHarness.ts`), not a fixed sleep. The entry was simply never moved out once
+the underlying fix landed. Tidied a stray comment in `combat-t4`'s own setup that still
+narrated the old 5500ms guess as if it were current. Verified: all four shots pass;
+`pnpm build:dry`/`lint`/`lint:comments` clean.
+
+### `tools/tap-target-audit.ts`'s new `fallow` high-risk flag — fixed 2026-07-19
+Today's additions (the double-`flushPendingOffer` fix and the new
+`checkShopTabLabelClickableAfterTourEnds` regression check) pushed `auditState`'s
+complexity to CRITICAL (21 cyclomatic, 28 cognitive, 64 lines), crossing `fallow`'s
+health-risk threshold and taking the project from 1 flagged file to 2. Fixed by
+splitting `auditState` into named steps: `runStateSetup` (setup + settle + double
+flush + error check), `isSceneActive`, `checkTapTargetSizesAndEdges`, and
+`checkOverlaps`, with `auditState` itself now a thin orchestrator. Verified:
+`pnpm dlx fallow` back to 1 file above threshold (`src/core/combat.ts`, the original,
+pre-existing baseline); `pnpm build:dry`/`lint`/`test` (725/725) clean;
+`pnpm audit-taps` 22/22, same as before the refactor.
+
+### `combat-m4-turret`'s card-overlay screenshot race — fixed 2026-07-19
+A support call could open a real, non-auto-resolving `CardOverlay` in the gap between
+`flushPendingOffer`'s own check and the actual `page.screenshot()` call — confirmed
+intermittent (one run captured the DISPATCH REINFORCEMENTS overlay instead of the
+intended turret combat frame; a subsequent run captured it correctly). Fixed by
+re-checking `flushPendingOffer` a second time immediately before the screenshot call
+itself, in both `tools/screenshot.ts` and `tools/tap-target-audit.ts`'s main loops
+(same race applies to the DOM read in the audit tool, not just the visual capture) —
+`flushPendingOffer` is a no-op when nothing is pending, so this costs nothing on every
+other shot/state. Verified: 2 full `pnpm screenshot` batches (76/76 each) plus 5
+targeted re-runs of the previously-affected shots, all clean; `pnpm audit-taps` 22/22;
+`pnpm test` 725/725.
+
+### Silent-timeout risk in `fastForwardToOffer`/`fastForwardToNarrator` call sites — fixed 2026-07-19
+The same class of bug `advanceUntil` was already fixed for (stopping silently at its
+tick budget instead of throwing) also affected several `tools/screenshot.ts` shots
+built on `fastForwardToOffer`/`fastForwardToNarrator`, which never checked whether
+their target state actually happened before screenshotting: `combat-card-overlay`
+already had a guard; `combat-card-reroll-exhausted`, `combat-narrator-modal`, and the
+four `combat-t1..t4-narrator-modal` shots didn't. Fixed by adding the same
+`combat.inspect()` + fail-loudly check to each (mirroring `combat-card-overlay`'s
+existing pattern) — added a `hasPendingNarrator` field to `CombatCheats.ts`'s
+`inspect()` (and the `CombatSnapshot` type) since no equivalent to `hasPendingOffer`
+existed for the narrator side. Verified: `pnpm test` 725/725, `pnpm build:dry` clean,
+and the guarded shots all pass across 2 full screenshot batches.
+
+### No permanent regression test for "a coach-mark tour's targets stay clickable after it ends" — fixed 2026-07-19
+`HubTour.ts`'s `clearStep()` only re-enables input on targets that were actually
+enabled beforehand (so a label Text never becomes clickable-with-no-handler and starts
+swallowing taps) — verified once via a discarded manual Playwright probe, never
+checked into the automated suite. Promoted into a permanent check,
+`checkShopTabLabelClickableAfterTourEnds` in `tools/tap-target-audit.ts`, which drives
+a REAL click (not just an internal-state read) at a shop tab's label-text position
+right after the tour ends, and fails if the tab doesn't actually switch. Runs
+unconditionally on every `pnpm audit-taps` invocation, independent of any state-name
+filter.
+
+**Verified the check actually catches the regression it guards** (not just that it
+passes): temporarily reverted `clearStep()`'s conditional `if (wasEnabled)
+obj.setInteractive()` to an unconditional call, confirmed the new check fails with a
+clear message, then restored the real fix and confirmed it passes again. Along the
+way, found and fixed a bug in the check itself during this verification: it initially
+targeted the shop tour's LAST step (`shop-tab-supplies`), but `hub.tourSkip()` called
+right after `hub.showShopTour()` ends the tour on its FIRST step — a later step's
+targets are never touched by `clearStep()` at all in that flow, so the check would
+have passed regardless of whether the fix was present. Retargeted to
+`shop-tab-loadout` (the step actually active when skipped).
+
+### Front/rear weapon kinds had zero gating at level 1 — fixed 2026-07-19
+Tomáš's direct playtest feedback: "all first levels of front and rear weapons costs 0
+coins. let's make only first 2 free f.ex. give player a choice, but we need to have
+some weapons gated for later, no?" Root cause: `items.ts`'s "situational sidegrades"
+model priced every kind identically per level with 0 stars at Lv1 for all of them, and
+the shop's switch-cost economy charges only the price delta between currently-equipped
+and target — so once a player owned any Lv1 weapon, every other kind's Lv1 was a free
+switch, no kind ever felt unlocked.
+
+Fable pre-implementation review (shared economy data, this project's own convention)
+recommended: front weapon free pair pulse+scatter, gated ion(4★)/nova(8★); rear weapon
+free pair grenade+flak, gated arc(3★)/cluster(5★)/plasma(8★); the gate floors the
+*whole* per-kind ladder (`Math.max(sharedLadder, gate)`), not just level 1, since
+`SaveManager.ts`'s `switchItem` has no star check of its own — a level-1-only gate
+would be bypassable by buying straight into a gated kind's higher level.
+
+Implemented in `items.ts` (`WEAPON_KIND_UNLOCK_STARS`/`REAR_WEAPON_KIND_UNLOCK_STARS` +
+a `gatedLadder` helper). Fable also caught a real stall hazard in
+`campaign-simulate.ts`'s `expert` archetype: it buys *exclusively* from its 4
+tuned-kind targets, so a star-locked recommended kind meant it bought nothing at
+all — not even a same-kind level-up — until enough stars accumulated (no farming
+modeled). Fixed via `targetCandidateForKindOrCurrent`, which falls back to climbing the
+currently-equipped kind at the same target level while waiting.
+
+Verified: `pnpm test` (725/725, including two updated `hub.test.ts` invariants that
+previously assumed every kind shared one star ladder), `pnpm build:dry`/`lint`/
+`lint:comments` clean, `pnpm balance` unaffected (fixed-loadout sweeps never purchase),
+`pnpm campaign` — `expert` still 100% completion, no stall. Screenshots of a fresh
+(0-star) save's shop weapon/rear-weapon tabs confirm the `★4`/`★8` (weapon) and
+`★3`/`★5`/`★8` (rear) lock badges render correctly on the gated kinds only.
+`docs/design/10-economy.md` updated with the new gate.
+
+### Discord community link added to the alpha notice and hub main menu — 2026-07-19
+Tomáš's request: a link to the project's Discord
+(https://discord.com/channels/1512167269080367104) on both screens, with copy
+appreciating feedback and recruiting help (music/sounds/level design/anything). He
+asked directly how this behaves once wrapped as a Capacitor mobile build — a plain
+`window.open()` inside a Capacitor WebView is unreliable (the app's own WebView can
+navigate itself to the URL instead of handing off to the system browser, trapping the
+player outside the game). The correct fix is the `@capacitor/browser` plugin's
+`Browser.open({ url })`, which opens an in-app browser tab on native and falls back to
+`window.open()` on web.
+
+**Not installed — sandbox constraint, not a design gap.** `pnpm add @capacitor/browser`
+failed here (`ERR_PNPM_UNEXPECTED_STORE`: this project's `node_modules` is linked from
+a pnpm store at a macOS host path this sandbox can't reach/write; a package add can't
+be patched around the way the earlier rollup/esbuild native-binary fix was, without a
+real `pnpm install` that risks relinking the whole tree). Landed instead:
+`src/view/externalLinks.ts`'s `openExternalLink()` calls plain `window.open()`
+(correct for the current web build), with a one-line note to swap in `Browser.open()`
+once the dependency can be added from a machine with a reachable pnpm store (e.g.
+Tomáš's own host). **Follow-up still needed:** add `@capacitor/browser` and flip that
+one call site before an actual Capacitor build ships.
+
+Placement note: the hub main-menu link couldn't go directly below the nav buttons as
+first tried — `HubTour.ts`'s coach-mark popup occupies a fixed y=370-520 band on every
+tour step regardless of which button is highlighted, and `pnpm audit-taps` correctly
+caught the overlap. Moved above the nav buttons instead (below the title separator).
+Verified: `pnpm audit-taps` 22/22, `pnpm screenshot` 76/76, `pnpm test` 725/725.
+
+### Terms/privacy/no-ads notice added — 2026-07-19 (copy is a placeholder, not real legal text)
+Tomáš's request: an "I accept the terms and conditions" gate noting account sync/login
+(starting with Google) is planned but not live yet, and that the game is forever
+ad-free (already the standing design pillar in `docs/design/01-identity.md`/
+`GAME_DESIGN.md`, so a promise, not a new decision).
+
+Implemented on `AlphaNoticeScene.ts`: a checkbox toggle ("☐/☑ I ACCEPT THE TERMS &
+PRIVACY NOTICE") plus two lines of copy, persisted via `SaveData.termsAccepted`
+(accept once, not re-asked every launch). CONTINUE is gated — an unchecked box shows an
+inline hint instead of navigating. `__cheat.alpha.continue()` auto-accepts first so
+headless runs aren't blocked by a gate they can't tap through.
+
+**Permanent caveat, not something to "resolve" later by editing this entry:** the copy
+is honest, lightweight in-game text, not a real Terms of Service / Privacy Policy — it
+never claims to be one. Do not treat it as a substitute for an actual legal document
+before a real store launch; that needs real legal review, out of scope for an agent
+session.
+
+### t1 (Shield Basics) tutorial's four reported gaps — fixed 2026-07-19
+Tomáš's direct playtest feedback (flagged that he'd raised at least some of this
+before and it hadn't been tracked or acted on — see the process note at the end of
+this entry). Four problems, all fixed in the same pass (Fable pre-implementation
+review first, since it touched `missions.ts` balance data and shared `CombatScene.ts`
+rendering):
+
+1. **Narration never explained the generator or its shop upgrade.** Added a 6th
+   `T1_NARRATOR_EVENTS` line introducing the generator (t1 has no weapon, so this is
+   necessarily a forward-looking preview, not a live demo) plus synced
+   `NARRATOR_ARROW_TARGETS`'s new index 5 to point at the ENRG HUD row.
+2. **Enemies arrived too fast to track (~1.1s apart).** Widened `spacing` from 24 to
+   60, spreading the 3 collisions ~2.7s apart. Sim-verified via `pnpm sim --mission t1
+   --loadout forced` (the default loadout gives t1 a weapon it shouldn't have and
+   produces garbage numbers) — this also surfaced a real, pre-existing bug: t1's
+   `all-kills` star was 0% reachable (collisions aren't kills, and the shield-burst
+   mechanic can't kill a guardian outright at these numbers). Replaced it with
+   `shield-unbroken`, which needed its own fix once measured (0% reachable at the
+   shared tutorial loadout's shield-wall-1/30 capacity) — t1 now forces
+   shield-wall-2/60 specifically, verified at 68.4% reachable (500 runs), a real,
+   non-trivial, non-impossible star.
+3. **Mission ended immediately after the last kill (600ms).** Bumped to a named
+   `VICTORY_EXIT_DELAY_MS = 2000`. Along the way, found and fixed a worse bug this
+   naive bump would have hit: `CombatScene.update()` fully freezes (particles, floating
+   numbers, ship drift, all of it) for the entire post-victory delay once
+   `this.finished` is set — a longer delay alone would have meant a longer frozen
+   frame. Fixed via a new `updatePostFinishEffects()` cosmetic-only path that keeps
+   floats/particles/idle motion animating during the hold. `DEFEAT_EXIT_DELAY_MS`
+   (1400) and `ABANDON_EXIT_DELAY_MS` (600) also named, unchanged in value.
+4. **No damage-number feedback on the player's own ship.** `detectCombatFeedback()`
+   already tracked hull/shield deltas (for shake/flash) — added `spawnDamageFloat`
+   calls there (given an optional color param, shield-blue vs. hull-red, offset apart
+   so a same-frame shield-drain-then-hull-overflow hit shows both numbers without
+   overlapping).
+
+Verified: `pnpm test` 725/725, `pnpm sim`/`pnpm pacing` for t1 both clean (only the
+pre-existing accepted SLOW_START flag), and a manual Playwright probe (headless
+Chromium doesn't drive `requestAnimationFrame` in this sandbox, so real per-frame
+`update()` verification needed manually stepping `scene.update()` directly) confirmed
+the ship-side floats actually render (`-9` in shield blue above the ship on a real
+collision) and narrator line 6/6 wraps cleanly with the arrow correctly on ENRG.
+
+**Process note (the reason this entry exists at all):** everything reported from now on
+gets written here (or to a task) immediately when reported, not just summarized back
+and left to the conversation's own memory — this was raised as a direct complaint this
+session.
+
+### Hub shop coach-mark tour skipped the SHIP tab — fixed 2026-07-19
+Tomáš's direct playtest feedback: "the shop tutorial looks buggy... skips the ship
+panel and on the front weapon it tells the player that it works the same." Root cause:
+`SHOP_TABS` (`HubScene.ts`) orders tabs loadout → ship → weapon → ..., but
+`SHOP_TOUR_STEPS` only had 3 steps (loadout, weapon, supplies) — the highlighted-tab
+ring visibly jumped from the 1st tab to the 3rd, skipping SHIP (the 2nd) with no
+acknowledgment. The caption itself ("Every other tab works the same way") wasn't
+factually wrong — `SHIP_SYSTEM` genuinely is one of the same seven kind-row shop
+systems — but the visual skip undercut it. Fixed by retargeting the middle step at
+`shop-tab-ship` instead of `shop-tab-weapon` (SHIP sits immediately after LOADOUT, so
+the tour now reads as a smooth first→second→last progression). No caption change
+needed. Verified via `pnpm audit-taps`/`pnpm screenshot` and a direct look at the
+re-generated `hub-shop-tour-step-2` shot.
 
 ### Daily Mission — y2010's secret weapon can guarantee a full clear, a very large repeatable payout — accepted as intended, 2026-07-18
 Closed as E-1 of `docs/plans/fable-review-fixes-2026-07-18.md`. Decision (Tomáš): accept

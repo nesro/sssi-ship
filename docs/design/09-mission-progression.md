@@ -34,13 +34,23 @@ brightest, most salient node on the whole map, more prominent than `t1` itself.
 **Completing a mission unlocks the next.** Stars are never required to progress — a player
 who barely clears a mission still moves forward. Stars are optional benchmarks.
 
+**A single forced chain, no shortcuts (2026-07-20).** t1→t2→t3→t4→m1→…→m6 — every
+tutorial must be completed before act1 opens. There used to be a `t1→m1` shortcut edge
+plus a "skip tutorials" link on the galaxy screen; both are gone. Every mission also
+carries a `campaign: 'tutorial' | 'act1'` tag (`MissionSpec.campaign`) — t1-t4 are
+'tutorial', m1-m6 are 'act1' — rendered as section labels on the galaxy map. `w0` and
+the daily mission are outside both groupings (`campaign` left `undefined`).
+
 **Shop items are gated by mission completion**, not stars. Higher-tier modules become available
 as the player progresses. Exact mapping of mission → unlocked items: TBD during balance.
 
 ## Welcome mission
 
-`w0` Calibration Run — forced loadout, no stars. Introduces the conveyor and brownout mechanic
-via narrator bar. Branches to tutorials or straight to sector.
+`w0` Calibration Run — forced loadout, no stars. Introduces the conveyor and brownout
+mechanic via narrator bar. Unreachable in the current build (no launcher, no unlock
+edge — see `docs/known-issues.md`); its own TUTORIAL/EXPLORE branch-choice screen was
+removed along with the tutorial-skip mechanism (2026-07-20), since there is no longer
+any branch to choose between.
 
 ## Tutorial missions
 
@@ -54,30 +64,45 @@ hardcoded RNG seed and play identically every time; that was never implemented. 
 to actually implement fixed seeds, or leave tutorials live-seeded permanently, is an
 open design question — see `docs/plans/tutorial-balance-and-doc-cleanup.md`.
 
-**Defeat also completes, for t1-t4 only (`completesOnDefeat`, shipped 2026-07-11).** A
-tutorial ending in defeat pays the same completion bonus and unlocks the next mission
-exactly as a victory would — a destroyed ship mid-tutorial is a valid teaching moment
-(e.g. t1's whole point is "the shield tanks hits for you, but it isn't infinite"), not a
-failure state to protect the player from. `w0` is explicitly excluded — it still
-requires a real victory. Implemented in `src/core/types.ts`'s `MissionSpec.completesOnDefeat`,
-wired through `src/core/result.ts`'s `buildMissionResult` and
-`src/save/SaveManager.ts`'s `markCompleted`.
+**Defeat also completes, but only for the tutorials with no decision to hold the player
+accountable for (`completesOnDefeat`, shipped 2026-07-11, split by decision 2026-07-20).**
+t1 (no weapon — nothing to choose) and t4 (use the preloaded supplies or don't, a
+spectrum rather than a right/wrong pick) still complete on defeat: a destroyed ship
+there is a valid teaching moment (e.g. t1's whole point is "the shield tanks hits for
+you, but it isn't infinite"), not a failure state to protect the player from. t2 and t3
+do NOT — both present a real decision (pick the support card that solves the mission),
+and a decision tutorial with no way to fail it doesn't teach anything: a wrong pick
+there is a genuine, intended failure requiring a retry with the right card, same as any
+main mission. `w0` is separately excluded — it still requires a real victory.
+Implemented in `src/core/types.ts`'s `MissionSpec.completesOnDefeat`, wired through
+`src/core/result.ts`'s `buildMissionResult` and `src/save/SaveManager.ts`'s
+`markCompleted`.
 
-| ID | Name | Forced loadout | Teaches |
-|----|------|----------------|---------|
-| t1 | Shield Basics | none | Collision burst-return; shield is a weapon |
-| t2 | Weapon Systems | pulse-1 | Energy brownout; support cards fix DPS |
-| t3 | Support Cards | pulse-1 | Scripted first offer; unkillable regen guardian |
-| t4 | Battle Supplies | pulse-1 + gifted supplies | Reserve supply usage |
+| ID | Name | Forced loadout | Teaches | Completes on defeat |
+|----|------|----------------|---------|----------------------|
+| t1 | Shield Basics | none | Collision burst-return; shield is a weapon | yes |
+| t2 | Weapon Systems | none (real gear) | Energy brownout; a dense wall beats single-target fire — the shop's free same-level kind switch is the fix | no |
+| t3 | Support Cards | pulse-1 | Scripted first offer; the regen guardian is genuinely unkillable without the right card | no |
+| t4 | Battle Supplies | pulse-1 + gifted supplies | Reserve supply usage | yes |
+
+**t2 is fail-first by design (2026-07-20).** No forced loadout — it runs on the
+player's real, equipped gear, which under the forced chain above is always exactly the
+starter pulse-1/wall-1/torrent-1/rush-1 loadout on a first attempt (t1's 30-coin reward
+can't afford any tier change). A dense fodder wall reliably beats single-target pulse
+fire; the defeat screen skips the usual RETRY/MISSIONS/SHOP button row and hard-navigates
+straight to the shop instead (`MissionSpec.defeatHint`, `ResultViewModel.buttons.kind
+=== 'defeat-shop-redirect'`), where a same-level pulse→scatter switch is always free
+(both 100 coins at level 1). Sim-verified (`runMission`, 2000 seeds/config): pulse-1
+clears 10.8% of attempts, scatter-1 clears 99.2%. See `docs/known-issues.md` for the
+full tuning history and its one known caveat (a player who buys a cheap rear weapon
+before ever attempting t2 can trivialize the wall on real gear alone).
 
 ## Main missions
 
-**Corrected 2026-07-18:** m1's real unlock source is `t1` (`MISSION_UNLOCK_EDGES`), not
-`w0` — `w0` has zero unlock edges at all (it's currently unreachable, see
-`docs/known-issues.md`'s `w0`/`firstBranchChoice` entry) and was never actually wired
-into this table's "unlocks after" chain. Also adds `m3b` (added 2026-07-15,
-`fable-fun-review-followup.md` Item 7), which sits between m3 and m4 in the real unlock
-graph — m4 now unlocks after m3b, not m3 directly.
+m1's unlock source is `t4` (`MISSION_UNLOCK_EDGES`) — the last step of the forced
+tutorial chain above, not `t1` or `w0`. `w0` has zero unlock edges at all (it's
+currently unreachable, see `docs/known-issues.md`'s `w0` entry). Also note `m3b`, which
+sits between m3 and m4 in the real unlock graph — m4 unlocks after m3b, not m3 directly.
 
 | ID | Name | Unlocks after | Introduces |
 |----|------|--------------|------------|
@@ -115,6 +140,9 @@ the side, no connecting line — it isn't part of the campaign's unlock graph) t
 fresh, escalating mission every calendar day, seeded from the date so every player sees the
 same "today." Uses whatever the player currently has equipped — a stronger loadout survives
 longer and clears more of the escalation, by design (see [Coins & Economy](10-economy.md)).
+Motor is the one exception: it's neutralized to the equipped kind's Lv1 spec for this
+mission only (`neutralizeMotorForDaily`, see below), so motor tier is inert here rather than
+part of "stronger gear does better."
 
 **Score, not clear.** The mission always ends in defeat — the goal is banking as many coins as
 possible before the ship falls, not finishing. No stars are awarded; a personal best (raw run
@@ -125,10 +153,13 @@ banks whatever was earned and ends the day's attempt (the same "one shot" contra
 **Structurally an ordinary mission.** Escalation is two-layered: gentle, ever-flowing waves for
 pressure, plus a periodic gate enemy (`blocksConveyor`) whose HP grows steeply — since a
 blocking enemy freezes the mission timeline outright, a gate's real-time cost is
-`HP ÷ weapon DPS`, independent of motor speed. This is what makes "stronger gear survives
-longer and earns more" hold in practice rather than motor tier alone deciding the outcome (an
-inversion found and fixed via `pnpm sim -- --daily-seed`, see
-[Balance & Tuning](13-balance-and-tuning.md)).
+`HP ÷ weapon DPS`, independent of motor speed. Even so, a faster motor still compresses the
+flowing-wave schedule between gates into less real time — measured via `pnpm sim --
+daily-seed` to be a real, large inversion (a slower motor scoring higher), not a small
+residual (see [Balance & Tuning](13-balance-and-tuning.md)). Rather than change wave timing
+itself, the daily neutralizes motor tier to the equipped kind's Lv1 spec, so motor investment
+is inert here instead of counterproductive — weapon/shield/generator remain the levers that
+make "stronger gear survives longer and earns more" hold.
 
 ---
 

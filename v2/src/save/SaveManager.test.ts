@@ -16,7 +16,6 @@ import {
   persistSave,
   reserveDailyAttempt,
   resetSave,
-  skipTutorials,
   switchCost,
   switchItem,
   switchRearWeapon,
@@ -95,17 +94,35 @@ describe('applyMissionResult', () => {
     expect(newStarIds).toEqual([]);
     expect(totalStars(save)).toBe(2);
   });
+
+  it('sets t2FailedOnce on a t2 defeat, not on a t2 victory or any other mission', () => {
+    const afterM1Loss = applyMissionResult(defaultSave(), victoryResult({ missionId: 'm1', status: 'defeat' })).save;
+    expect(afterM1Loss.t2FailedOnce).toBeUndefined();
+
+    const afterT2Win = applyMissionResult(defaultSave(), victoryResult({ missionId: 't2', status: 'victory' })).save;
+    expect(afterT2Win.t2FailedOnce).toBeUndefined();
+
+    const afterT2Loss = applyMissionResult(defaultSave(), victoryResult({ missionId: 't2', status: 'defeat' })).save;
+    expect(afterT2Loss.t2FailedOnce).toBe(true);
+  });
 });
 
 describe('mission gating', () => {
-  it('t1 is unlocked from the start; m1 is locked until t1 clears', () => {
+  it('t1 is unlocked from the start; m1 stays locked until the whole tutorial chain clears', () => {
     const save = defaultSave();
     expect(isMissionUnlocked(save, 't1')).toBe(true);
     expect(isMissionUnlocked(save, 'm1')).toBe(false);
 
     const { save: afterT1 } = applyMissionResult(save, victoryResult({ missionId: 't1', earnedStarIds: [] }));
-    expect(isMissionUnlocked(afterT1, 'm1')).toBe(true);
-    expect(isMissionUnlocked(afterT1, 'm2')).toBe(false);
+    expect(isMissionUnlocked(afterT1, 't2')).toBe(true);
+    expect(isMissionUnlocked(afterT1, 'm1')).toBe(false);
+
+    const { save: afterT4 } = applyMissionResult(
+      { ...afterT1, completedMissionIds: ['t1', 't2', 't3'] },
+      victoryResult({ missionId: 't4', earnedStarIds: [] }),
+    );
+    expect(isMissionUnlocked(afterT4, 'm1')).toBe(true);
+    expect(isMissionUnlocked(afterT4, 'm2')).toBe(false);
   });
 
   it('a loss does not unlock the next mission (non-tutorial — t1-t4 are the deliberate exception, see below)', () => {
@@ -122,7 +139,7 @@ describe('mission gating', () => {
       before,
       victoryResult({ missionId: 't1', status: 'defeat', earnedStarIds: [], coins: 30 }),
     );
-    expect(isMissionUnlocked(afterLoss, 'm1')).toBe(true);
+    expect(isMissionUnlocked(afterLoss, 't2')).toBe(true);
     expect(afterLoss.coins).toBe(before.coins + 30);
   });
 
@@ -162,21 +179,6 @@ describe('onboarding', () => {
     expect(isMissionUnlocked(after, 'm1')).toBe(false);
   });
 
-  it('skipTutorials marks t1-t4 completed, unlocks m1, sets onboardingSeen, and grants zero coins', () => {
-    const save = defaultSave();
-    const after = skipTutorials(save);
-    expect(after.onboardingSeen).toBe(true);
-    expect(after.completedMissionIds).toEqual(expect.arrayContaining(['t1', 't2', 't3', 't4']));
-    expect(isMissionUnlocked(after, 'm1')).toBe(true);
-    expect(after.coins).toBe(save.coins);
-  });
-
-  it('skipTutorials is idempotent — safe to call on a save with some tutorials already completed', () => {
-    const save = { ...defaultSave(), completedMissionIds: ['t1', 't2'] };
-    const after = skipTutorials(save);
-    expect(after.completedMissionIds.filter((id) => id === 't1').length).toBe(1);
-    expect(after.completedMissionIds).toEqual(expect.arrayContaining(['t1', 't2', 't3', 't4']));
-  });
 });
 
 describe('hasCompletedCampaign', () => {
