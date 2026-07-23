@@ -1,4 +1,4 @@
-import { BOSS_APPROACH_TICKS, BOSS_STALL_TICKS, COLLISION_DAMAGE_MULTIPLIER, SHIELD_BURST_RETURN } from './constants';
+import { BOSS_APPROACH_TICKS, BOSS_STALL_TICKS, COLLISION_DAMAGE_MULTIPLIER, LANE_LENGTH, SHIELD_BURST_RETURN } from './constants';
 import { damageShip, removeDeadEnemies } from './combat';
 import type { EffectiveStats } from './stats';
 import type { CoreState, EnemyState } from './types';
@@ -17,11 +17,31 @@ function effectiveSpeed(enemy: EnemyState): number {
   return cyclePosition < BOSS_APPROACH_TICKS ? enemy.speed : 0;
 }
 
+/** The on-screen survivor (distance <= LANE_LENGTH) closest to the ship — burst mode
+ * 'single''s target. A plain min-distance scan, distinct from combat.ts's
+ * nearestEnemyAhead (a max *below a ceiling*, built for the booster-buff mechanic's
+ * different relationship): the enemy that just collided is already at distance <= 0,
+ * the lane's minimum, so nothing is ever "ahead of" it under that rule — it would
+ * always return null here. */
+function nearestOnScreenSurvivor(survivors: EnemyState[]): EnemyState | null {
+  let nearest: EnemyState | null = null;
+  for (const e of survivors) {
+    if (e.distance > LANE_LENGTH) continue;
+    if (nearest === null || e.distance < nearest.distance) nearest = e;
+  }
+  return nearest;
+}
+
 /**
  * Moves every enemy down the lane. An enemy reaching distance 0 collides: it dies and
  * deals chunky damage (~3× its shot) — shield first, remainder to hull (V2_HANDOFF.md §3.1).
  * If the shield absorbs any of the collision damage it bursts back, dealing a fraction of
- * the absorbed amount to all remaining live enemies.
+ * the absorbed amount onward — how far depends on the equipped shield's own `burstMode`
+ * (data/items.ts's SHIELD_BASE): 'single' hits only the nearest on-screen survivor, 'all'
+ * hits every one of them, 'none' skips the splash entirely. Always restricted to enemies
+ * already on screen (distance <= LANE_LENGTH) regardless of mode — a straggler still
+ * queued up off-screen hasn't "arrived" yet from the player's perspective, so it
+ * shouldn't take a hit for a collision it wasn't there to see.
  */
 export function advanceEnemies(state: CoreState, stats: EffectiveStats): void {
   const survivors = [];
@@ -39,8 +59,11 @@ export function advanceEnemies(state: CoreState, stats: EffectiveStats): void {
     totalBurst += (shieldBefore - state.ship.shield) * SHIELD_BURST_RETURN;
     state.stats.collisions += 1;
   }
-  if (totalBurst > 0) {
-    for (const s of survivors) {
+  if (totalBurst > 0 && stats.shieldBurstMode !== 'none') {
+    const targets = stats.shieldBurstMode === 'single'
+      ? [nearestOnScreenSurvivor(survivors)].filter((e): e is EnemyState => e !== null)
+      : survivors.filter((s) => s.distance <= LANE_LENGTH);
+    for (const s of targets) {
       s.hp -= totalBurst;
       // Lets the view tell this apart from weapon damage (CombatScene.ts's detectHits) —
       // a plain hp-before/after comparison can't distinguish the two on its own.

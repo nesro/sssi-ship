@@ -54,8 +54,14 @@ any branch to choose between.
 
 ## Tutorial missions
 
-**Forced loadouts** — player's own gear is ignored. The tutorial provides exactly the modules
-needed to teach the mechanic. Coins earned are kept.
+**The full first-playthrough narrative — what a new player actually sees and does,
+beat by beat across all four tutorials — lives in [New Player
+Experience](15-new-player-experience.md).** This section stays the terse reference
+table; read that doc for the story.
+
+**Forced loadouts, only for t3/t4** — t1 and t2 run on the player's own real, equipped
+gear instead (see each mission's own row below); t3/t4 still replace it entirely with
+exactly the modules needed to teach their mechanic. Coins earned are kept regardless.
 
 **Live-seeded, not fixed (corrected 2026-07-14).** Tutorials are seeded the same way as
 every other mission — `CombatScene.ts` calls `randomSeed()` unconditionally; no seed
@@ -64,38 +70,45 @@ hardcoded RNG seed and play identically every time; that was never implemented. 
 to actually implement fixed seeds, or leave tutorials live-seeded permanently, is an
 open design question — see `docs/plans/tutorial-balance-and-doc-cleanup.md`.
 
-**Defeat also completes, but only for the tutorials with no decision to hold the player
-accountable for (`completesOnDefeat`, shipped 2026-07-11, split by decision 2026-07-20).**
-t1 (no weapon — nothing to choose) and t4 (use the preloaded supplies or don't, a
-spectrum rather than a right/wrong pick) still complete on defeat: a destroyed ship
-there is a valid teaching moment (e.g. t1's whole point is "the shield tanks hits for
-you, but it isn't infinite"), not a failure state to protect the player from. t2 and t3
-do NOT — both present a real decision (pick the support card that solves the mission),
-and a decision tutorial with no way to fail it doesn't teach anything: a wrong pick
-there is a genuine, intended failure requiring a retry with the right card, same as any
-main mission. `w0` is separately excluded — it still requires a real victory.
-Implemented in `src/core/types.ts`'s `MissionSpec.completesOnDefeat`, wired through
+**Defeat also completes, but only for the one tutorial with no decision to hold the
+player accountable for (`completesOnDefeat`, shipped 2026-07-11, split by decision
+2026-07-20, t1 moved to the "no" side 2026-07-20/21).** Only t4 (use the preloaded
+supplies or don't, a spectrum rather than a right/wrong pick) completes on defeat — a
+destroyed ship there is a valid teaching moment, not a failure state to protect the
+player from. t1, t2, and t3 do NOT — each now presents a real decision or a real
+gear-vs-wave mismatch (t1: does the equipped generator keep the shield charged; t2: does
+the equipped weapon break the wall; t3: pick the support card that solves the mission),
+and a "tutorial" with no way to fail teaches nothing — a wrong starting point or pick
+there is a genuine, intended failure requiring a retry, same as any main mission. `w0`
+is separately excluded — it still requires a real victory. Implemented in
+`src/core/types.ts`'s `MissionSpec.completesOnDefeat`, wired through
 `src/core/result.ts`'s `buildMissionResult` and `src/save/SaveManager.ts`'s
 `markCompleted`.
 
 | ID | Name | Forced loadout | Teaches | Completes on defeat |
 |----|------|----------------|---------|----------------------|
-| t1 | Shield Basics | none | Collision burst-return; shield is a weapon | yes |
+| t1 | Shield Basics | none (real gear, weapon stripped) | The shield only recharges as fast as the generator refills — a mismatched generator kind loses to the wave; the shop's free same-level kind switch is the fix | no |
 | t2 | Weapon Systems | none (real gear) | Energy brownout; a dense wall beats single-target fire — the shop's free same-level kind switch is the fix | no |
 | t3 | Support Cards | pulse-1 | Scripted first offer; the regen guardian is genuinely unkillable without the right card | no |
 | t4 | Battle Supplies | pulse-1 + gifted supplies | Reserve supply usage | yes |
 
-**t2 is fail-first by design (2026-07-20).** No forced loadout — it runs on the
+**t1 and t2 are both fail-first by design, via real gear rather than a forced preset**
+(t1: 2026-07-20/21; t2: 2026-07-20). Neither uses `forcedLoadout` — each runs on the
 player's real, equipped gear, which under the forced chain above is always exactly the
-starter pulse-1/wall-1/torrent-1/rush-1 loadout on a first attempt (t1's 30-coin reward
-can't afford any tier change). A dense fodder wall reliably beats single-target pulse
-fire; the defeat screen skips the usual RETRY/MISSIONS/SHOP button row and hard-navigates
-straight to the shop instead (`MissionSpec.defeatHint`, `ResultViewModel.buttons.kind
-=== 'defeat-shop-redirect'`), where a same-level pulse→scatter switch is always free
-(both 100 coins at level 1). Sim-verified (`runMission`, 2000 seeds/config): pulse-1
-clears 10.8% of attempts, scatter-1 clears 99.2%. See `docs/known-issues.md` for the
-full tuning history and its one known caveat (a player who buys a cheap rear weapon
-before ever attempting t2 can trivialize the wall on real gear alone).
+starter loadout on a first attempt (t1 has no earlier mission to shop from; t2 follows
+t1, whose 30-coin reward can't afford any tier change). Each mission's own wave is tuned
+to lose against the real starter default and win after one specific same-level kind
+switch — see [New Player Experience](15-new-player-experience.md) for the exact
+clear-rate/margin numbers and `docs/known-issues.md` for the full tuning history
+(including t2's one known caveat: a player who buys a cheap rear weapon before ever
+attempting t2 can trivialize the wall on real gear alone). Both defeat screens skip the
+usual RETRY/MISSIONS/SHOP button row and hard-navigate straight to the shop instead
+(`MissionSpec.defeatHint`, `ResultViewModel.buttons.kind === 'defeat-shop-redirect'`).
+
+**Retry narration.** t1/t2/t3 each show a shorter, retry-aware narrator script on any
+attempt after a real defeat (`SaveData.t1FailedOnce`/`t2FailedOnce`/`t3FailedOnce`,
+`narratorEventsForAttempt` in `src/data/missions.ts`) — acknowledging the previous
+attempt instead of repeating the full first-time introduction.
 
 ## Main missions
 

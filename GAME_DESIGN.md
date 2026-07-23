@@ -37,6 +37,8 @@ them at once.
 12. [Architecture & Tooling](docs/design/12-architecture-and-tooling.md) — core/view split, simulator, tuning tools, constitutional rules
 13. [Balance & Tuning](docs/design/13-balance-and-tuning.md) — campaign time target, clear-rate targets, balance workflow
 14. [Status — What's Built vs What's Planned](docs/design/14-status.md) — the current punch list
+15. [New Player Experience](docs/design/15-new-player-experience.md) — the first-playthrough
+    story, t1 through m1's unlock, beat by beat
 
 ## Other docs
 

@@ -9,6 +9,7 @@ import { DPR, SCREEN_HEIGHT, SCREEN_WIDTH } from './layout';
 import { buySupplyCharge, defaultSave, loadSave, persistSave, resetSave, switchItem, switchShip, switchRearWeapon, switchSideWeapon } from '../save/SaveManager';
 import { ALL_MISSIONS, setDailyMission } from '../data/missions';
 import { DAILY_MISSION_ID, dailyDateKey, dailySeedForDate, generateDailyMission } from '../data/dailyMission';
+import { Sound } from '../audio/SoundManager';
 
 // dpr-sharp canvas (V2_HANDOFF.md §4.2): render at native resolution, zoom back to
 // logical CSS size. Never Scale.FIT on a small canvas — that was v1's blurry-text bug.
@@ -21,6 +22,15 @@ const game = new Phaser.Game({
   backgroundColor: PALETTE.backgroundNearBlack,
   render: { roundPixels: true },
   scene: [BootScene, AlphaNoticeScene, HubScene, CombatScene, ResultScene],
+});
+
+// Backgrounded-tab noise fix: CombatScene's own update() skips ticking entirely while
+// document.hidden (nothing new gets queued), but a sound already mid-flight in the
+// browser's audio pipeline at the exact instant the tab backgrounds isn't covered by
+// that — this silences output for the duration as the second layer.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) Sound.suspend();
+  else Sound.resume();
 });
 
 // Dev/debug handle (v1 convention): drive scenes from the browser console.

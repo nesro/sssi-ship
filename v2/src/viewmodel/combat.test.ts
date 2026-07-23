@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TICKS_PER_SECOND } from '../core/constants';
-import { FIXTURE_LOADOUT, FIXTURE_MISSION, makeFixtureEnemy } from '../core/fixtures';
+import { FIXTURE_FODDER, FIXTURE_LOADOUT, FIXTURE_MISSION, makeFixtureEnemy } from '../core/fixtures';
 import { createCoreState } from '../core/state';
 import { advanceTick } from '../core/tick';
 import type { MissionSpec } from '../core/types';
@@ -46,25 +46,52 @@ describe('computeCombatHudViewModel', () => {
     expect(vm.missionOrBoss.fraction).toBeCloseTo(0.2);
   });
 
-  // progressFrac is derived internally from state.timelineTick against the mission's
-  // own last event tick (padded by TIMELINE_TAIL_FRACTION), not injected by the
-  // caller — this test drives that real computation instead of a mock value, so it
-  // actually exercises the single-sourced logic.
+  // progressFrac is derived internally from state.timelineTick against a worst-case
+  // arrival-time estimate (progressTotalTicks), not injected by the caller — this test
+  // drives that real computation instead of a mock value, so it actually exercises the
+  // single-sourced logic. FIXTURE_MISSION's own arrival estimate is dominated by its
+  // blocker event (speed 0.5, count 1, fires at tick 180): 180 + (LANE_LENGTH=100 +
+  // 0*0)/0.5 = 380, ahead of every fodder event's own arrival tick (128.3/213.3/356.7)
+  // — padded ×1.05 = 399. Half that should read back as ~0.5.
   it('mode is "mission" and derives progressFrac from state.timelineTick when no boss is present', () => {
     const state = createCoreState(FIXTURE_MISSION, FIXTURE_LOADOUT, 1, []);
-    // FIXTURE_MISSION's last event fires at seconds(24) = 240 ticks; padded total =
-    // 240 * 1.05 = 252. Setting timelineTick to half that should read back as ~0.5.
-    state.timelineTick = 126;
+    state.timelineTick = 199.5;
     const vm = computeCombatHudViewModel(state, null, []);
     expect(vm.missionOrBoss.mode).toBe('mission');
     expect(vm.missionOrBoss.name).toBe('PROG');
     expect(vm.missionOrBoss.fraction).toBeCloseTo(0.5);
   });
 
-  it('progressFrac clamps to 1 once timelineTick passes the padded total', () => {
+  it('progressFrac clamps to 0.99, not 1, once timelineTick passes the worst-case total while still running', () => {
     const state = createCoreState(FIXTURE_MISSION, FIXTURE_LOADOUT, 1, []);
-    state.timelineTick = 999999; // well past the padded total (252)
+    state.timelineTick = 999999; // well past the worst-case total (399)
+    // Still 'running': a mission whose enemies die well before reaching the ship (the
+    // common case) never even gets this far, but the bar must not read "done" while
+    // the mission plainly isn't.
+    expect(computeCombatHudViewModel(state, null, []).missionOrBoss.fraction).toBe(0.99);
+  });
+
+  it('progressFrac reaches the true 1 once the mission has actually resolved', () => {
+    const state = createCoreState(FIXTURE_MISSION, FIXTURE_LOADOUT, 1, []);
+    state.timelineTick = 999999;
+    state.status = 'victory';
     expect(computeCombatHudViewModel(state, null, []).missionOrBoss.fraction).toBe(1);
+  });
+
+  it('progressTotalTicks excludes stationary enemy kinds (speed 0) from the arrival-time estimate', () => {
+    // A turret-only mission (speed 0) would divide by zero under the naive formula —
+    // confirm it instead falls back to the last event's own scheduling tick rather
+    // than producing Infinity (which would pin the bar at ~0% for the whole mission).
+    const stationaryMission: MissionSpec = {
+      ...FIXTURE_MISSION,
+      enemyKinds: { turret: { ...FIXTURE_FODDER, kind: 'turret', speed: 0 } },
+      events: [{ atTimelineTick: 100, kind: 'turret', count: 1, spacing: 0 }],
+    };
+    const state = createCoreState(stationaryMission, FIXTURE_LOADOUT, 1, []);
+    state.timelineTick = 50;
+    const fraction = computeCombatHudViewModel(state, null, []).missionOrBoss.fraction;
+    expect(Number.isFinite(fraction)).toBe(true);
+    expect(fraction).toBeCloseTo(50 / (100 * 1.05));
   });
 
   it('supportMarkers is empty when a boss is present', () => {

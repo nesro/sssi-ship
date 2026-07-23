@@ -15,7 +15,7 @@ function isolatedLoadout(overrides: Partial<NonNullable<LoadoutSnapshot['weapon'
   return {
     ...FIXTURE_LOADOUT,
     generator: { id: 'fix-zero-gen', outputPerTick: 0, capacity: 9999, pulseDrainFraction: 0 },
-    shield: { id: 'fix-no-shield', capacity: 0, pulseShieldFraction: 0 },
+    shield: { id: 'fix-no-shield', capacity: 0, pulseShieldFraction: 0, burstMode: 'none' },
     motor: { id: 'fix-zero-motor', timelineMultiplier: 1, powerDrawPerTick: 0 },
     weapon: {
       ...FIXTURE_WEAPON,

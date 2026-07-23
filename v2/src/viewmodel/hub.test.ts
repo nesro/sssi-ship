@@ -8,7 +8,7 @@ import type { ShopSystemConfig } from './shopSystems';
 import {
   computeCumulativeCost, computeDispatch, computeGalaxyMap, computeKindRows, computeKindRowTrace,
   computeLevelChips, computeLoadoutRows, computeMissionDetail, computeSettings, computeSupplies,
-  DEFAULT_HUB_UI_STATE, isShopNavLocked, resolveUiState,
+  DEFAULT_HUB_UI_STATE, isShopNavLocked, isShopTabLocked, resolveUiState, shopTabUnlockStars,
 } from './hub';
 import type { DailyPanelInput, HubUIState } from './hub';
 import { SUBSCRIPTIONS } from '../data/subscriptions';
@@ -27,6 +27,27 @@ describe('isShopNavLocked', () => {
 
   it('also unlocks if t2 was won outright without ever failing it', () => {
     expect(isShopNavLocked({ ...defaultSave(), completedMissionIds: ['t1', 't2'] })).toBe(false);
+  });
+});
+
+describe('isShopTabLocked', () => {
+  it('rear-weapon and side-weapon stay locked until 3 stars, unlike every core system', () => {
+    expect(isShopTabLocked('rear-weapon', 0)).toBe(true);
+    expect(isShopTabLocked('side-weapon', 2)).toBe(true);
+    expect(isShopTabLocked('rear-weapon', 3)).toBe(false);
+    expect(isShopTabLocked('side-weapon', 10)).toBe(false);
+  });
+
+  it('every system a fresh player needs to survive their first mission is never locked', () => {
+    for (const tab of ['loadout', 'ship', 'weapon', 'shield', 'generator', 'motor', 'supplies'] as const) {
+      expect(isShopTabLocked(tab, 0)).toBe(false);
+    }
+  });
+
+  it('shopTabUnlockStars is undefined for a tab with no gate, and the real threshold otherwise', () => {
+    expect(shopTabUnlockStars('loadout')).toBeUndefined();
+    expect(shopTabUnlockStars('rear-weapon')).toBe(3);
+    expect(shopTabUnlockStars('side-weapon')).toBe(3);
   });
 });
 
@@ -226,8 +247,13 @@ describe('computeKindRows — y2010 secret weapon visibility', () => {
 describe('computeKindRows — tap targets', () => {
   it('not owned: tap target is always Lv1', () => {
     const save = { ...defaultSave(), coins: 5000 };
-    const rows = computeKindRows({ config: WEAPON_SYSTEM, save, playerStars: 0 }, null);
+    // ion needs 4 stars (items.ts's WEAPON_KIND_UNLOCK_STARS) — enough here so this
+    // test is actually exercising an unlocked, purchasable row, not a locked one whose
+    // mutation must be null regardless of target level (see the dedicated locked-row
+    // mutation test above).
+    const rows = computeKindRows({ config: WEAPON_SYSTEM, save, playerStars: 4 }, null);
     const ion = rows.find((r) => r.kind === 'ion');
+    expect(ion?.rowState).not.toBe('locked');
     expect(ion?.tap.mutation).toEqual({ type: 'switch-item', itemId: 'ion-1' });
   });
 
@@ -302,9 +328,33 @@ describe('reachable-state matrix corrections', () => {
     const cluster = rows.find((r) => r.kind === 'cluster'); // gated at 5★ — items.ts's REAR_WEAPON_KIND_UNLOCK_STARS
     expect(grenade?.rowState).not.toBe('locked');
     expect(cluster?.rowState).toBe('locked');
+    // A locked row's own mutation must be null — SaveManager.switchItem enforces no
+    // star gate of its own (by design, same as weapon/rear-weapon kind-unlocking
+    // already relies on), so the viewmodel is the only real enforcement point. Used to
+    // build a live `{ type: 'switch-item', ... }` mutation here regardless of
+    // `locked`, with only HubScene's own tap-wiring choosing not to invoke it —
+    // docs/known-issues.md's "computeKindRow's locked-row mutation is never nulled".
+    expect(cluster?.tap.mutation).toBeNull();
 
     const unlockedRows = computeKindRows({ config: REAR_WEAPON_SYSTEM, save, playerStars: 5 }, null);
     expect(unlockedRows.find((r) => r.kind === 'cluster')?.rowState).not.toBe('locked');
+    expect(unlockedRows.find((r) => r.kind === 'cluster')?.tap.mutation).not.toBeNull();
+  });
+
+  it('generator: torrent (real starter default) and surge (t1\'s fix) stay free; reserve/steady are gated', () => {
+    const save = defaultSave(); // 0 stars
+    const rows = computeKindRows({ config: GENERATOR_SYSTEM, save, playerStars: 0 }, null);
+    expect(rows.find((r) => r.kind === 'torrent')?.rowState).not.toBe('locked');
+    expect(rows.find((r) => r.kind === 'surge')?.rowState).not.toBe('locked');
+    expect(rows.find((r) => r.kind === 'reserve')?.rowState).toBe('locked'); // items.ts's GENERATOR_KIND_UNLOCK_STARS
+    expect(rows.find((r) => r.kind === 'steady')?.rowState).toBe('locked');
+
+    const someStars = computeKindRows({ config: GENERATOR_SYSTEM, save, playerStars: 3 }, null);
+    expect(someStars.find((r) => r.kind === 'reserve')?.rowState).not.toBe('locked');
+    expect(someStars.find((r) => r.kind === 'steady')?.rowState).toBe('locked'); // gated at 5, not yet met
+
+    const allStars = computeKindRows({ config: GENERATOR_SYSTEM, save, playerStars: 5 }, null);
+    expect(allStars.find((r) => r.kind === 'steady')?.rowState).not.toBe('locked');
   });
 });
 
@@ -596,6 +646,14 @@ describe('computeGalaxyMap / computeMissionDetail', () => {
     const detail = computeMissionDetail(save, 't1', null);
     expect(detail?.isTutorial).toBe(true);
     expect(detail?.stars).toEqual([]);
+  });
+
+  it('usesRealGear distinguishes real-gear tutorials (t1, t2) from forced-loadout ones (t3, t4)', () => {
+    const save = defaultSave();
+    expect(computeMissionDetail(save, 't1', null)?.usesRealGear).toBe(true);
+    expect(computeMissionDetail(save, 't2', null)?.usesRealGear).toBe(true);
+    expect(computeMissionDetail(save, 't3', null)?.usesRealGear).toBe(false);
+    expect(computeMissionDetail(save, 't4', null)?.usesRealGear).toBe(false);
   });
 
   it('a non-tutorial mission lists its stars with descriptions', () => {

@@ -59,6 +59,28 @@ const LONGEST_IDLE_STRETCH_THRESHOLD_SECONDS = 17;
 // hull.
 const ANTICLIMAX_WEAPON_KILL_SHARE_THRESHOLD = 0.5;
 
+// Worst-case (not averaged) unbroken zero-enemy stretch, measured only AFTER the first
+// enemy has already appeared at least once — deliberately excludes the run-up to that
+// first appearance, which is SLOW_START's own concern below, not this one. A hard
+// "does this ever happen" check, not IDLE_STRETCH's softer per-mission average: a
+// mission can average well under 17s while still having individual runs with a real,
+// perceptible dead patch mid-fight.
+//
+// 13s is anchored to real, bridged missions, not an aspirational guess: every
+// blocker/turret-caused freeze gap and every plain wide schedule gap across every
+// mission was closed with a real persisting enemy (usually `tank`, occasionally a
+// lighter `fodder` bridge where a mission's own balance floor had no room for
+// anything tougher — see the "blocker/tank bridge" comments beside missions.ts's
+// events) until doing so further would cross that mission's own balance floor or
+// ceiling (`pnpm balance`). m1's 12.5s worst gap is the tightest remaining case — a
+// deliberately sparse breather (missions.ts's own "collapsed 72-112s stretch"
+// comment), not an oversight, sitting on a mission with almost no floor margin left
+// after its own separate MONOTONY fix. 13s sits with real margin above that. A
+// background filler mechanism was tried and reverted (docs/known-issues.md)
+// specifically because closing these gaps further needs volume, and volume breaks
+// balance on every mission tight enough to still be flagged at a lower threshold.
+const HARD_IDLE_GAP_THRESHOLD_SECONDS = 13;
+
 // First tick (state.tick, the real per-advance counter — not timelineTick, which can
 // freeze behind a blocksConveyor enemy) at which the player's ship has done SOMETHING
 // to or with an enemy — fired a shot or taken a collision — "how long until something
@@ -140,6 +162,11 @@ interface DynamicProfile {
   // "screensaver" signal is a single SUSTAINED dead patch, so this tracks the longest
   // unbroken idle stretch per run instead of total idle time.
   avgLongestIdleStretchSeconds: number;
+  // Worst single stretch across every sampled run, post-first-contact only — see
+  // HARD_IDLE_GAP_THRESHOLD_SECONDS's own comment for why this is a max, not an
+  // average, and why it's measured from a different starting point than the metric
+  // above.
+  maxIdleStretchAfterContactSeconds: number;
   avgPeakConcurrency: number;
   bossVictories: number;
   bossWeaponKills: number; // subset of bossVictories where bossKillTick !== null
@@ -167,6 +194,7 @@ function computeDynamicProfile(mission: MissionSpec, runs: number, baseSeed: num
   const hasBoss = Object.values(mission.enemyKinds).some((spec) => spec.isBoss === true);
 
   let longestIdleStretchSum = 0;
+  let maxIdleStretchAfterContactTicks = 0;
   let peakConcurrencySum = 0;
   let bossVictories = 0;
   let bossWeaponKills = 0;
@@ -177,17 +205,38 @@ function computeDynamicProfile(mission: MissionSpec, runs: number, baseSeed: num
     const seed = baseSeed + i;
     let currentIdleStretch = 0;
     let longestIdleStretch = 0;
+    // Only accumulates once an enemy has appeared on screen at least once — the
+    // run-up to that first appearance is SLOW_START's own concern (below), not this
+    // metric's; conflating the two would make a mission's deliberate opening beat
+    // (or an already-accepted SLOW_START residual) look like a mid-mission dead patch.
+    let everHadEnemy = false;
+    let currentPostContactIdle = 0;
     let peak = 0;
+    let lastSpawnedCount = 0;
     // A property, not a bare `let`, so TS/eslint's closure control-flow analysis
     // doesn't narrow it to the literal `null` it starts at — the object holds the
     // union type stably across the sampleTick closure and the runMission call.
     const firstEvent: { tick: number | null } = { tick: null };
     const sampleTick = (state: CoreState): void => {
-      if (state.enemies.length === 0) {
+      // An enemy one-shot the same tick it spawns still renders for a real player —
+      // the sprite appears before it's killed — even though `enemies.length` reads 0
+      // again by the time this end-of-tick sample runs. spawnedCount rising this tick
+      // is what actually happened from a player's perspective; checking it here (not
+      // just live enemy presence) keeps this metric from flagging a gap the player
+      // never saw.
+      const spawnedThisTick = state.spawnedCount > lastSpawnedCount;
+      lastSpawnedCount = state.spawnedCount;
+      if (state.enemies.length === 0 && !spawnedThisTick) {
         currentIdleStretch += 1;
         if (currentIdleStretch > longestIdleStretch) longestIdleStretch = currentIdleStretch;
+        if (everHadEnemy) {
+          currentPostContactIdle += 1;
+          if (currentPostContactIdle > maxIdleStretchAfterContactTicks) maxIdleStretchAfterContactTicks = currentPostContactIdle;
+        }
       } else {
         currentIdleStretch = 0;
+        currentPostContactIdle = 0;
+        everHadEnemy = true;
         if (state.enemies.length > peak) peak = state.enemies.length;
       }
       if (firstEvent.tick === null && state.stats.shotsFired + state.stats.collisions > 0) {
@@ -212,6 +261,7 @@ function computeDynamicProfile(mission: MissionSpec, runs: number, baseSeed: num
   return {
     runs,
     avgLongestIdleStretchSeconds: longestIdleStretchSum / runs,
+    maxIdleStretchAfterContactSeconds: maxIdleStretchAfterContactTicks / TICKS_PER_SECOND,
     avgPeakConcurrency: peakConcurrencySum / runs,
     bossVictories,
     bossWeaponKills,
@@ -225,12 +275,13 @@ function computeDynamicProfile(mission: MissionSpec, runs: number, baseSeed: num
 
 // ── Flags ─────────────────────────────────────────────────────────────────────
 
-type MissionFlag = 'MONOTONY' | 'IDLE_STRETCH' | 'ANTICLIMAX' | 'SLOW_START';
+type MissionFlag = 'MONOTONY' | 'IDLE_STRETCH' | 'HARD_IDLE_GAP' | 'ANTICLIMAX' | 'SLOW_START';
 
 function flagsFor(staticProfile: StaticProfile, dynamicProfile: DynamicProfile): MissionFlag[] {
   const flags: MissionFlag[] = [];
   if (staticProfile.longestSameKindStreak.streak > MONOTONY_STREAK_THRESHOLD) flags.push('MONOTONY');
   if (dynamicProfile.avgLongestIdleStretchSeconds > LONGEST_IDLE_STRETCH_THRESHOLD_SECONDS) flags.push('IDLE_STRETCH');
+  if (dynamicProfile.maxIdleStretchAfterContactSeconds > HARD_IDLE_GAP_THRESHOLD_SECONDS) flags.push('HARD_IDLE_GAP');
   if (dynamicProfile.hasBoss && dynamicProfile.bossVictories > 0) {
     const share = dynamicProfile.bossWeaponKills / dynamicProfile.bossVictories;
     if (share < ANTICLIMAX_WEAPON_KILL_SHARE_THRESHOLD) flags.push('ANTICLIMAX');
@@ -247,6 +298,7 @@ function flagsFor(staticProfile: StaticProfile, dynamicProfile: DynamicProfile):
 const FLAG_LABEL: Record<MissionFlag, string> = {
   MONOTONY: '⚠️ MONOTONY',
   IDLE_STRETCH: '⚠️ IDLE_STRETCH',
+  HARD_IDLE_GAP: '⚠️ HARD_IDLE_GAP',
   ANTICLIMAX: '⚠️ ANTICLIMAX',
   SLOW_START: '⚠️ SLOW_START',
 };
@@ -269,19 +321,20 @@ function formatReport(results: MissionPacingResult[]): string {
       '(no simulation); dynamic columns are measured from real runs at the mission\'s ' +
       'intended/forced loadout with the `greedy` card strategy.',
     '',
-    `| Mission | Longest same-kind streak | Longest idle stretch | Peak concurrency | First event | Boss weapon-kill share | Flags |`,
-    `|---|---|---|---|---|---|---|`,
+    `| Mission | Longest same-kind streak | Longest idle stretch (avg) | Worst idle gap (max) | Peak concurrency | First event | Boss weapon-kill share | Flags |`,
+    `|---|---|---|---|---|---|---|---|`,
   ];
   for (const r of results) {
     const streak = `${r.static.longestSameKindStreak.kind || '—'} ×${String(r.static.longestSameKindStreak.streak)}`;
     const idleStretch = `${r.dynamic.avgLongestIdleStretchSeconds.toFixed(1)}s`;
+    const worstGap = `${r.dynamic.maxIdleStretchAfterContactSeconds.toFixed(1)}s`;
     const peak = r.dynamic.avgPeakConcurrency.toFixed(1);
     const firstEvent = r.dynamic.runsWithFirstEvent > 0 ? `${r.dynamic.avgFirstEventSeconds.toFixed(1)}s` : '—';
     const bossShare = r.dynamic.hasBoss && r.dynamic.bossVictories > 0
       ? `${((r.dynamic.bossWeaponKills / r.dynamic.bossVictories) * 100).toFixed(0)}%`
       : '—';
     const flagLabels = r.flags.map((f) => FLAG_LABEL[f]).join(' ') || '';
-    lines.push(`| ${r.missionId} | ${streak} | ${idleStretch} | ${peak} | ${firstEvent} | ${bossShare} | ${flagLabels} |`);
+    lines.push(`| ${r.missionId} | ${streak} | ${idleStretch} | ${worstGap} | ${peak} | ${firstEvent} | ${bossShare} | ${flagLabels} |`);
   }
   lines.push('');
   for (const r of results) {
@@ -301,6 +354,7 @@ interface JsonReport {
     longestSameKindStreak: StaticProfile['longestSameKindStreak'];
     kindVarietyByThird: StaticProfile['kindVarietyByThird'];
     avgLongestIdleStretchSeconds: number;
+    maxIdleStretchAfterContactSeconds: number;
     avgPeakConcurrency: number;
     avgFirstEventSeconds: number | null;
     bossWeaponKillShare: number | null;
@@ -315,6 +369,7 @@ function buildJsonReport(results: MissionPacingResult[]): JsonReport {
     longestSameKindStreak: r.static.longestSameKindStreak,
     kindVarietyByThird: r.static.kindVarietyByThird,
     avgLongestIdleStretchSeconds: r.dynamic.avgLongestIdleStretchSeconds,
+    maxIdleStretchAfterContactSeconds: r.dynamic.maxIdleStretchAfterContactSeconds,
     avgPeakConcurrency: r.dynamic.avgPeakConcurrency,
     avgFirstEventSeconds: r.dynamic.runsWithFirstEvent > 0 ? r.dynamic.avgFirstEventSeconds : null,
     bossWeaponKillShare: r.dynamic.hasBoss && r.dynamic.bossVictories > 0

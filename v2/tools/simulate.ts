@@ -53,7 +53,7 @@ import type { LoadoutSnapshot } from '../src/core/types';
 import { abilityPoolForLoadout } from '../src/data/cards';
 import { DAILY_MISSION_ID, generateDailyMission } from '../src/data/dailyMission';
 import { ALL_MISSIONS, missionById, setDailyMission } from '../src/data/missions';
-import { neutralizeMotorForDaily, resolveForcedLoadout, STARTER_LOADOUT } from '../src/data/loadouts';
+import { applyDisableAuxWeapons, applyDisableWeapon, applyGeneratorOverride, neutralizeMotorForDaily, resolveForcedLoadout, STARTER_LOADOUT } from '../src/data/loadouts';
 import { intendedLoadoutForMission, starterKindLoadoutAtLevel, timeStarT2Loadout, timeStarT3Loadout, timeStarT4Loadout } from './loadoutPresets';
 import { alwaysOnToggles, brownoutAwareToggles, greedyPick, prioritizeHighValueTargets, tapFirstChargedSupply, tapSuppliesReactively } from './policies';
 
@@ -185,6 +185,9 @@ function main(): void {
   const mission = missionById(options.missionId);
   let loadout = resolveLoadout(options, mission);
   if (mission.id === DAILY_MISSION_ID) loadout = neutralizeMotorForDaily(loadout);
+  if (mission.disableWeapon === true) loadout = applyDisableWeapon(loadout);
+  if (mission.neutralizeGeneratorId !== undefined) loadout = applyGeneratorOverride(loadout, mission.neutralizeGeneratorId);
+  if (mission.disableAuxWeapons === true) loadout = applyDisableAuxWeapons(loadout);
 
   let victories = 0;
   let totalTicks = 0;

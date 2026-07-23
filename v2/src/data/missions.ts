@@ -120,7 +120,7 @@ const WELCOME_MISSION: MissionSpec = {
   blurb: 'Instructor standing by. Destroy the targets.',
   enemyKinds: { fodder: FODDER_EASY },
   events: [
-    { atTimelineTick: seconds(5),  kind: 'fodder', count: 2, spacing: 22 },
+    { atTimelineTick: seconds(2),  kind: 'fodder', count: 2, spacing: 22 },
     { atTimelineTick: seconds(14), kind: 'fodder', count: 3, spacing: 18 },
     { atTimelineTick: seconds(24), kind: 'fodder', count: 3, spacing: 16 },
     { atTimelineTick: seconds(33), kind: 'fodder', count: 4, spacing: 14 },
@@ -145,14 +145,25 @@ const TUTORIAL_LOADOUT_BASE: Omit<ForcedLoadout, 'weaponId'> = {
  * Slow-crawl guardian for t1: no weapon, so the ship must "let them reach you" — the
  * shield absorbs the collision (routed shield-first, conveyor.ts) and bursts a
  * fraction of the absorbed damage back onto every other surviving guardian
- * (SHIELD_BURST_RETURN) — visible chip damage, not enough alone to kill one (25 HP
- * against a single collision's burst). missChance=0.9 keeps shot pressure non-lethal
- * so the player can safely observe the mechanic play out.
+ * (SHIELD_BURST_RETURN). missChance=0.9 keeps direct shot pressure non-lethal, so
+ * collisions (not ranged fire) are what the mission is actually testing.
+ *
+ * speed 2.5 (not the old 2.2) stays under kamikaze's 2.8 — the fastest enemy in the
+ * game — so this never becomes the single fastest thing on screen and reads as an
+ * unreadable blink instead of a real "the shield absorbs a hit" beat.
+ *
+ * shotDamage 8 (not the old 3): t1's wave is capped at 5 guardians in one event (see
+ * the mission's own event-count comment below for why — a visual-overlap constraint,
+ * not a difficulty one), and 5 collisions at the old shotDamage couldn't threaten the
+ * ship's hull no matter which generator kind was equipped, since capping bare
+ * collision damage that low left the WHOLE wave's total damage pool too small to
+ * ever fail regardless of shield timing. At 8, real HP (25) still comfortably
+ * survives one burst — the design intent from the old comment stays true — but the
+ * WAVE now differentiates generator kinds again (sim-verified, see the mission's own
+ * forcedLoadout comment below).
  */
-// speed tuned so t1's first collision lands early enough to feel responsive — see the
-// spawn-tick comment on t1's own MissionSpec below for the timing math.
 const GUARDIAN_SLOW: EnemySpec = {
-  kind: 'guardian', hp: 25, speed: 2.2, shotDamage: 3,
+  kind: 'guardian', hp: 25, speed: 2.5, shotDamage: 8,
   ticksBetweenShots: seconds(3), blocksConveyor: false, coinReward: 15,
   regenPerTick: 0, critChance: 0, missChance: 0.9, critMult: 2.0,
 };
@@ -212,14 +223,15 @@ export const MIN_VISUAL_SPACING: Partial<Record<string, number>> = {
 // t1 has two narratorEvents, not one: the first (tick 0) sets up the concepts before
 // any enemy arrives; the second pauses right after the first guardian collision
 // resolves so the lines can point at real, freshly-changed numbers instead of
-// describing the mechanic in the abstract beforehand. atTimelineTick: 56 is the exact,
-// deterministic tick that collision lands on for this mission's fixed forced loadout —
-// GUARDIAN_SLOW's speed (2.2) and the spawn event's own atTimelineTick (seconds(1)) have
-// no RNG in their path to a collision, so this is stable across every run, not a guess.
-// If GUARDIAN_SLOW's speed/hp or this event's spawn tick/count ever change, recompute
-// via a quick core-only probe (createCoreState + advanceTick in a loop, watching
-// state.ship.shield for the first drop) rather than eyeballing a new value — this tick
-// doubles as CombatScene.ts's NARRATOR_ARROW_TARGETS event-index key (t1[1]).
+// describing the mechanic in the abstract beforehand. atTimelineTick: 55 is picked to
+// land safely after the first collision, not before it — SPAWN_JITTER means the first
+// collision's exact tick varies by seed (sim-confirmed range: 46-53 for this mission's
+// current speed/spacing), so this is a safe-margin value, not the single "the" tick a
+// deterministic run would hit. If GUARDIAN_SLOW's speed or this event's spawn tick/count
+// ever change, recompute via a quick core-only probe (createCoreState + advanceTick in a
+// loop, watching state.stats.collisions for the first increment, across several seeds —
+// not just one) rather than eyeballing a new value — this tick doubles as
+// CombatScene.ts's NARRATOR_ARROW_TARGETS event-index key (t1[1]).
 const T1_NARRATOR_EVENTS: NarratorEvent[] = [
   {
     atTimelineTick: 0,
@@ -231,10 +243,10 @@ const T1_NARRATOR_EVENTS: NarratorEvent[] = [
     ],
   },
   {
-    atTimelineTick: 56,
+    atTimelineTick: 55,
     lines: [
       'That collision drained real SHLD — a stronger SHIELD module absorbs more before it breaks, and a stronger GENERATOR refills it faster.',
-      'Some of what your shield just absorbed bounces back onto the other guardians — that blue number floating off them is shield backlash, not weapon fire.',
+      'Some of what your shield just absorbed bounces back onto the nearest other guardian — that blue number is shield backlash, not weapon fire. Different SHIELD kinds spread that backlash differently.',
     ],
   },
 ];
@@ -244,11 +256,16 @@ const T2_NARRATOR_EVENTS: NarratorEvent[] = [
     lines: [
       'Your laser draws energy on every shot — watch that bar.',
       'It refills on its own between shots. Run it too low and your fire rate slows — but it never stops.',
-      "A better GENERATOR module refills that bar faster — check the shop's GENERATOR tab for the tradeoffs between kinds.",
+      "This generator runs at a fixed baseline for this fight — it's your WEAPON that decides if this wall goes down.",
       "A dense wall's inbound. Single-target fire will bog down against it.",
     ],
   },
 ];
+// Both missions' second event fires a couple ticks before their own supportCallTicks[0]
+// (t3: 20, t4: 90) — close enough to read as "right before the choice appears," but far
+// enough that checkNarratorEvents (core/tick.ts) resolves and clears pendingNarrator on
+// an earlier tick, so maybeTriggerSupportCall's own pendingOffer never has to contend
+// with a still-open modal on the exact same tick.
 const T3_NARRATOR_EVENTS: NarratorEvent[] = [
   {
     atTimelineTick: 0,
@@ -258,57 +275,124 @@ const T3_NARRATOR_EVENTS: NarratorEvent[] = [
       "A stronger FRONT WEAPON module raises your base damage permanently — worth checking after this fight.",
     ],
   },
+  {
+    atTimelineTick: seconds(1.8),
+    lines: [
+      "Support window opening. Shield and generator upgrades won't touch this thing's regen — only raw damage has a shot.",
+    ],
+  },
 ];
 const T4_NARRATOR_EVENTS: NarratorEvent[] = [
   {
     atTimelineTick: 0,
     lines: [
       'Two reserve supplies are preloaded on your right panel.',
-      'Tap them when you need a burst of shield or damage — this fight is built for testing them.',
+      'Tap them when you need a burst of shield or damage — no wrong pick here, this fight is just built for testing them.',
       "More charges, and new supply kinds, are yours in the shop's SUPPLIES tab — stock up before your next run.",
+    ],
+  },
+  {
+    atTimelineTick: seconds(8.8),
+    lines: [
+      "Support window opening. Pick whatever helps — and don't forget those reserves are sitting ready too.",
     ],
   },
 ];
 
+/**
+ * Shown instead of the first-attempt scripts above on a retry after a real defeat
+ * (SaveManager.ts's narratorEventsForAttempt, keyed on t1FailedOnce/t2FailedOnce/
+ * t3FailedOnce) — short, acknowledges the fix already made, and deliberately doesn't
+ * name a HUD row (NARRATOR_ARROW_TARGETS, CombatScene.ts, only has entries for the
+ * first-attempt scripts above; a player retrying already knows where SHLD/ENRG live).
+ */
+const T1_RETRY_NARRATOR_EVENTS: NarratorEvent[] = [
+  { atTimelineTick: 0, lines: ["Same wave, new generator. Let's see if it can keep the shield charged this time."] },
+];
+const T2_RETRY_NARRATOR_EVENTS: NarratorEvent[] = [
+  { atTimelineTick: 0, lines: ['New weapon loaded. Let\'s see if it breaks through this wall.'] },
+];
+const T3_RETRY_NARRATOR_EVENTS: NarratorEvent[] = [
+  { atTimelineTick: 0, lines: ["Different pick this time — that guardian's regen still won't wait for you."] },
+];
+const RETRY_NARRATOR_EVENTS: Record<string, NarratorEvent[]> = {
+  t1: T1_RETRY_NARRATOR_EVENTS,
+  t2: T2_RETRY_NARRATOR_EVENTS,
+  t3: T3_RETRY_NARRATOR_EVENTS,
+};
+
+/**
+ * Which narratorEvents a mission should actually run with THIS attempt — the mission's
+ * own first-attempt script, unless the matching `*FailedOnce` flag is already set, in
+ * which case the shorter retry-aware script above takes over. Takes the three flags
+ * directly (not a `SaveData`) so this file never needs to import from save/SaveManager
+ * — that module already imports FROM here (missionById, MISSION_UNLOCK_EDGES).
+ */
+export function narratorEventsForAttempt(
+  mission: MissionSpec,
+  failedOnce: { t1: boolean | undefined; t2: boolean | undefined; t3: boolean | undefined },
+): NarratorEvent[] | undefined {
+  const retryVariant = RETRY_NARRATOR_EVENTS[mission.id];
+  if (retryVariant === undefined) return mission.narratorEvents;
+  const failedBefore = mission.id === 't1' ? failedOnce.t1 : mission.id === 't2' ? failedOnce.t2 : failedOnce.t3;
+  return failedBefore === true ? retryVariant : mission.narratorEvents;
+}
+
 // ---------- Tutorial missions ----------
 
 const TUTORIAL_MISSIONS: MissionSpec[] = [
-  // completesOnDefeat splits the four tutorials by whether they present a real
-  // decision: t1 (no weapon, nothing to choose) and t4 (use the preloaded supplies or
-  // don't — a spectrum, not a right/wrong pick) complete on defeat too, since there's
-  // no decision to hold the player accountable for. t2/t3 (pick the support card that
-  // solves the mission) do NOT — a decision tutorial with no way to fail it teaches
-  // nothing, so a wrong pick there is a genuine, intended failure requiring a retry.
+  // completesOnDefeat splits the four tutorials by whether they hold the player
+  // accountable for something: t4 (use the preloaded supplies or don't — a spectrum,
+  // not a right/wrong pick) completes on defeat, since there's nothing to hold the
+  // player accountable for. t1/t2/t3 (a starting-gear mismatch or a support-card pick
+  // that must be corrected to survive) do NOT — a mission that can't fail teaches
+  // nothing, so a wrong starting point or pick is a genuine, intended failure requiring
+  // a retry (t1/t2 via a free gear switch in the shop; t3 via a correct card pick).
   {
     id: 't1', name: 'Shield Basics', completionCoins: 30, campaign: 'tutorial',
-    blurb: 'No weapon. Your shield is the only weapon. Let them reach you.',
+    blurb: 'No weapon. Your shield is the only defense — and this generator can\'t keep it charged.',
     enemyKinds: { guardian: GUARDIAN_SLOW },
-    // 100-unit lane / speed 2.2 ≈ 4.5s travel; with the 1s spawn delay, first collision
-    // lands ~5.5s after the popup is dismissed — deliberately not faster, since that
-    // would exceed every other enemy's speed (kamikaze, the fastest, is 2.8) and read as
-    // an unreadable blink rather than "the shield absorbs a hit". `pnpm pacing`'s
-    // SLOW_START flag tracks this going forward. Spacing 60 (not MIN_VISUAL_SPACING's
-    // floor of 15) spreads the 3 collisions ~2.7s apart instead of ~1.1s — enough for the
-    // player to watch each one land and read the SHLD bar drop before the next arrives.
+    // Spacing sets the real-time gap between collisions (~3.2s apart at GUARDIAN_SLOW's
+    // speed), not visual clearance — CombatScene.ts's view-layer overlap guard
+    // (separateOverlappingSprites) is what actually keeps guardians from rendering on
+    // top of each other. This number is load-bearing for the mission's own win
+    // condition instead: generator-surge-1 (the intended fix) needs real recharge time
+    // between each collision to keep the shield absorbing hits rather than passing them
+    // through to hull, and that time comes directly from this gap. Below ~70 that
+    // recharge falls behind and the fix stops clearing at all (sim-confirmed cliff:
+    // 100/100 clears at 70-80, 0/100 at 60) — 80 sits with real margin above it.
     events: [
-      { atTimelineTick: seconds(1), kind: 'guardian', count: 3, spacing: 60 },
+      { atTimelineTick: seconds(1), kind: 'guardian', count: 5, spacing: 80 },
     ],
     supportCallTicks: [],
-    // No all-kills star: collisions are not kills (stars.ts), and this mission's only
-    // damage source is the shield-burst (SHIELD_BURST_RETURN), which can chip a
-    // guardian but can't kill one at these numbers — the star would be permanently
-    // unreachable. shield-unbroken fits the mission's actual identity instead.
-    stars: [
-      { id: 't1-hull-50', family: 'hull-above', threshold: 0.5 },
-      { id: 't1-shield', family: 'shield-unbroken', threshold: 0 },
-    ],
-    // shield-wall-2 (60 capacity), not the shared TUTORIAL_LOADOUT_BASE's wall-1 (30) —
-    // t1 has no weapon and no toggles, so the shield-unbroken star has no player skill
-    // behind it at all, only the enemy-stats-vs-capacity matchup; at wall-1's 30
-    // capacity, 3 guardian collisions (9 dmg each) plus incidental ranged hits reliably
-    // exceeded it (0% reachable, sim-confirmed). wall-2 leaves real margin.
-    forcedLoadout: { ...TUTORIAL_LOADOUT_BASE, weaponId: null, shieldId: 'shield-wall-2' },
-    completesOnDefeat: true,
+    // Tutorial stars never reach the player (isTutorial always renders "TRAINING
+    // MISSION / No stars awarded", viewmodel/result.ts) — internal bookkeeping only.
+    // Both of t1's former stars are permanently unreachable under the one real fix here
+    // (generator-surge-1, sim-confirmed 0% for hull-above 0.5 and shield-unbroken alike
+    // — shield always breaks at least once, conveyor.ts routes shield-first) — dropped
+    // rather than kept dead, matching t2/t3's own precedent.
+    stars: [],
+    // No forcedLoadout: this mission runs on the player's REAL equipped gear (weapon
+    // stripped via disableWeapon below), same as t2 — a forced loadout is replaced
+    // fresh every attempt (ForcedLoadout's own doc comment: "the player's save is
+    // ignored for this run"), so a shop fix would never actually change anything on
+    // retry. torrent-1 (defaultSave()'s real starter generator) can't refill the
+    // shield fast enough against this wave — every generator kind refills the shield
+    // only once its own tank is completely full (energy.ts's pulseShield), and
+    // torrent/reserve's output-vs-capacity ratios are both too slow here (sim-confirmed
+    // 0% clear for both). generator-steady-1 is a real but unreliable ~52% coin-flip,
+    // not a hinted fix — deliberately left that way, a new pattern for this codebase's
+    // tutorials (t2/t3 each have exactly one real fix path, not a partial one).
+    // generator-surge-1 ("maximum output, tiny battery") is the one kind whose fast
+    // small-batch refill reliably keeps pace — a free same-level switch, sim-confirmed
+    // 100% clear with real margin, and now also earns a real shield-burst kill (a
+    // guardian's own coinReward, same universal per-kill path every mission uses) —
+    // burst damage only accumulates when the shield is actually absorbing hits, which
+    // structurally can't happen on a losing run, so a real fail still nets 0 coins,
+    // same as any other mission where the ship dies before a kill lands.
+    disableWeapon: true,
+    completesOnDefeat: false,
+    defeatHint: 'Your generator can\'t refill the shield fast enough to keep up with these hits. Look for a generator built for rapid output over capacity — it\'s a free switch at this level.',
     narratorEvents: T1_NARRATOR_EVENTS,
   },
   {
@@ -318,8 +402,8 @@ const TUTORIAL_MISSIONS: MissionSpec[] = [
     // No forcedLoadout — this mission runs on the player's real, equipped gear. Under
     // the forced tutorial chain (t1 is the only mission that can precede it, and t1's
     // 30-coin reward can't afford any tier change) that's always exactly starter
-    // pulse-1/wall-1/torrent-1/rush-1 on a first attempt. Split wave 2 into two
-    // sub-waves half a second apart, not a single count=16 wave: sim-verified
+    // pulse-1/wall-1/torrent-1/rush-1 on a genuinely first attempt. Split wave 2 into
+    // two sub-waves half a second apart, not a single count=16 wave: sim-verified
     // (runMission, 2000 seeds/config) that gives pulse-1 a firm fail (10.8%) and a
     // same-level pulse→scatter switch (free — both 100 coins at level 1) a reliable,
     // not razor-thin, clear (99.2%, avg hull 12.3% remaining).
@@ -340,6 +424,22 @@ const TUTORIAL_MISSIONS: MissionSpec[] = [
     completesOnDefeat: false,
     defeatHint: 'Your weapon hits one target at a time — this wall needs more spread than that. The shop has a same-level switch that fixes it, and it costs nothing.',
     narratorEvents: T2_NARRATOR_EVENTS,
+    // The ship has exactly one shared energy pool — the shield's own auto-pulse
+    // (core/energy.ts's pulseShield) draws from and gates on the same number
+    // fireShipWeapon does. A generator picked to fix t1 (generator-surge-1) carries
+    // into this mission on real gear and clears this wall regardless of which weapon
+    // is equipped (sim-confirmed), since t1's fix and t2's own difficulty both hinge on
+    // the same shared resource. Pinned to generator-torrent-1 — the real starter
+    // default the numbers above were tuned against — so t2 stays a genuine test of the
+    // WEAPON specifically, the one thing this mission is actually about.
+    neutralizeGeneratorId: 'generator-torrent-1',
+    // A rear weapon draws from that same shared energy pool and adds independent
+    // damage on top — and it's the cheapest opportunistic purchase in the whole shop
+    // (30 coins, no core-slot upgrade is affordable yet), so a player who buys one
+    // with t1's completion coins carries it straight into t2 and clears regardless of
+    // main weapon (sim-confirmed). Stripped for the same reason the generator is
+    // pinned above: this mission's own lesson is the main WEAPON specifically.
+    disableAuxWeapons: true,
   },
   {
     id: 't3', name: 'Support Cards', completionCoins: 60, campaign: 'tutorial',
@@ -378,7 +478,11 @@ const TUTORIAL_MISSIONS: MissionSpec[] = [
   },
   {
     id: 't4', name: 'Battle Supplies', completionCoins: 70, campaign: 'tutorial',
-    blurb: 'Two supplies are preloaded. Use them — they are built for moments like this.',
+    // Deliberately NOT another fail-then-fix mission like t1/t2/t3 — no starting-gear
+    // mismatch or decision to get wrong here, just optional tools to try. The blurb/
+    // narrator copy says so explicitly since a player who just retried three straight
+    // "you will fail without the fix" tutorials would otherwise expect a fourth.
+    blurb: "Two supplies are preloaded. No wrong pick this time — just try them and see what they do.",
     enemyKinds: { fodder: FODDER, striker: STRIKER },
     events: [
       { atTimelineTick: seconds(3), kind: 'fodder', count: 5, spacing: 14 },
@@ -436,7 +540,9 @@ export const ALL_MISSIONS: MissionSpec[] = [
       { atTimelineTick: seconds(90),  kind: 'fodder',  count: 6,  spacing: 18 },
       { atTimelineTick: seconds(108), kind: 'fodder',  count: 9,  spacing: 14  },
       { atTimelineTick: seconds(122), kind: 'fodder',  count: 7,  spacing: 14  },
-      { atTimelineTick: seconds(132), kind: 'fodder',  count: 8,  spacing: 14  },
+      // Fewer, tougher strikers instead of another fodder wave — breaks the fodder-only
+      // streak above without adding on top of it (roughly equivalent total threat).
+      { atTimelineTick: seconds(132), kind: 'striker', count: 3,  spacing: 16 },
       // Final push — strikers introduced, with one support call to prep for them
       { atTimelineTick: seconds(148), kind: 'striker', count: 3,  spacing: 16 },
       { atTimelineTick: seconds(164), kind: 'striker', count: 3,  spacing: 15 },
@@ -475,7 +581,8 @@ export const ALL_MISSIONS: MissionSpec[] = [
     blurb: 'Strikers hit harder and close in fast.',
     enemyKinds: { fodder: FODDER, striker: STRIKER, blocker: BLOCKER, tank: TANK },
     events: [
-      { atTimelineTick: seconds(2),   kind: 'fodder',  count: 4,  spacing: 14 },
+      { atTimelineTick: seconds(2),   kind: 'fodder',  count: 3,  spacing: 14 },
+      { atTimelineTick: seconds(9),   kind: 'fodder',  count: 1,  spacing: 0  },
       { atTimelineTick: seconds(15),  kind: 'fodder',  count: 4,  spacing: 14 },
       { atTimelineTick: seconds(28),  kind: 'striker', count: 2,  spacing: 18 },
       { atTimelineTick: seconds(42),  kind: 'fodder',  count: 5,  spacing: 14 },
@@ -484,15 +591,14 @@ export const ALL_MISSIONS: MissionSpec[] = [
       { atTimelineTick: seconds(84),  kind: 'striker', count: 3,  spacing: 16 },
       { atTimelineTick: seconds(98),  kind: 'fodder',  count: 6,  spacing: 14 },
       { atTimelineTick: seconds(110), kind: 'blocker', count: 1,  spacing: 0  },
+      // A tank right after the blocker — `timelineTick` was frozen at 1100 for the
+      // blocker's whole lifetime, so once it dies there's a genuine 14s real wait
+      // before the schedule reaches the next wave at 1240. Firing at 1102 (barely
+      // above the blocker's own tick) means it spawns the moment the timeline
+      // unfreezes, and its own 90hp bridges most of what was dead air.
+      { atTimelineTick: seconds(110.2), kind: 'tank',    count: 1,  spacing: 0  },
       { atTimelineTick: seconds(124), kind: 'striker', count: 4,  spacing: 15 },
       { atTimelineTick: seconds(138), kind: 'fodder',  count: 7,  spacing: 14  },
-      // Provisional tension experiment, not yet validated by a real playtest: an
-      // energy-recovery-denial burst just before the 148s support call, meant to read as
-      // a "hold out, help is close" moment. Kept to a single enemy — it sits sandwiched
-      // between the existing seconds(124)/seconds(152) striker waves, so even a small
-      // count bump stacks striker pressure fast. Revert this one event if a playtest
-      // says it reads as unfair rather than tense.
-      { atTimelineTick: seconds(142), kind: 'striker', count: 1,  spacing: 0 },
       { atTimelineTick: seconds(152), kind: 'striker', count: 4,  spacing: 15 },
       { atTimelineTick: seconds(166), kind: 'fodder',  count: 7,  spacing: 14  },
       { atTimelineTick: seconds(180), kind: 'striker', count: 5,  spacing: 15 },
@@ -504,6 +610,7 @@ export const ALL_MISSIONS: MissionSpec[] = [
       { atTimelineTick: seconds(220), kind: 'fodder',  count: 5,  spacing: 14  },
       // Final push — tanks introduced, unchanged from the mission's original tuning.
       { atTimelineTick: seconds(232), kind: 'tank',    count: 2,  spacing: 20 },
+      { atTimelineTick: seconds(240), kind: 'tank',    count: 1,  spacing: 0  },
       { atTimelineTick: seconds(252), kind: 'tank',    count: 3,  spacing: 17 },
       { atTimelineTick: seconds(268), kind: 'tank',    count: 4,  spacing: 16 },
     ],
@@ -537,6 +644,7 @@ export const ALL_MISSIONS: MissionSpec[] = [
       { atTimelineTick: seconds(40),  kind: 'fodder',  count: 7,  spacing: 14  },
       { atTimelineTick: seconds(54),  kind: 'fodder',  count: 8,  spacing: 14  },
       { atTimelineTick: seconds(68),  kind: 'blocker', count: 1,  spacing: 0  },
+      { atTimelineTick: seconds(68.2), kind: 'fodder', count: 2,  spacing: 14  },
       { atTimelineTick: seconds(82),  kind: 'fodder',  count: 8,  spacing: 14  },
       { atTimelineTick: seconds(96),  kind: 'tank',    count: 2,  spacing: 22 },
       // Escalating tier introduced here — m3 is mission 3-of-6, first striker exposure.
@@ -553,7 +661,7 @@ export const ALL_MISSIONS: MissionSpec[] = [
       { atTimelineTick: seconds(143), kind: 'striker', count: 2,  spacing: 15 },
       { atTimelineTick: seconds(154), kind: 'striker', count: 5,  spacing: 15 },
       { atTimelineTick: seconds(168), kind: 'tank',    count: 2,  spacing: 20 },
-      { atTimelineTick: seconds(182), kind: 'fodder',  count: 10, spacing: 14  },
+      { atTimelineTick: seconds(182), kind: 'fodder',  count: 9,  spacing: 14  },
       { atTimelineTick: seconds(196), kind: 'striker', count: 5,  spacing: 15 },
       { atTimelineTick: seconds(208), kind: 'tank',    count: 2,  spacing: 20 },
       { atTimelineTick: seconds(218), kind: 'fodder',  count: 8,  spacing: 14  },
@@ -564,7 +672,13 @@ export const ALL_MISSIONS: MissionSpec[] = [
       // to keep that dead time under the idle-stretch threshold without touching
       // blocker counts (the actual difficulty lever — see the cliff warning above).
       { atTimelineTick: seconds(230), kind: 'blocker', count: 2,  spacing: 19 },
+      { atTimelineTick: seconds(230.2), kind: 'tank',  count: 1,  spacing: 0  },
       { atTimelineTick: seconds(245), kind: 'blocker', count: 3,  spacing: 19 },
+      // A tank bridges the real gap between the two 3-blocker waves — timelineTick
+      // freezes for a living blocker's whole lifetime, so once the 245s wave clears,
+      // the schedule still needs the full 245→260 gap in real time before the next
+      // one fires. Same shape as m2's blocker/tank bridge above.
+      { atTimelineTick: seconds(245.2), kind: 'tank',    count: 1,  spacing: 0  },
       { atTimelineTick: seconds(260), kind: 'blocker', count: 3,  spacing: 19 },
     ],
     supportCallTicks: [
@@ -629,6 +743,10 @@ export const ALL_MISSIONS: MissionSpec[] = [
       { atTimelineTick: seconds(78),  kind: 'tank',    count: 1,  spacing: 0  },
       { atTimelineTick: seconds(80),  kind: 'booster', count: 1,  spacing: 0  },
       { atTimelineTick: seconds(84),  kind: 'fodder',  count: 9,  spacing: 14  },
+      // A lone tank bridges the real gap between the fodder wave dying and the next
+      // striker wave's scheduled tick — no blocker/turret involved here, just a wide
+      // schedule gap, so a slow, tough single unit keeps the lane occupied through it.
+      { atTimelineTick: seconds(92),  kind: 'tank',    count: 1,  spacing: 0  },
       { atTimelineTick: seconds(100), kind: 'striker', count: 7,  spacing: 15  },
       { atTimelineTick: seconds(114), kind: 'tank',    count: 1,  spacing: 0  },
       { atTimelineTick: seconds(116), kind: 'booster', count: 1,  spacing: 0  },
@@ -674,20 +792,30 @@ export const ALL_MISSIONS: MissionSpec[] = [
     // Turret is a static ranged DPS check, distinct from the blocker's approaching one.
     // It swaps the two single-blocker events (the only safe slot — blocker counts
     // elsewhere sit on a difficulty cliff and are untouched).
-    enemyKinds: { fodder: FODDER, striker: STRIKER, blocker: BLOCKER, turret: TURRET },
+    enemyKinds: { fodder: FODDER, striker: STRIKER, blocker: BLOCKER, turret: TURRET, tank: TANK },
     events: [
       { atTimelineTick: seconds(2),   kind: 'fodder',  count: 4,  spacing: 14 },
       { atTimelineTick: seconds(14),  kind: 'fodder',  count: 5,  spacing: 14 },
       { atTimelineTick: seconds(26),  kind: 'turret',  count: 1,  spacing: 0  },
+      // Turret also blocksConveyor — same blocker/tank bridge pattern as the two
+      // blocker pairs below.
+      { atTimelineTick: seconds(26.2), kind: 'tank',   count: 1,  spacing: 0  },
       { atTimelineTick: seconds(40),  kind: 'striker', count: 3,  spacing: 15 },
       { atTimelineTick: seconds(52),  kind: 'fodder',  count: 6,  spacing: 14 },
       { atTimelineTick: seconds(64),  kind: 'turret',  count: 1,  spacing: 0  },
+      { atTimelineTick: seconds(64.2), kind: 'tank',   count: 1,  spacing: 0  },
       // Blocker counts here are deliberately untouched — they sit on a known
       // 2-vs-3-per-wave difficulty cliff and are this mission's load-bearing "DPS
       // check" identity.
       { atTimelineTick: seconds(78),  kind: 'striker', count: 5,  spacing: 15 },
       { atTimelineTick: seconds(92),  kind: 'fodder',  count: 7,  spacing: 14  },
       { atTimelineTick: seconds(106), kind: 'blocker', count: 2,  spacing: 20 },
+      // A tank right after the blocker pair — timelineTick is frozen for their whole
+      // lifetime, so once they die there's a long real wait before the schedule
+      // reaches the next wave. Firing just after the blockers' own tick means the tank
+      // spawns the moment the timeline unfreezes, bridging most of that dead air —
+      // same mechanism as m2/m3's own blocker/tank bridges above.
+      { atTimelineTick: seconds(106.2), kind: 'tank',    count: 1,  spacing: 0  },
       { atTimelineTick: seconds(122), kind: 'striker', count: 6,  spacing: 15 },
       { atTimelineTick: seconds(136), kind: 'fodder',  count: 8,  spacing: 14  },
       // Provisional tension experiment (same status as m2's E-3 comment above) — m4 has
@@ -696,6 +824,8 @@ export const ALL_MISSIONS: MissionSpec[] = [
       // closing while the blocker freezes the timeline — a compounded DPS-check moment.
       { atTimelineTick: seconds(142), kind: 'striker', count: 3,  spacing: 15 },
       { atTimelineTick: seconds(150), kind: 'blocker', count: 2,  spacing: 22 },
+      // Same blocker/tank bridge as the seconds(106) pair above.
+      { atTimelineTick: seconds(150.2), kind: 'tank',    count: 1,  spacing: 0  },
       { atTimelineTick: seconds(166), kind: 'striker', count: 6,  spacing: 15 },
       { atTimelineTick: seconds(180), kind: 'fodder',  count: 8,  spacing: 14  },
       { atTimelineTick: seconds(196), kind: 'striker', count: 6,  spacing: 15 },
@@ -738,7 +868,7 @@ export const ALL_MISSIONS: MissionSpec[] = [
     // before m6 throws four mid-chaos is the point. Swaps two of the five striker
     // events (three remain, so the striker mix survives); never touches swarm counts,
     // this mission's own tuned difficulty lever.
-    enemyKinds: { fodder: FODDER, swarm: SWARM, striker: STRIKER, blocker: BLOCKER, kamikaze: KAMIKAZE },
+    enemyKinds: { fodder: FODDER, swarm: SWARM, striker: STRIKER, blocker: BLOCKER, kamikaze: KAMIKAZE, tank: TANK },
     events: [
       // Patient-tier warm-up — lane-reading time and a support call before the ramp
       { atTimelineTick: seconds(2),   kind: 'fodder',  count: 5,  spacing: 14 },
@@ -767,6 +897,11 @@ export const ALL_MISSIONS: MissionSpec[] = [
       // Final push — blockers, paired with a swarm tail so the escalating tier stays
       // the dominant threat rather than ending the hardest mission on a slow enemy
       { atTimelineTick: seconds(254), kind: 'blocker', count: 3,  spacing: 19 },
+      // A tank right after the blocker trio — same blocker/tank bridge mechanism as
+      // m2/m3/m4: timelineTick is frozen for the blockers' whole lifetime, so the tank
+      // spawns the moment the timeline unfreezes and bridges most of the real wait
+      // before the next wave's scheduled tick.
+      { atTimelineTick: seconds(254.2), kind: 'tank',   count: 1,  spacing: 0  },
       { atTimelineTick: seconds(270), kind: 'swarm',   count: 14, spacing: 9  },
       { atTimelineTick: seconds(282), kind: 'blocker', count: 2,  spacing: 19 },
     ],
@@ -808,13 +943,24 @@ export const ALL_MISSIONS: MissionSpec[] = [
       { atTimelineTick: seconds(12),  kind: 'striker',  count: 3,  spacing: 15 },
       { atTimelineTick: seconds(24),  kind: 'fodder',   count: 5,  spacing: 14 },
       { atTimelineTick: seconds(36),  kind: 'blocker',  count: 1,  spacing: 0  },
+      // Relay of tanks — see the seconds(178) blocker/tank relay comment below for why
+      // more than one is needed to bridge the whole post-freeze wait.
+      { atTimelineTick: seconds(36.2), kind: 'tank',    count: 1,  spacing: 0  },
+      { atTimelineTick: seconds(41),   kind: 'tank',    count: 1,  spacing: 0  },
+      { atTimelineTick: seconds(46),   kind: 'tank',    count: 1,  spacing: 0  },
       { atTimelineTick: seconds(50),  kind: 'striker',  count: 4,  spacing: 15 },
       { atTimelineTick: seconds(62),  kind: 'fodder',   count: 6,  spacing: 14 },
       // First turret gate — static, high fire rate, blocks until burned down
       { atTimelineTick: seconds(70),  kind: 'turret',   count: 1,  spacing: 0  },
       { atTimelineTick: seconds(80),  kind: 'swarm',    count: 10, spacing: 9  },
       { atTimelineTick: seconds(92),  kind: 'striker',  count: 4,  spacing: 15 },
+      // Plain schedule gap (no freeze involved) between the striker wave dying and the
+      // next blocker wave's tick — a lone tank keeps the lane occupied through it.
+      { atTimelineTick: seconds(97),  kind: 'tank',     count: 1,  spacing: 0  },
       { atTimelineTick: seconds(106), kind: 'blocker',  count: 2,  spacing: 19 },
+      { atTimelineTick: seconds(106.2), kind: 'tank',   count: 1,  spacing: 0  },
+      { atTimelineTick: seconds(111),   kind: 'tank',   count: 1,  spacing: 0  },
+      { atTimelineTick: seconds(116),   kind: 'tank',   count: 1,  spacing: 0  },
       { atTimelineTick: seconds(120), kind: 'fodder',   count: 7,  spacing: 14  },
       { atTimelineTick: seconds(134), kind: 'swarm',    count: 12, spacing: 9  },
       { atTimelineTick: seconds(148), kind: 'striker',  count: 5,  spacing: 15 },
@@ -822,6 +968,13 @@ export const ALL_MISSIONS: MissionSpec[] = [
       // Kamikaze rush through the blocker gate — high speed, high damage
       { atTimelineTick: seconds(170), kind: 'kamikaze', count: 3,  spacing: 12  },
       { atTimelineTick: seconds(178), kind: 'blocker',  count: 3,  spacing: 19 },
+      // Blocker/tank bridge relay: timelineTick freezes for the blockers' whole
+      // lifetime, and a single tank only stays alive a few seconds against this
+      // mission's high-tier loadout — chaining three keeps the lane occupied across
+      // the full real-time wait until the next wave's scheduled tick.
+      { atTimelineTick: seconds(178.2), kind: 'tank',   count: 1,  spacing: 0  },
+      { atTimelineTick: seconds(183),   kind: 'tank',   count: 1,  spacing: 0  },
+      { atTimelineTick: seconds(188),   kind: 'tank',   count: 1,  spacing: 0  },
       { atTimelineTick: seconds(194), kind: 'fodder',   count: 8,  spacing: 14  },
       { atTimelineTick: seconds(208), kind: 'striker',  count: 6,  spacing: 15 },
       { atTimelineTick: seconds(220), kind: 'swarm',    count: 15, spacing: 9  },

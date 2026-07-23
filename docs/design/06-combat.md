@@ -24,10 +24,12 @@ determinism contract per `v2/CLAUDE.md`). Transcribed directly from
    never stretches under brownout (see clarification below).
 7. Enemies fire at the ship.
 8. Enemies move; any reaching distance 0 collides — dies, deals `shotDamage × 3` to the
-   ship (shield-first), and 60% of whatever the shield absorbed bursts back as AoE
-   damage to every other surviving enemy. An enemy killed by the burst is removed and
-   fully death-processed (kill credit, coins, on-kill chains, blocker bonus calls) in
-   this same step, not left to linger until a later weapon shot prunes it.
+   ship (shield-first), and 60% of whatever the shield absorbed bursts back onto other
+   enemies already on screen — how many depends on the equipped shield's own kind
+   ([Shop & Modules](05-shop-and-modules.md)): the nearest one only, every one of them,
+   or none at all. An enemy killed by the burst is removed and fully death-processed
+   (kill credit, coins, on-kill chains, blocker bonus calls) in this same step, not left
+   to linger until a later weapon shot prunes it.
 9. If the generator is at full capacity, it pulses: shield gains
    `shield × pulseShieldFraction`, generator drops by its pulse drain.
 10. Expire any timed card/supply effects whose duration has run out.

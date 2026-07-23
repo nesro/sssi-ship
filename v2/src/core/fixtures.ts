@@ -70,7 +70,7 @@ export const FIXTURE_LOADOUT: LoadoutSnapshot = {
   weapon: FIXTURE_WEAPON,
   rearWeapon: null,
   sideWeapon: null,
-  shield: { id: 'fix-shield', capacity: 30, pulseShieldFraction: 0.1 },
+  shield: { id: 'fix-shield', capacity: 30, pulseShieldFraction: 0.1, burstMode: 'all' },
   generator: { id: 'fix-generator', outputPerTick: 2, capacity: 50, pulseDrainFraction: 0.5 },
   motor: { id: 'fix-motor', timelineMultiplier: 1, powerDrawPerTick: 0.3 },
   supplies: [],

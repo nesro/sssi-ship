@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { missionById } from '../data/missions';
-import { resolveForcedLoadout } from '../data/loadouts';
+import { applyDisableWeapon, STARTER_LOADOUT } from '../data/loadouts';
 import { createCoreState } from './state';
 import { advanceTick } from './tick';
 import { FIXTURE_MISSION } from './fixtures';
@@ -8,7 +8,7 @@ import { HIT_ALL_TARGETS } from './constants';
 import type { LoadoutSnapshot } from './types';
 
 // Controlled loadout for exact pulse accounting — zero motor draw, zero weapon drain.
-const PULSE_SHIELD = { id: 'fix-shield', capacity: 30, pulseShieldFraction: 0.1 };
+const PULSE_SHIELD = { id: 'fix-shield', capacity: 30, pulseShieldFraction: 0.1, burstMode: 'all' as const };
 const PULSE_LOADOUT: LoadoutSnapshot = {
   ship: { id: 'fix-ship', kind: 'interceptor', level: 1, name: 'Test', hull: 100, price: 0, passiveKind: 'enemy-miss-bonus', passiveValue: 0, passiveDescription: '', blurb: '' },
   weapon: null, // no weapon — isolates energy to generator + pulse only
@@ -181,13 +181,13 @@ describe('Nova Wave weapon', () => {
   });
 });
 
-// ── t1 forced loadout: null weapon ───────────────────────────────────────────
+// ── t1 disableWeapon: null weapon ────────────────────────────────────────────
 
-describe('tutorial t1 forced loadout', () => {
-  it('resolves to null weapon and fireShipWeapon skips without error', () => {
+describe('tutorial t1 disableWeapon', () => {
+  it('strips the weapon from real starter gear and fireShipWeapon skips without error', () => {
     const mission = missionById('t1');
-    if (mission.forcedLoadout === undefined) throw new Error('t1 must have forcedLoadout');
-    const loadout = resolveForcedLoadout(mission.forcedLoadout);
+    expect(mission.disableWeapon).toBe(true);
+    const loadout = applyDisableWeapon(STARTER_LOADOUT);
     expect(loadout.weapon).toBeNull();
 
     const state = createCoreState(mission, loadout, 1, []);

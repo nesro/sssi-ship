@@ -55,7 +55,18 @@ describe('computeResultViewModel', () => {
 
   it('buttons is standard for a victory, and for a defeat with no defeatHint', () => {
     expect(computeResultViewModel(victoryResult({ missionId: 'm1' }), []).buttons).toEqual({ kind: 'standard' });
-    expect(computeResultViewModel(victoryResult({ missionId: 't1', status: 'defeat', earnedStarIds: [] }), []).buttons).toEqual({ kind: 'standard' });
+    // t4 completes on defeat and has no defeatHint (a spectrum, not a right/wrong pick) —
+    // t1/t2 both DO have a defeatHint now, covered by their own test below.
+    expect(computeResultViewModel(victoryResult({ missionId: 't4', status: 'defeat', earnedStarIds: [] }), []).buttons).toEqual({ kind: 'standard' });
+  });
+
+  it('buttons is defeat-shop-redirect for a tutorial defeat with a defeatHint (t1, t2)', () => {
+    const t1 = computeResultViewModel(victoryResult({ missionId: 't1', status: 'defeat', earnedStarIds: [] }), []);
+    expect(t1.buttons).toEqual({ kind: 'defeat-shop-redirect' });
+    expect(t1.defeatHint).toBeDefined();
+    const t2 = computeResultViewModel(victoryResult({ missionId: 't2', status: 'defeat', earnedStarIds: [] }), []);
+    expect(t2.buttons).toEqual({ kind: 'defeat-shop-redirect' });
+    expect(t2.defeatHint).toBeDefined();
   });
 
   it('killsLine includes the collided clause iff collisions > 0', () => {
@@ -117,9 +128,14 @@ describe('computeResultViewModel — nextMissionId (Phase C, moved out of Result
     expect(vm.nextMissionId).toBe('t2');
   });
 
-  it('t1 defeat still resolves to t2 — tutorials complete on defeat too (completesOnDefeat)', () => {
+  it('t1 defeat resolves to null — t1 no longer completes on defeat (a real gear-mismatch fail)', () => {
     const vm = computeResultViewModel(victoryResult({ missionId: 't1', status: 'defeat', earnedStarIds: [] }), []);
-    expect(vm.nextMissionId).toBe('t2');
+    expect(vm.nextMissionId).toBeNull();
+  });
+
+  it('t4 defeat still resolves to m1 — t4 completes on defeat (a spectrum, not a decision)', () => {
+    const vm = computeResultViewModel(victoryResult({ missionId: 't4', status: 'defeat', earnedStarIds: [] }), []);
+    expect(vm.nextMissionId).toBe('m1');
   });
 
   it('m6 (the last main mission, no outgoing edge) resolves to null even on victory', () => {

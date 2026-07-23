@@ -127,6 +127,39 @@ describe('advanceEnemies: shield-burst kills a survivor (2026-07-18 fix)', () =>
   });
 });
 
+describe('advanceEnemies: shield burstMode (shield-burst-tiers)', () => {
+  // Same shield/collision numbers as the block above: shield 20, collision damage
+  // 4*3=12 (fully absorbed) -> shield 8, burst = (20-8)*0.6 = 7.2.
+  it("'single' hits only the nearest on-screen survivor, leaving farther ones untouched", () => {
+    const state = freshState();
+    state.loadout.shield = { ...state.loadout.shield, burstMode: 'single' } as LoadoutSnapshot['shield'];
+    state.ship.shield = 20;
+    state.enemies = [
+      makeFixtureEnemy({ id: 1, distance: 1, speed: 2, shotDamage: 4 }),
+      makeFixtureEnemy({ id: 2, distance: 30, hp: 100, maxHp: 100 }), // nearest survivor
+      makeFixtureEnemy({ id: 3, distance: 60, hp: 100, maxHp: 100 }), // farther — untouched
+    ];
+    advanceEnemies(state, statsOf(state));
+    const byId = new Map(state.enemies.map((e) => [e.id, e]));
+    expect(byId.get(2)?.hp).toBeCloseTo(100 - 7.2);
+    expect(byId.get(3)?.hp).toBe(100);
+  });
+
+  it("'none' skips the splash entirely, even though the shield still absorbed damage", () => {
+    const state = freshState();
+    state.loadout.shield = { ...state.loadout.shield, burstMode: 'none' } as LoadoutSnapshot['shield'];
+    state.ship.shield = 20;
+    state.enemies = [
+      makeFixtureEnemy({ id: 1, distance: 1, speed: 2, shotDamage: 4 }),
+      makeFixtureEnemy({ id: 2, distance: 30, hp: 100, maxHp: 100 }),
+    ];
+    advanceEnemies(state, statsOf(state));
+    expect(state.enemies).toHaveLength(1);
+    expect(state.enemies[0]?.hp).toBe(100);
+    expect(state.pendingVisualEvents.some((e) => e.kind === 'shield-burst')).toBe(false);
+  });
+});
+
 describe('advanceEnemies: boss stall-and-bombard cycle (F3)', () => {
   it('a boss moves normally during the approach phase', () => {
     const state = freshState();

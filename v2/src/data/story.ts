@@ -16,22 +16,11 @@ interface NarratorLine {
 const STORY_LINES: Record<string, NarratorLine[]> = {
   // t1-t4's opening lines live in the blocking modal instead (missions.ts's
   // T1-T4_NARRATOR_EVENTS), not here — showing both would be duplicate, conflicting UI.
-  // 'first-support-call' stays here: that beat is a non-blocking aside while the card
-  // overlay is already the main focus, not a "here's what's about to happen" moment
-  // that needs a full pause. t2 has no entry — it has no support call anymore (its fix
-  // is a shop visit between attempts, not a mid-run card pick).
-  t3: [
-    {
-      trigger: 'first-support-call',
-      text: 'NOVAK COMMAND: Support window open. Shield and generator upgrades won\'t touch its regen — only raw damage has a shot.',
-    },
-  ],
-  t4: [
-    {
-      trigger: 'first-support-call',
-      text: "NOVAK COMMAND: Support window open. Pick whatever helps — and don't forget those reserves are sitting ready too.",
-    },
-  ],
+  // t3/t4 used to also have a 'first-support-call' entry here, shown in the passive
+  // bottom bar alongside the still-open card offer; both moved into their own
+  // T3/T4_NARRATOR_EVENTS as a second blocking modal event instead, timed to land just
+  // before the support call opens. t2 has no entry — it has no support call at all
+  // (its fix is a shop visit between attempts, not a mid-run card pick).
   m3b: [
     {
       trigger: 'first-booster-appear',

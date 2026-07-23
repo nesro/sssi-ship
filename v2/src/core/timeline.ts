@@ -42,19 +42,25 @@ function spawnEvent(state: CoreState, event: SpawnEvent): void {
   if (spec === undefined) {
     throw new Error(`Mission ${state.mission.id}: unknown enemy kind "${event.kind}"`);
   }
+  // Jitter is drawn ONCE per event and applied only to the shared LANE_LENGTH spawn
+  // point — nudges the whole wave's entry point (so repeated events/seeds don't
+  // render pixel-identical) without touching the exact `spacing` between enemies
+  // within this event. It used to multiply each enemy's own full cumulative
+  // distance (LANE_LENGTH + i*spacing) individually, so its absolute size grew with
+  // index i — for a count-8+ wave that easily swamped a small `spacing`, letting
+  // enemies spawn overlapping or even out of order (docs/known-issues.md).
+  const jitter = 1 + (state.rng() * 2 - 1) * SPAWN_JITTER;
   for (let i = 0; i < event.count; i++) {
-    spawnEnemy(state, spec, LANE_LENGTH + i * event.spacing);
+    spawnEnemy(state, spec, LANE_LENGTH * jitter + i * event.spacing);
   }
 }
 
-function spawnEnemy(state: CoreState, spec: EnemySpec, baseDistance: number): void {
-  // Jitter keeps waves from being pixel-identical; seeded, so replays still reproduce.
-  const jitter = 1 + (state.rng() * 2 - 1) * SPAWN_JITTER;
+function spawnEnemy(state: CoreState, spec: EnemySpec, distance: number): void {
   state.spawnedCount += 1;
   state.enemies.push({
     id: state.nextEnemyId++,
     kind: spec.kind,
-    distance: baseDistance * jitter,
+    distance,
     hp: spec.hp,
     maxHp: spec.hp,
     shootTimer: spec.ticksBetweenShots,

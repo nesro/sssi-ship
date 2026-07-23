@@ -4,7 +4,7 @@ import { ALL_MISSIONS, missionById, setDailyMission, totalStarsAvailable } from 
 import { DAILY_MISSION_ID, dailyDateKey, dailySeedForDate, generateDailyMission, timeUntilNextMidnight } from '../data/dailyMission';
 import {
   buildLoadout, buySubscription, buySupplyCharge, dailyBestScore, downgradeSubscription,
-  isDailyAvailable, loadSave, persistSave, resetSave, sellSupplyCharge, switchItem,
+  isDailyAvailable, loadSave, persistSave, resetSave, resolveDevMode, sellSupplyCharge, switchItem,
   switchRearWeapon, switchShip, switchSideWeapon, totalStars, unequipShield, unequipWeapon, upgradeSubscription,
 } from '../save/SaveManager';
 import type { SaveData } from '../save/SaveManager';
@@ -23,7 +23,7 @@ import { Sound } from '../audio/SoundManager';
 import {
   DEFAULT_HUB_UI_STATE, computeDetailHint, computeDispatch, computeGalaxyMap,
   computeKindRows, computeKindRowTrace, computeLevelChips, computeLoadoutRows, computeMissionDetail,
-  computeSettings, computeSupplies, isShopNavLocked, resolveUiState,
+  computeSettings, computeSupplies, isShopNavLocked, isShopTabLocked, resolveUiState, shopTabUnlockStars,
 } from '../viewmodel/hub';
 import type {
   DailyPanelInput, DispatchCardViewModel, DispatchViewModel, GalaxyMapViewModel, HubNav, HubUIState,
@@ -267,7 +267,7 @@ export class HubScene extends Phaser.Scene {
   }
 
   private get devMode(): boolean {
-    return this.save.devMode !== false;
+    return resolveDevMode(this.save);
   }
 
   // fallow-ignore-next-line unused-class-member
@@ -727,7 +727,10 @@ export class HubScene extends Phaser.Scene {
     }
 
     if (detail.isTutorial) {
-      this.addC(this.add.text(px(panelX), px(detailY), 'Training mission — preset loadout', {
+      const trainingLabel = detail.usesRealGear
+        ? 'Training mission — uses your real equipped gear'
+        : 'Training mission — preset loadout';
+      this.addC(this.add.text(px(panelX), px(detailY), trainingLabel, {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(10))}px`, color: cssColor(0x887744),
       }));
     } else {
@@ -820,31 +823,44 @@ export class HubScene extends Phaser.Scene {
     SHOP_TABS.forEach((tab, i) => {
       const tabY = CONTENT_TOP + tabH * (i + 0.5);
       const active = tab.key === this.uiState.tab;
+      const locked = isShopTabLocked(tab.key, this.playerStars);
       const bg = this.addC(
         this.add.rectangle(px(CONTENT_PAD), px(tabY), px(SHOP_TAB_W), px(tabH - 2), active ? 0x111128 : 0x080818, 0.95)
-          .setOrigin(0, 0.5).setInteractive({ useHandCursor: true })
-          .setData('tourId', `shop-tab-${tab.key}`), // matched by SHOP_TOUR_STEPS
+          .setOrigin(0, 0.5).setData('tourId', `shop-tab-${tab.key}`), // matched by SHOP_TOUR_STEPS
       );
       if (active) bg.setStrokeStyle(px(1), tab.color, 0.6);
-      bg.on('pointerdown', () => {
-        this.uiState = resolveUiState(this.save, { ...this.uiState, tab: tab.key });
-        this.rebuildContent();
-        this.updatePreview();
-      });
+      if (locked) {
+        bg.setAlpha(0.5);
+      } else {
+        bg.setInteractive({ useHandCursor: true });
+        bg.on('pointerdown', () => {
+          this.uiState = resolveUiState(this.save, { ...this.uiState, tab: tab.key });
+          this.rebuildContent();
+          this.updatePreview();
+        });
+      }
       // Inactive tabs must stay readable — the player needs to see what else the shop
       // offers, not just the currently-open tab.
       this.addC(
         this.add.text(px(CONTENT_PAD + SHOP_TAB_W / 2), px(tabY), tab.label, {
           fontFamily: UI_FONT,
           fontSize: `${String(fontPx(9))}px`,
-          color: cssColor(active ? tab.color : 0x8899bb),
+          color: cssColor(locked ? 0x555577 : (active ? tab.color : 0x8899bb)),
           align: 'center',
-        }).setOrigin(0.5).setAlpha(active ? 1 : 0.8)
+        }).setOrigin(0.5).setAlpha(locked ? 0.6 : (active ? 1 : 0.8))
           // Same tourId as this tab's own bg rectangle above — HubTour.ts raises every
           // GameObject sharing a tourId, not just one; tagging only the bg leaves this
           // label hidden behind the tour's dim backdrop.
           .setData('tourId', `shop-tab-${tab.key}`),
       );
+      if (locked) {
+        const required = shopTabUnlockStars(tab.key);
+        this.addC(
+          this.add.text(px(CONTENT_PAD + SHOP_TAB_W - 4), px(tabY + tabH / 2 - 6), `★${String(required)}`, {
+            fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: cssColor(0x556677),
+          }).setOrigin(1, 1),
+        );
+      }
     });
 
     this.addC(this.add.rectangle(px(CONTENT_PAD + SHOP_TAB_W), px(CONTENT_TOP), px(1), px(LOGICAL_HEIGHT - CONTENT_TOP), 0x333355).setOrigin(0, 0));
@@ -1412,8 +1428,14 @@ export class HubScene extends Phaser.Scene {
           resetBtn.setText(resetLabel());
           resetBtn.setStyle({ color: cssColor(resetColor()) });
         } else {
+          // No page reload, unlike AlphaNoticeScene's own ERASE PROGRESS — that one
+          // must re-run the whole boot chain (it IS the every-launch notice screen),
+          // but this button starting from inside the hub already means the player's
+          // sat through that screen this session. Landing straight back in the hub
+          // (with the one-time tour, same as any genuinely fresh save) skips re-showing
+          // it a second time in the same sitting.
           resetSave();
-          window.location.reload();
+          this.scene.start('HubScene', { showTour: true });
         }
       },
     });

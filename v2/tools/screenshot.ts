@@ -9,7 +9,7 @@
 //        pnpm screenshot hub-missions m3b-booster    # runs only the named shots
 //
 // Requires the dev server running (pnpm dev) and reachable at SCREENSHOT_BASE_URL
-// (default http://localhost:5173).
+// (default http://localhost:5174).
 
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -17,7 +17,7 @@ import { chromium } from 'playwright';
 import type { Page } from 'playwright';
 import {
   advanceUntil, bootToHub, cheat, DEVICE_SCALE_FACTOR, driveThroughOnboardingIfShown, flushPendingOffer, hasKind,
-  SETTLE_MS, VIEWPORT, waitForMissionReady, waitForNarratorFullyRevealed, waitForSceneActive,
+  SETTLE_MS, VIEWPORT, waitForMissionReady, waitForSceneActive,
 } from './playwrightHarness';
 import type { CombatSnapshot } from './playwrightHarness';
 
@@ -473,14 +473,13 @@ const SHOTS: Shot[] = [
       await cheat(page, 'startMission', 't4');
       await waitForMissionReady(page, 't4');
       await advanceUntil(page, (s) => s.enemies.length > 0);
-      // t4 schedules support calls close enough together in real time that resolving
-      // one reliably opens another before the screenshot fires — this is t4's actual
-      // design (support calls are central to teaching reserve-supply usage), not a
-      // race to chase away. One flush, then poll (not sleep a fixed duration) for
-      // whichever offer is showing to have its own narrator line (retriggered by
-      // syncNarrator() each time an offer opens) fully revealed.
+      // t4's support-call hint used to co-display as a bottom-bar NarratorBar line
+      // alongside the still-open card offer; it's now a second blocking modal event
+      // (missions.ts's T4_NARRATOR_EVENTS) that fires and must be dismissed BEFORE the
+      // offer can open at all — advanceUntil's own fastForward steps already
+      // auto-dismiss it along the way (fastForward's documented behavior), so there's
+      // nothing left here to wait on beyond the offer itself.
       await flushPendingOffer(page);
-      await waitForNarratorFullyRevealed(page);
     },
   },
   {
@@ -771,14 +770,17 @@ const SHOTS: Shot[] = [
     },
   },
   {
-    // A real new player's first-ever result screen: victory, stars: [] (isTutorial).
-    name: 'result-scene-t1-victory',
+    // t1's defeat-shop-redirect screen — a real new player's first-ever result screen.
+    // Unlike t2's version of this shot below, this one IS sim-guaranteed (torrent-1,
+    // the real starter generator, fails t1's wave 0% of the time — no live-seed
+    // variance to caveat).
+    name: 'result-scene-t1-shop-redirect',
     setup: async (page) => {
       await cheat(page, 'reset');
       await driveThroughOnboardingIfShown(page);
       await cheat(page, 'startMission', 't1');
       await waitForMissionReady(page, 't1');
-      await cheat(page, 'combat.fastForward', 6000); // confirmed via probe: wins ~tick 318
+      await cheat(page, 'combat.fastForward', 6000);
       await page.waitForTimeout(1600);
       await waitForSceneActive(page, 'ResultScene', 5000);
     },

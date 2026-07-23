@@ -16,6 +16,7 @@ import {
   persistSave,
   reserveDailyAttempt,
   resetSave,
+  resolveDevMode,
   switchCost,
   switchItem,
   switchRearWeapon,
@@ -105,6 +106,20 @@ describe('applyMissionResult', () => {
     const afterT2Loss = applyMissionResult(defaultSave(), victoryResult({ missionId: 't2', status: 'defeat' })).save;
     expect(afterT2Loss.t2FailedOnce).toBe(true);
   });
+
+  it('sets t1FailedOnce/t3FailedOnce on their own defeat only, same as t2FailedOnce', () => {
+    const afterT1Loss = applyMissionResult(defaultSave(), victoryResult({ missionId: 't1', status: 'defeat' })).save;
+    expect(afterT1Loss.t1FailedOnce).toBe(true);
+    expect(afterT1Loss.t2FailedOnce).toBeUndefined();
+    expect(afterT1Loss.t3FailedOnce).toBeUndefined();
+
+    const afterT3Loss = applyMissionResult(defaultSave(), victoryResult({ missionId: 't3', status: 'defeat' })).save;
+    expect(afterT3Loss.t3FailedOnce).toBe(true);
+    expect(afterT3Loss.t1FailedOnce).toBeUndefined();
+
+    const afterT1Win = applyMissionResult(defaultSave(), victoryResult({ missionId: 't1', status: 'victory' })).save;
+    expect(afterT1Win.t1FailedOnce).toBeUndefined();
+  });
 });
 
 describe('mission gating', () => {
@@ -134,13 +149,23 @@ describe('mission gating', () => {
   });
 
   it('a tutorial loss still unlocks the next mission and pays full completion coins (completesOnDefeat)', () => {
+    // t4 is the one tutorial left with completesOnDefeat: true (a spectrum, not a
+    // right/wrong pick) — t1/t2/t3 all now hold the player accountable for a real fail.
     const before = defaultSave();
     const { save: afterLoss } = applyMissionResult(
       before,
-      victoryResult({ missionId: 't1', status: 'defeat', earnedStarIds: [], coins: 30 }),
+      victoryResult({ missionId: 't4', status: 'defeat', earnedStarIds: [], coins: 30 }),
     );
-    expect(isMissionUnlocked(afterLoss, 't2')).toBe(true);
+    expect(isMissionUnlocked(afterLoss, 'm1')).toBe(true);
     expect(afterLoss.coins).toBe(before.coins + 30);
+  });
+
+  it('t1 loss does NOT unlock t2 — t1 now holds the player accountable for a real gear fail', () => {
+    const { save: afterLoss } = applyMissionResult(
+      defaultSave(),
+      victoryResult({ missionId: 't1', status: 'defeat', earnedStarIds: [], coins: 0 }),
+    );
+    expect(isMissionUnlocked(afterLoss, 't2')).toBe(false);
   });
 
   it('a non-tutorial mission never unlocks the next one on defeat, even repeatedly (regression guard)', () => {
@@ -191,6 +216,23 @@ describe('hasCompletedCampaign', () => {
     expect(hasCompletedCampaign(afterM1)).toBe(false);
     const { save: afterM6 } = applyMissionResult(afterM1, victoryResult({ missionId: 'm6', earnedStarIds: [] }));
     expect(hasCompletedCampaign(afterM6)).toBe(true);
+  });
+});
+
+describe('resolveDevMode', () => {
+  // AlphaNoticeScene's own toggle and HubScene's Settings panel used to read this
+  // independently and disagree on a fresh save's undefined devMode (docs/known-issues.md)
+  // — this locks in the single shared answer both now read.
+  it('true on a fresh save (devMode undefined defaults to ON)', () => {
+    expect(resolveDevMode(defaultSave())).toBe(true);
+  });
+
+  it('false only once explicitly set to false', () => {
+    expect(resolveDevMode({ ...defaultSave(), devMode: false })).toBe(false);
+  });
+
+  it('true when explicitly set to true', () => {
+    expect(resolveDevMode({ ...defaultSave(), devMode: true })).toBe(true);
   });
 });
 

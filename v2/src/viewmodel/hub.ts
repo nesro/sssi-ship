@@ -12,7 +12,7 @@ import { itemById, REAR_WEAPON_ITEMS, shipById, SIDE_WEAPON_ITEMS, SUPPLIES } fr
 import { ALL_MISSIONS, MISSION_UNLOCK_EDGES } from '../data/missions';
 import { SUBSCRIPTIONS } from '../data/subscriptions';
 import type { SubscriptionSpec } from '../data/subscriptions';
-import { isMissionUnlocked, switchCost } from '../save/SaveManager';
+import { isMissionUnlocked, resolveDevMode, switchCost } from '../save/SaveManager';
 import type { SaveData } from '../save/SaveManager';
 import { ABILITY_COMPANY_COLORS } from './companyColors';
 import { shopSystemFor, type ShopSystemConfig, type ShopTab } from './shopSystems';
@@ -127,6 +127,11 @@ export interface MissionDetailViewModel {
   name: string;
   duration: string; // "" if not in the duration table
   isTutorial: boolean;
+  /** Tutorials only (meaningless otherwise): true iff the mission runs on the player's
+   * real equipped gear (t1, t2) rather than a `forcedLoadout` preset (t3, t4) —
+   * HubScene's detail panel copy depends on this so it doesn't call a real-gear
+   * tutorial's loadout "preset" when a shop switch actually changes its outcome. */
+  usesRealGear: boolean;
   stars: Array<{ id: string; description: string; earned: boolean }>; // [] for tutorials
   canStart: boolean;
   /** Present only for the daily mission — HubScene branches on this before the generic
@@ -219,6 +224,31 @@ export type HubNav = 'missions' | 'shop' | 'dispatch-reinforcements' | 'settings
  * is unaffected. */
 export function isShopNavLocked(save: SaveData): boolean {
   return save.t2FailedOnce !== true && !save.completedMissionIds.includes('t2');
+}
+
+/** Stars required before a shop tab shows its real contents instead of a locked
+ * placeholder — distinct from the per-kind star gates inside a tab (e.g.
+ * `WEAPON_KIND_UNLOCK_STARS`, `data/items.ts`), which only govern individual items
+ * once a tab is already open. Every system a fresh player needs to survive their first
+ * real mission (weapon/shield/generator/motor, plus loadout/ship/supplies) is
+ * reachable immediately; the two purely optional slots stay hidden until the player
+ * has actually played past the tutorial chain, so the shop's own footprint grows with
+ * the player instead of presenting its full structure on day one. */
+const TAB_UNLOCK_STARS: Partial<Record<ShopTab, number>> = {
+  'rear-weapon': 3,
+  'side-weapon': 3,
+};
+
+export function isShopTabLocked(tab: ShopTab, playerStars: number): boolean {
+  const required = TAB_UNLOCK_STARS[tab];
+  return required !== undefined && playerStars < required;
+}
+
+/** Stars required to unlock a tab, for the locked badge — undefined for a tab that was
+ * never gated in the first place (distinct from "already unlocked", which reads as 0
+ * remaining rather than "no gate exists"). */
+export function shopTabUnlockStars(tab: ShopTab): number | undefined {
+  return TAB_UNLOCK_STARS[tab];
 }
 
 // ── UI state (ephemeral, not persisted to SaveData) ─────────────────────────
@@ -373,7 +403,7 @@ function computeKindRow(ctx: KindRowCtx, selectedKind: string | null): KindRowVi
     badge: computeKindBadge(t),
     tap: {
       selectKind: kind,
-      mutation: t.equipped ? null : { type: 'switch-item', itemId: config.itemId(kind, t.targetLevel) },
+      mutation: t.equipped || t.locked ? null : { type: 'switch-item', itemId: config.itemId(kind, t.targetLevel) },
     },
     detailLines: config.detailLines(kind, t.equippedLevel),
     statLines: computeRowStatLines(config, kind, t.equippedLevel),
@@ -575,12 +605,13 @@ export function computeMissionDetail(
     // field so HubScene falls through to its generic LOCKED panel instead of rendering
     // the daily panel with best-score copy and a live START.
     if (!isDailyGalaxyNodeUnlocked(save)) {
-      return { name: '???', duration: '', isTutorial: false, stars: [], canStart: false };
+      return { name: '???', duration: '', isTutorial: false, usesRealGear: false, stars: [], canStart: false };
     }
     return {
       name: daily.spec.name,
       duration: 'Endless',
       isTutorial: false,
+      usesRealGear: false,
       stars: [],
       canStart: daily.available,
       daily: { available: daily.available, bestScore: daily.bestScore, resetInLabel: daily.resetInLabel },
@@ -594,6 +625,7 @@ export function computeMissionDetail(
     name: mission.name,
     duration: MISSION_DURATION[mission.id] ?? '',
     isTutorial,
+    usesRealGear: mission.forcedLoadout === undefined,
     stars: isTutorial ? [] : mission.stars.map((star) => ({ id: star.id, description: starDescription(star), earned: earned.includes(star.id) })),
     canStart: isMissionUnlocked(save, mission.id),
   };
@@ -709,5 +741,5 @@ export function computeSupplies(save: SaveData): SupplyRowViewModel[] {
 // imports Phaser — so they're passed in rather than read here, same pattern as
 // ResultViewModel's `newStarIds` input.
 export function computeSettings(save: SaveData, musicMuted: boolean, sfxMuted: boolean): SettingsViewModel {
-  return { musicMuted, sfxMuted, devMode: save.devMode !== false };
+  return { musicMuted, sfxMuted, devMode: resolveDevMode(save) };
 }

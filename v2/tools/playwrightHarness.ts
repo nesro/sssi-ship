@@ -6,7 +6,7 @@
 
 import type { Page } from 'playwright';
 
-const BASE_URL = process.env.SCREENSHOT_BASE_URL ?? 'http://localhost:5173';
+const BASE_URL = process.env.SCREENSHOT_BASE_URL ?? 'http://localhost:5174';
 export const VIEWPORT = { width: 960, height: 540 }; // LOGICAL_WIDTH/HEIGHT, src/view/layout.ts
 const BOOT_TIMEOUT_MS = 20_000; // BootScene fetches a ~9MB music track on first load
 export const SETTLE_MS = 150; // let one real Phaser frame run after a state change before capture
@@ -88,32 +88,6 @@ export async function waitForMissionReady(page: Page, missionId: string, timeout
   }
 }
 
-/** Polls combat.inspect() until the bottom NarratorBar's current line has finished its
- * typewriter reveal (NarratorBar.isFullyRevealed) — the "read state back, don't guess a
- * fixed sleep" alternative to a hardcoded wait sized off today's longest story.ts line,
- * which would silently under-shoot if a future line got longer or over-shoot into the
- * bar's own 5000ms auto-hide window for a short line (docs/known-issues.md's now-
- * resolved NarratorBar reveal-timing entry). Real-time polling is correct here — the
- * typewriter reveal runs off wall-clock deltaMs every rendered frame
- * (CombatScene.update's narrator.update call), unaffected by the sim's own tick pause
- * under a pending card offer. THROWS on timeout or if the mission ends before a line
- * ever finishes revealing (matching advanceUntil's own fail-loud precedent) — a bare
- * cheat() rejection after the scene has gone away would be a much worse message. */
-export async function waitForNarratorFullyRevealed(page: Page, timeoutMs = 15_000): Promise<CombatSnapshot> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const snap = await cheat<CombatSnapshot>(page, 'combat.inspect');
-    if (snap.narratorFullyRevealed) return snap;
-    const context = `mission=${snap.missionId} tick=${String(snap.tick)} status=${snap.status}`;
-    if (snap.status !== 'running') {
-      throw new Error(`waitForNarratorFullyRevealed: mission ended before a narrator line finished revealing (${context})`);
-    }
-    if (Date.now() > deadline) {
-      throw new Error(`waitForNarratorFullyRevealed: timed out after ${String(timeoutMs)}ms (${context})`);
-    }
-    await page.waitForTimeout(100);
-  }
-}
 
 /** Fast-forwards combat in small steps, re-reading state after each, until `predicate`
  * is true or `maxTicks` is exhausted — the "read state back and adapt" alternative to

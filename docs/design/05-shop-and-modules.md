@@ -132,14 +132,16 @@ see `v2/src/data/items.ts`.
 
 ## Shield
 
-Four kinds, five levels each, sharing one price/star ladder — "Wall" is the free starter:
+Four kinds, five levels each, sharing one price/star ladder — "Wall" is the free starter.
+Each kind also fixes how far shield-burst backlash reaches when a collision drains the
+shield (`core/conveyor.ts`'s `advanceEnemies`) — a per-kind trait, not a per-level one:
 
-| Kind | Character |
-|------|-----------|
-| Wall | Thick plate — survives hits, slow recharge. The baseline. |
-| Reflex | Thin plate, instant snap-back — loves fast pulses |
-| Flux | Balanced capacity and pulse rate — works with anything |
-| Bulwark | Extreme capacity, minimal regen — true tank armour |
+| Kind | Character | Burst reach |
+|------|-----------|-------------|
+| Wall | Thick plate — survives hits, slow recharge. The baseline. | Nearest enemy only |
+| Reflex | Thin plate, instant snap-back — loves fast pulses | Every enemy on screen |
+| Flux | Balanced capacity and pulse rate — works with anything | Every enemy on screen |
+| Bulwark | Extreme capacity, minimal regen — true tank armour | None — absorbs, no splash |
 
 Prices and exact stats: see `v2/src/data/items.ts`'s `SHIELD_BASE`.
 

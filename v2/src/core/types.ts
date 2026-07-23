@@ -41,6 +41,12 @@ export interface ShieldSpec {
   capacity: number;
   /** Fraction of shieldCapacity restored each time the generator fires a pulse (0–1). */
   pulseShieldFraction: number;
+  /** How far collision-absorbed shield damage splashes back onto other enemies
+   * (conveyor.ts's shield-burst mechanic): 'single' hits only the nearest surviving
+   * enemy, 'all' hits every enemy currently on screen, 'none' skips the splash
+   * entirely. A per-kind identity trait, not a per-level one — shared by every level
+   * of a given shield kind. */
+  burstMode: 'single' | 'all' | 'none';
 }
 
 export interface GeneratorSpec {
@@ -350,6 +356,38 @@ export interface MissionSpec {
   /** Shown prominently on the defeat screen when set — a teaching line explaining what
    * went wrong and how to fix it, distinct from the mission's own blurb. */
   defeatHint?: string;
+  /**
+   * Strips the weapon from an otherwise-real, non-forced loadout (t1 only today — no
+   * weapon so the shield/generator interaction is the whole lesson). Distinct from
+   * `forcedLoadout`, which replaces the entire loadout and ignores the save: this
+   * flag's whole point is to run on the player's REAL equipped generator/shield/motor
+   * (so a shop switch actually changes the mission's outcome on retry) while removing
+   * only the one slot the mission's teaching point requires gone.
+   */
+  disableWeapon?: boolean;
+  /**
+   * Pins the generator to a fixed catalog item regardless of what's really equipped —
+   * same real-gear-except-one-slot shape as `disableWeapon` above, for missions whose
+   * own lesson is a different module but whose difficulty would otherwise be
+   * cross-contaminated by generator choice (t2 today: the ship's weapon and shield draw
+   * from one shared energy pool, `core/energy.ts`'s `pulseShield`, so a strong
+   * generator picked to fix an EARLIER mission silently makes THIS one easier too,
+   * regardless of which weapon is equipped — the exact confound this field exists to
+   * sever). Distinct from `neutralizeMotorForDaily` (`data/loadouts.ts`), which is
+   * Daily-Mission-specific and not data-driven off a `MissionSpec` field.
+   */
+  neutralizeGeneratorId?: string;
+  /**
+   * Strips rear and side weapons from an otherwise-real loadout, regardless of what's
+   * equipped — same real-gear-except-one-slot shape as `disableWeapon`/
+   * `neutralizeGeneratorId` above, for missions whose tuning assumes the starter
+   * loadout's `rearWeapon: null, sideWeapon: null` baseline. Rear weapons draw from the
+   * same shared energy pool `neutralizeGeneratorId`'s doc describes and add independent
+   * damage on top, so a rear weapon bought opportunistically with a prior mission's
+   * coins (cheap and available well before any core-slot upgrade is affordable) quietly
+   * does part of THIS mission's job too, regardless of which main weapon is equipped.
+   */
+  disableAuxWeapons?: boolean;
 }
 
 // ---------- Live state ----------

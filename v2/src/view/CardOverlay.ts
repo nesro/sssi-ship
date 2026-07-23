@@ -9,9 +9,12 @@ import { addModalBackdrop, addTextButton, UI_FONT } from './widgets';
 import { ManagedObjectGroup } from './ManagedObjectGroup';
 
 const DEPTH = 30;
-// Portrait: 3 cards side by side — 150px each × 3 + 10px gap × 2 = 470px < 540px
-const CARD_WIDTH_LOGICAL = 150;
-const CARD_HEIGHT_LOGICAL = 200;
+// Portrait: 3 cards side by side — 150px each × 3 + 10px gap × 2 = 470px < 540px.
+// Exported so anything that needs to locate a rendered card by shape (there's no text
+// label distinguishing one from another) can match this exact size instead of
+// re-deriving it — see tutorialAutopilot.ts's findCardCenters.
+export const CARD_WIDTH_LOGICAL = 150;
+export const CARD_HEIGHT_LOGICAL = 200;
 const CARD_GAP_LOGICAL = 10;
 
 /**

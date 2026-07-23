@@ -4,8 +4,8 @@ import { missionById } from '../data/missions';
 import { createAbilityOffer, resolveAbilityAction } from './cards';
 import { regenerateEnemies } from './combat';
 import { FIXTURE_LOADOUT, FIXTURE_MISSION, makeFixtureEnemy } from './fixtures';
-import { resolveForcedLoadout, STARTER_LOADOUT } from '../data/loadouts';
-import { weaponSpecAtLevel } from '../data/items';
+import { applyDisableWeapon, resolveForcedLoadout, STARTER_LOADOUT } from '../data/loadouts';
+import { generatorSpecAtLevel, weaponSpecAtLevel } from '../data/items';
 import { createCoreState } from './state';
 import { advanceTick } from './tick';
 import { resolveNarrator } from './narrator';
@@ -134,8 +134,8 @@ describe('scripted first offer (firstOfferIds)', () => {
 // ---------- Tutorial missions smoke test ----------
 
 describe('tutorial missions run to completion', () => {
-  // t2 has no forcedLoadout (it runs on real gear) — covered separately below.
-  const FORCED_LOADOUT_TUTORIAL_IDS = ['t1', 't3', 't4'] as const;
+  // t1/t2 have no forcedLoadout (they run on real gear) — covered separately below.
+  const FORCED_LOADOUT_TUTORIAL_IDS = ['t3', 't4'] as const;
 
   function runToEnd(mission: ReturnType<typeof missionById>, loadout: ReturnType<typeof resolveForcedLoadout>, seed: number): string {
     const state = createCoreState(mission, loadout, seed, ALL_ABILITIES);
@@ -166,6 +166,16 @@ describe('tutorial missions run to completion', () => {
     expect(failStatus).toBe('defeat');
     const fixedLoadout = { ...STARTER_LOADOUT, weapon: weaponSpecAtLevel('scatter', 1) };
     const clearStatus = runToEnd(mission, fixedLoadout, 502);
+    expect(clearStatus).toBe('victory');
+  });
+
+  it('t1 fails on real starter gear (the intended fail-first beat), and clears after a free torrent→surge switch', () => {
+    const mission = missionById('t1');
+    const starterNoWeapon = applyDisableWeapon(STARTER_LOADOUT);
+    const failStatus = runToEnd(mission, starterNoWeapon, 601);
+    expect(failStatus).toBe('defeat');
+    const fixedLoadout = { ...starterNoWeapon, generator: generatorSpecAtLevel('surge', 1) };
+    const clearStatus = runToEnd(mission, fixedLoadout, 602);
     expect(clearStatus).toBe('victory');
   });
 });

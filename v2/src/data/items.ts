@@ -355,18 +355,20 @@ const SHIELD_BASE: Record<ShieldKind, {
   fractions: [number, number, number, number, number];
   prices: [number, number, number, number, number];
   stars: [number, number, number, number, number];
+  burstMode: ShieldSpec['burstMode'];
 // Shield kinds are situational sidegrades, not a tier ladder; see WEAPON_STARS's
 // comment (in the weapon section above). Price reuses wall's tuned ladder for every
 // kind; caps/fractions (the actual combat stats making each kind situational) are
 // untouched. Stars are a separate, modest gate shared with generator/motor/rear-weapon/
-// side-weapon — 15 for the ceiling item.
+// side-weapon — 15 for the ceiling item. burstMode is a per-kind identity trait, same
+// as everything else here — shared by all 5 levels, not scaled by level.
 }> = {
   // Shield has a NONE option, so wall level 1 (mandatory starter) is priced low but never 0,
   // or it would be indistinguishable from NONE.
-  wall:    { displayName: 'Wall',    blurb: 'Thick plate — survives hits, slow recharge.',         caps: [ 30,  60, 100, 150, 220], fractions: [0.08, 0.09, 0.10, 0.12, 0.14], prices: [  80,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
-  reflex:  { displayName: 'Reflex',  blurb: 'Thin plate, instant snap-back. Loves fast pulses.',   caps: [ 15,  22,  30,  40,  55], fractions: [0.35, 0.42, 0.52, 0.62, 0.75], prices: [  80,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
-  flux:    { displayName: 'Flux',    blurb: 'Balanced cap and pulse rate. Works with anything.',   caps: [ 40,  70, 105, 150, 210], fractions: [0.18, 0.22, 0.26, 0.32, 0.38], prices: [  80,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
-  bulwark: { displayName: 'Bulwark', blurb: 'Extreme capacity, minimal regen. True tank armour.',  caps: [ 60, 100, 155, 225, 320], fractions: [0.05, 0.06, 0.07, 0.08, 0.10], prices: [  80,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
+  wall:    { displayName: 'Wall',    blurb: 'Thick plate, slow recharge. Backlash hits the nearest enemy only.', caps: [ 30,  60, 100, 150, 220], fractions: [0.08, 0.09, 0.10, 0.12, 0.14], prices: [  80,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15], burstMode: 'single' },
+  reflex:  { displayName: 'Reflex',  blurb: 'Thin plate, instant snap-back. Backlash splashes every enemy on screen.', caps: [ 15,  22,  30,  40,  55], fractions: [0.35, 0.42, 0.52, 0.62, 0.75], prices: [  80,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15], burstMode: 'all' },
+  flux:    { displayName: 'Flux',    blurb: 'Balanced cap and pulse rate. Backlash splashes every enemy on screen.', caps: [ 40,  70, 105, 150, 210], fractions: [0.18, 0.22, 0.26, 0.32, 0.38], prices: [  80,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15], burstMode: 'all' },
+  bulwark: { displayName: 'Bulwark', blurb: 'Extreme capacity, minimal regen. Absorbs everything — no backlash.',  caps: [ 60, 100, 155, 225, 320], fractions: [0.05, 0.06, 0.07, 0.08, 0.10], prices: [  80,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15], burstMode: 'none' },
 };
 
 export function shieldKindDisplayName(kind: ShieldKind): string { return SHIELD_BASE[kind].displayName; }
@@ -374,7 +376,12 @@ export function shieldKindDisplayName(kind: ShieldKind): string { return SHIELD_
 export function shieldSpecAtLevel(kind: ShieldKind, level: number): ShieldSpec {
   const base = SHIELD_BASE[kind];
   const i = level - 1;
-  return { id: `shield-${kind}-${String(level)}`, capacity: base.caps[i] ?? 30, pulseShieldFraction: base.fractions[i] ?? 0.08 };
+  return {
+    id: `shield-${kind}-${String(level)}`,
+    capacity: base.caps[i] ?? 30,
+    pulseShieldFraction: base.fractions[i] ?? 0.08,
+    burstMode: base.burstMode,
+  };
 }
 
 const SHIELD_ITEMS: Record<string, CatalogItem> = Object.fromEntries(
@@ -410,8 +417,9 @@ const GENERATOR_BASE: Record<GeneratorKind, {
 // Generator kinds are situational sidegrades, not a tier ladder; see WEAPON_STARS's
 // comment (in the weapon section above). Price reuses torrent's tuned ladder for every
 // kind; outputs/caps/drains (the actual combat stats making each kind situational) are
-// untouched. Stars share the same modest gate as shield/motor/rear-weapon/side-weapon —
-// 15 for the ceiling item.
+// untouched. `stars` here is the shared per-LEVEL ladder (15 for the ceiling item,
+// identical across kinds); GENERATOR_KIND_UNLOCK_STARS below adds a per-KIND floor on
+// top of it, same two-layer gate as weapon/rear-weapon.
 }> = {
   torrent: { displayName: 'Torrent', blurb: 'High output, small buffer. Feeds fast-cycling weapons.',        outputs: [ 2,  4,  7, 11, 16], caps: [50, 45, 40, 38, 35], drains: [0.50, 0.55, 0.60, 0.65, 0.70], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
   // Reserve pairs with low-drain weapons and burst-ability/supply synergy, not
@@ -423,6 +431,14 @@ const GENERATOR_BASE: Record<GeneratorKind, {
   steady:  { displayName: 'Steady',  blurb: 'Reliable mid-range. Pairs well with any loadout.',              outputs: [2.5,  4,  6,  9, 13], caps: [70, 82, 95, 110, 128], drains: [0.38, 0.34, 0.30, 0.26, 0.22], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
   surge:   { displayName: 'Surge',   blurb: 'Maximum output, tiny battery. Ion and nova goldmine.',          outputs: [ 3,  5,  9, 14, 20], caps: [30, 28, 26, 25, 25], drains: [0.72, 0.78, 0.83, 0.88, 0.92], prices: [   0,  780,  1700,  3750,  8300], stars: [ 0, 2, 4, 8, 15] },
 };
+
+// Kind-unlock gate, same reasoning as WEAPON_KIND_UNLOCK_STARS above: torrent (the real
+// starter default every fresh save equips) and surge (t1's intended shop-fix, sim-
+// verified as the one generator kind that clears its wave — see missions.ts's t1 entry)
+// both stay free so a first-time player can always reach that fix at 0 stars; reserve
+// and steady are gated. Floored across the whole ladder via Math.max below, not just
+// level 1, for the same bypass reason WEAPON_KIND_UNLOCK_STARS's own comment gives.
+const GENERATOR_KIND_UNLOCK_STARS: Record<GeneratorKind, number> = { torrent: 0, surge: 0, reserve: 3, steady: 5 };
 
 export function generatorKindDisplayName(kind: GeneratorKind): string { return GENERATOR_BASE[kind].displayName; }
 
@@ -441,7 +457,7 @@ const GENERATOR_ITEMS: Record<string, CatalogItem> = Object.fromEntries(
         system: 'generator' as const,
         name: `${base.displayName} Lv${String(level)}`,
         price: base.prices[i] ?? 0,
-        starsRequired: base.stars[i] ?? 0,
+        starsRequired: Math.max(base.stars[i] ?? 0, GENERATOR_KIND_UNLOCK_STARS[kind]),
         blurb: base.blurb,
         spec: generatorSpecAtLevel(kind, level),
       }];

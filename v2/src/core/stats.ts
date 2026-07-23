@@ -23,6 +23,10 @@ export interface EffectiveStats {
   shieldCapacity: number;
   /** Effective fraction of shieldCapacity restored per generator pulse (after card mods). */
   shieldPulseFraction: number;
+  /** How far shield-burst splash reaches (ShieldSpec's own field) — 'none' when no
+   * shield is equipped, already a no-op today since shieldCapacity is then 0 and
+   * conveyor.ts's totalBurst can never exceed 0 regardless of mode. */
+  shieldBurstMode: 'single' | 'all' | 'none';
   generatorOutput: number;
   generatorCapacity: number;
   /** Energy drained from generator when a shield pulse fires. */
@@ -161,6 +165,7 @@ export function computeEffectiveStats(
     ...computeSideWeaponStats(sideWeapon, damageBoostMult),
     shieldCapacity: shield !== null ? (shield.capacity + mods.shieldCapacityBonus) * mods.shieldCapacityMult : 0,
     shieldPulseFraction: shield !== null ? shield.pulseShieldFraction * mods.shieldPulseMult : 0,
+    shieldBurstMode: shield?.burstMode ?? 'none',
     generatorOutput: (generator.outputPerTick + mods.generatorOutputBonus) * generatorBoostMult,
     generatorCapacity,
     generatorPulseDrain: generator.pulseDrainFraction * generatorCapacity,

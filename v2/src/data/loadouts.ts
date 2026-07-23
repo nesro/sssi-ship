@@ -76,3 +76,21 @@ export function neutralizeMotorForDaily(loadout: LoadoutSnapshot): LoadoutSnapsh
   const kind = loadout.motor.id.split('-')[1] as MotorKind;
   return { ...loadout, motor: motorSpecAtLevel(kind, 1) };
 }
+
+/** Applies `MissionSpec.disableWeapon` — see that field's own doc comment for why this
+ * is a separate lever from `forcedLoadout`. */
+export function applyDisableWeapon(loadout: LoadoutSnapshot): LoadoutSnapshot {
+  return { ...loadout, weapon: null };
+}
+
+/** Applies `MissionSpec.neutralizeGeneratorId` — see that field's own doc comment for
+ * why this is a separate lever from `forcedLoadout`. */
+export function applyGeneratorOverride(loadout: LoadoutSnapshot, generatorId: string): LoadoutSnapshot {
+  return { ...loadout, generator: generatorSpecById(generatorId) };
+}
+
+/** Applies `MissionSpec.disableAuxWeapons` — see that field's own doc comment for why
+ * this is a separate lever from `forcedLoadout`. */
+export function applyDisableAuxWeapons(loadout: LoadoutSnapshot): LoadoutSnapshot {
+  return { ...loadout, rearWeapon: null, sideWeapon: null };
+}

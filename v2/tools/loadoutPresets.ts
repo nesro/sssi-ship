@@ -58,8 +58,8 @@ export interface IntendedLoadoutLevels {
 // Each mission's specific partial-upgrade loadout from GAME_DESIGN.md §13's balance
 // table — not the uniform starter/mid/full tiers above. m2's target ("Barricade or
 // Reflex Shield") is an either/or in the doc; this models the Wall-path reading
-// (shieldKindIndex 0) by default, since testing both isn't worth doubling the matrix
-// for a mission that already clears comfortably under plain starter gear.
+// (shieldKindIndex 0) by default. See docs/known-issues.md's "shield kind is a
+// campaign-wide balance variable" entry for what that default leaves unvalidated.
 export const INTENDED_LOADOUT_LEVELS: Record<string, IntendedLoadoutLevels> = {
   m1: { weaponLevel: 1, shieldLevel: 1, generatorLevel: 1, motorLevel: 1 },
   m2: { weaponLevel: 1, shieldLevel: 2, generatorLevel: 1, motorLevel: 1 },

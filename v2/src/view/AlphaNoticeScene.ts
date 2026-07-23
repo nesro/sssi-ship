@@ -1,9 +1,10 @@
 import Phaser from 'phaser';
-import { acceptOnboarding, loadSave, persistSave, resetSave } from '../save/SaveManager';
+import { acceptOnboarding, loadSave, persistSave, resetSave, resolveDevMode } from '../save/SaveManager';
 import { DISCORD_LABEL, DISCORD_URL, openExternalLink } from './externalLinks';
 import { cssColor, PALETTE } from './palette';
 import { fontPx, LOGICAL_HEIGHT, LOGICAL_WIDTH, px } from './layout';
 import { addTextButton, UI_FONT } from './widgets';
+import { playTutorialAutopilot } from './tutorialAutopilot';
 
 /**
  * Shown on EVERY launch — no save-flag gate, unlike the one-time hub button tour. A
@@ -100,12 +101,14 @@ export class AlphaNoticeScene extends Phaser.Scene {
     // Same toggle semantics as Settings' own DEV MODE button (HubScene.ts) — not
     // destructive, so a single tap (not a two-tap confirm like ERASE above) and no
     // auto-navigation, since this is meant to sit alongside CONTINUE/ERASE as an
-    // independent action, not replace pressing CONTINUE afterward.
-    let devOn = loadSave().devMode === true;
+    // independent action, not replace pressing CONTINUE afterward. Shares
+    // `resolveDevMode` with HubScene so the two screens can't independently drift on
+    // what an unset `devMode` means again.
+    let devOn = resolveDevMode(loadSave());
     const devLabel = (): string => (devOn ? 'DEV MODE: ON' : 'UNLOCK DEV MODE');
     const devColor = (): number => (devOn ? PALETTE.generatorAmber : 0x666688);
     const devBtn = addTextButton(this, {
-      x: px(LOGICAL_WIDTH / 2), y: px(422), size: 14,
+      x: px(import.meta.env.DEV ? LOGICAL_WIDTH / 2 - 180 : LOGICAL_WIDTH / 2), y: px(422), size: 14,
       label: devLabel(), color: devColor(),
       onClick: () => {
         devOn = !devOn;
@@ -114,6 +117,31 @@ export class AlphaNoticeScene extends Phaser.Scene {
         devBtn.setStyle({ color: cssColor(devColor()) });
       },
     });
+
+    // Excluded from production builds entirely (like __cheat, main.ts) rather than
+    // just hidden behind the DEV MODE toggle above — it calls resetSave() with no
+    // confirmation and then drives the canvas unattended for minutes, a materially
+    // bigger blast radius than anything else on this screen. Shares this row with DEV
+    // MODE (not its own row — every row on this screen is already at the 44px
+    // tap-target pitch floor) rather than stacked below it. Plays the whole documented
+    // new-player journey (docs/design/15-new-player-experience.md) with real taps and
+    // real combat time, so it can be watched like a movie instead of read as a doc. See
+    // tutorialAutopilot.ts for the full sequence.
+    if (import.meta.env.DEV) {
+      let autopilotRunning = false;
+      addTextButton(this, {
+        x: px(LOGICAL_WIDTH / 2 + 180), y: px(422), size: 14,
+        label: '▶ WATCH TUTORIAL AUTOPILOT', color: PALETTE.weaponCyan,
+        onClick: () => {
+          // playTutorialAutopilot's own first act stops every active scene (including
+          // this one), so there's nothing to reset this flag afterward — it only
+          // needs to block a second real-world click landing before that happens.
+          if (autopilotRunning) return;
+          autopilotRunning = true;
+          void playTutorialAutopilot(this.game);
+        },
+      });
+    }
 
     addTextButton(this, {
       x: px(LOGICAL_WIDTH / 2), y: px(466), size: 12,

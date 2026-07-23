@@ -62,6 +62,13 @@ export interface SaveData {
    * can't pre-buy the rear weapon that trivializes t2's fail-first wall before ever
    * attempting it; unlocked forever the moment t2 is failed (or won) once. */
   t2FailedOnce?: boolean;
+  /** Set on t1's/t3's first defeat — same absent-means-unset precedent as
+   * `onboardingSeen` above, but these two don't gate anything (t1 has no earlier
+   * mission to pre-shop from; t3's fix is a card pick, not a purchase). Read only by
+   * `narratorEventsForAttempt` to swap in a shorter, retry-aware narrator script that
+   * acknowledges the previous attempt instead of repeating the full first-time intro. */
+  t1FailedOnce?: boolean;
+  t3FailedOnce?: boolean;
   /**
    * Daily mission state (src/data/dailyMission.ts). Absent = never played, available
    * today — the same "optional/absent = unset" precedent as `onboardingSeen` above, so
@@ -161,6 +168,15 @@ export function totalStars(save: SaveData): number {
  * for finishing the story, not a stars/coins purchase. */
 export function hasCompletedCampaign(save: SaveData): boolean {
   return save.completedMissionIds.includes('m6');
+}
+
+/** `!== false`, not `=== true`: an unset `devMode` (any fresh/reset save) reads as ON.
+ * A single shared read so `AlphaNoticeScene`'s own toggle and `HubScene`'s Settings
+ * panel can never independently drift on what the same undefined field means (they
+ * used to: one read `=== true`, defaulting off, the other `!== false`, defaulting on —
+ * docs/known-issues.md). */
+export function resolveDevMode(save: SaveData): boolean {
+  return save.devMode !== false;
 }
 
 /**
@@ -441,6 +457,8 @@ export function applyMissionResult(save: SaveData, result: MissionResult): Appli
       coins: save.coins + result.coins,
       completedMissionIds,
       ...(result.missionId === 't2' && result.status === 'defeat' ? { t2FailedOnce: true } : {}),
+      ...(result.missionId === 't1' && result.status === 'defeat' ? { t1FailedOnce: true } : {}),
+      ...(result.missionId === 't3' && result.status === 'defeat' ? { t3FailedOnce: true } : {}),
     };
     persistSave(next);
     return { save: next, newStarIds: [] };

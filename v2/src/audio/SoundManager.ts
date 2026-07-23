@@ -46,11 +46,30 @@ class SoundManager {
   private musicMuted = readFlag(MUSIC_MUTE_KEY);
   private sfxMuted = readFlag(SFX_MUTE_KEY);
   private laserIndex = 0;
+  // Belt-and-suspenders alongside CombatScene's own "skip ticking while document.hidden"
+  // fix for the backgrounded-tab noise burst: a sound already mid-flight in the
+  // browser's audio pipeline at the exact instant the tab backgrounds isn't covered by
+  // that fix (nothing new gets queued, but that one call may already be in-flight), so
+  // this silences the *output* side too for the duration.
+  private suspended = false;
 
   /** Bind to the game-level sound manager. Safe to call from every scene's create(). */
   attach(sound: Phaser.Sound.BaseSoundManager): void {
     this.sound = sound;
     this.applyMusicMute();
+  }
+
+  /** Tab went hidden — silence output without touching the user's own mute prefs, so
+   * `resume()` restores exactly what was playing before. */
+  suspend(): void {
+    this.suspended = true;
+    if (this.sound !== null) this.sound.mute = true;
+  }
+
+  /** Tab is visible again — restore whatever mute state the user actually chose. */
+  resume(): void {
+    this.suspended = false;
+    if (this.sound !== null) this.sound.mute = false;
   }
 
   private applyMusicMute(): void {
@@ -62,9 +81,10 @@ class SoundManager {
     }
   }
 
-  /** Plays a one-shot SFX. No-ops if audio isn't attached or SFX is muted. */
+  /** Plays a one-shot SFX. No-ops if audio isn't attached, SFX is muted, or the tab is
+   * currently backgrounded. */
   private sfx(key: string, volume = SFX_VOLUME, detune = 0): void {
-    if (this.sound === null || this.sfxMuted) return;
+    if (this.sound === null || this.sfxMuted || this.suspended) return;
     this.sound.play(key, { volume, detune });
   }
 

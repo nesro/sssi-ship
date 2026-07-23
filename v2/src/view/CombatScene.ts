@@ -7,12 +7,12 @@ import { buildMissionResult } from '../core/result';
 import { createCoreState } from '../core/state';
 import { applyBoost } from '../core/supplies';
 import { abandonRun, advanceTick } from '../core/tick';
-import type { CoreState, EnemyState } from '../core/types';
+import type { CoreState, EnemyState, MissionSpec } from '../core/types';
 import { abilityById, abilityPoolForLoadout } from '../data/cards';
-import { missionById } from '../data/missions';
+import { missionById, narratorEventsForAttempt } from '../data/missions';
 import { DAILY_MISSION_ID, dailyDateKey } from '../data/dailyMission';
 import { getStoryLine } from '../data/story';
-import { neutralizeMotorForDaily, resolveForcedLoadout } from '../data/loadouts';
+import { applyDisableAuxWeapons, applyDisableWeapon, applyGeneratorOverride, neutralizeMotorForDaily, resolveForcedLoadout } from '../data/loadouts';
 import { computeSideWeaponButtonViewModel } from '../viewmodel/combat';
 import { ABILITY_COMPANY_COLORS } from '../viewmodel/companyColors';
 import { applyDailyResult, applyMissionResult, buildLoadout, isDailyAvailable, loadSave, reserveDailyAttempt } from '../save/SaveManager';
@@ -116,6 +116,13 @@ const SHIELD_FLASH_DECAY = 1.8;
 // radius, which reads a simulated fraction instead — see that file for why.
 const SHIELD_BASE_RADIUS = 26;
 const SHIELD_RADIUS_PER_FRACTION = 6;
+
+// Ship-side hull/shield bars sit just below the shield ring's own footprint
+// (SHIELD_BASE_RADIUS + SHIELD_RADIUS_PER_FRACTION, ~32px) so they never overlap it.
+const SHIP_STATUS_BAR_W = 44;
+const SHIP_STATUS_BAR_H = 4;
+const SHIP_STATUS_BAR_GAP = 3;
+const SHIP_STATUS_BAR_Y_OFFSET = 36;
 const SHIELD_GLOW_BASE_ALPHA = 0.04;
 const SHIELD_GLOW_FLASH_ALPHA = 0.06;
 const SHIELD_GLOW_RADIUS_PAD = 6;
@@ -190,7 +197,7 @@ export class CombatScene extends Phaser.Scene {
   private boosterBuffGfx!: Phaser.GameObjects.Graphics;
   private previousDistances = new Map<number, number>();
   private laserBolts: LaserBolt[] = [];
-  private enemyBolts: { rect: Phaser.GameObjects.Rectangle; vy: number; targetY: number }[] = [];
+  private enemyBolts: { rect: Phaser.GameObjects.Rectangle; glow: Phaser.GameObjects.Rectangle; vy: number; targetY: number }[] = [];
   private stars: { rect: Phaser.GameObjects.Rectangle; speed: number }[] = [];
   private muzzleFlashes: MuzzleFlash[] = [];
   private muzzleFlashGfx!: Phaser.GameObjects.Graphics;
@@ -202,6 +209,7 @@ export class CombatScene extends Phaser.Scene {
   private rearLaserBolts: LaserBolt[] = [];
   private sideLaserBolts: LaserBolt[] = [];
   private hpBarGfx!: Phaser.GameObjects.Graphics;
+  private shipStatusBarGfx!: Phaser.GameObjects.Graphics;
 
   private shieldGfx!: Phaser.GameObjects.Graphics;
   private accumulatorMs = 0;
@@ -278,6 +286,11 @@ export class CombatScene extends Phaser.Scene {
    * B" for missions with more than one narratorEvent (t1's post-first-hit follow-up).
    * Feeds NARRATOR_ARROW_TARGETS's per-event lookup. */
   private narratorEventIndex = 0;
+  /** True iff this attempt is running missionForThisAttempt's retry-variant
+   * narratorEvents instead of the mission's first-attempt script — suppresses
+   * NARRATOR_ARROW_TARGETS below, which is only ever authored against the original
+   * script's own event/line indices. */
+  private usingRetryNarration = false;
   /** Credited coins per enemy id — set only when the core actually emits an
    * 'enemy-killed' visual event (detectHits(), every tick), consumed on death
    * (onEnemyDeath()). Deliberately NOT pre-populated from the enemy's raw spec
@@ -295,6 +308,18 @@ export class CombatScene extends Phaser.Scene {
 
   constructor() {
     super('CombatScene');
+  }
+
+  /** Swaps in a shorter retry-aware narratorEvents array (missions.ts's
+   * narratorEventsForAttempt) when the matching t1/t2/t3FailedOnce flag is already set
+   * — otherwise returns `mission` unchanged, so a mission with no retry variant (or a
+   * first attempt) never gets copied needlessly. */
+  private missionForThisAttempt(mission: MissionSpec): MissionSpec {
+    const narratorEvents = narratorEventsForAttempt(mission, {
+      t1: this.save.t1FailedOnce, t2: this.save.t2FailedOnce, t3: this.save.t3FailedOnce,
+    });
+    if (narratorEvents === undefined || narratorEvents === mission.narratorEvents) return mission;
+    return { ...mission, narratorEvents };
   }
 
   // fallow-ignore-next-line unused-class-member
@@ -324,7 +349,16 @@ export class CombatScene extends Phaser.Scene {
       ? resolveForcedLoadout(mission.forcedLoadout)
       : buildLoadout(this.save);
     if (mission.id === DAILY_MISSION_ID) loadout = neutralizeMotorForDaily(loadout);
-    this.core = createCoreState(mission, loadout, seed, abilityPoolForLoadout(loadout));
+    if (mission.disableWeapon === true) loadout = applyDisableWeapon(loadout);
+    if (mission.neutralizeGeneratorId !== undefined) loadout = applyGeneratorOverride(loadout, mission.neutralizeGeneratorId);
+    if (mission.disableAuxWeapons === true) loadout = applyDisableAuxWeapons(loadout);
+    const missionForRun = this.missionForThisAttempt(mission);
+    // NARRATOR_ARROW_TARGETS is keyed by [eventIndex][lineIndex], which a retry-variant
+    // script can coincidentally share with the first-attempt script (both often start
+    // at event 0/line 0) despite pointing at completely different lines — this flag
+    // stops showNarratorLine from drawing an arrow that doesn't match what's on screen.
+    this.usingRetryNarration = missionForRun.narratorEvents !== mission.narratorEvents;
+    this.core = createCoreState(missionForRun, loadout, seed, abilityPoolForLoadout(loadout));
     this.motorLevel = motorLevelFromId(loadout.motor.id);
     this.motorKindColor = motorKindColorFromId(loadout.motor.id);
 
@@ -407,6 +441,7 @@ export class CombatScene extends Phaser.Scene {
     this.sideGunGfx    = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
     this.particleGfx   = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
     this.hpBarGfx = this.add.graphics().setDepth(7);
+    this.shipStatusBarGfx = this.add.graphics().setDepth(7);
     this.targetMarkerGfx = this.add.graphics().setDepth(7);
     this.boosterBuffGfx = this.add.graphics().setDepth(7);
     this.vignetteGfx = this.add.graphics().setDepth(9);
@@ -524,6 +559,35 @@ export class CombatScene extends Phaser.Scene {
     drawShieldRings(this.shieldGfx, cx, cy, r, { intensity: frac, flash });
   }
 
+  /** The player's own hull/shield as two small bars below the ship — the same at-a-
+   * glance reading enemies already get via drawEnemyHpBar, applied to the ship itself.
+   * A dedicated Graphics object (not hpBarGfx): this must stay visible during the
+   * post-finish hold, where renderEnemies (and its own hpBarGfx.clear()) never runs. */
+  private renderShipStatusBars(): void {
+    this.shipStatusBarGfx.clear();
+    const cx = px(SHIP_CENTER_X) + this.driftX();
+    const topY = px(SHIP_Y) + this.bobY() + px(SHIP_STATUS_BAR_Y_OFFSET);
+    const bw = px(SHIP_STATUS_BAR_W);
+    const bh = px(SHIP_STATUS_BAR_H);
+    const bx = cx - bw / 2;
+
+    const hullFrac = this.core.ship.hull / this.core.ship.maxHull;
+    this.shipStatusBarGfx.fillStyle(0x111122, 0.8);
+    this.shipStatusBarGfx.fillRect(bx, topY, bw, bh);
+    const hullColor = hullFrac > 0.55 ? 0x22ee44 : hullFrac > 0.25 ? 0xffaa00 : 0xff2200;
+    this.shipStatusBarGfx.fillStyle(hullColor, 0.9);
+    this.shipStatusBarGfx.fillRect(bx, topY, bw * Math.max(0, hullFrac), bh);
+
+    const maxShield = this.core.loadout.shield?.capacity ?? 0;
+    if (maxShield <= 0) return;
+    const shieldY = topY + bh + px(SHIP_STATUS_BAR_GAP);
+    const shieldFrac = this.core.ship.shield / maxShield;
+    this.shipStatusBarGfx.fillStyle(0x111122, 0.8);
+    this.shipStatusBarGfx.fillRect(bx, shieldY, bw, bh);
+    this.shipStatusBarGfx.fillStyle(0x2266ff, 0.9);
+    this.shipStatusBarGfx.fillRect(bx, shieldY, bw * Math.max(0, shieldFrac), bh);
+  }
+
   private renderShieldPulseRings(deltaMs: number): void {
     const cx = px(SHIP_CENTER_X) + this.driftX();
     const cy = px(SHIP_Y - 6) + this.bobY();
@@ -626,6 +690,16 @@ export class CombatScene extends Phaser.Scene {
   // fallow-ignore-next-line unused-class-member
   override update(_time: number, deltaMs: number): void {
     if (this.finished) { this.updatePostFinishEffects(deltaMs); return; }
+    // A backgrounded tab doesn't reliably stop rAF from firing at all (browsers vary,
+    // and some keep calling it throttled rather than paused) — without this, a long
+    // background stretch keeps ticking the sim (and its per-tick weapon-fire/hit/kill
+    // sounds) the whole time, capped per frame by MAX_CATCH_UP_MS but with no cap on
+    // how many such frames fire in total. Whatever sounds those ticks queued then all
+    // land at once the moment the tab (and the browser's suspended AudioContext) comes
+    // back, instead of playing spread out — the "everything plays as one loud noise on
+    // refocus" bug. Skipping simulation entirely while hidden means there's nothing
+    // queued to flush in the first place.
+    if (document.hidden) return;
     this.accumulatorMs += Math.min(deltaMs, MAX_CATCH_UP_MS);
     this.thrusterPhase += deltaMs;
     this.targetMarkerPhase += deltaMs;
@@ -661,6 +735,7 @@ export class CombatScene extends Phaser.Scene {
     this.shipSprite.setX(px(SHIP_CENTER_X) + this.driftX());
     this.shipSprite.setY(px(SHIP_Y) + this.bobY());
     this.renderEnemies(alpha);
+    this.renderShipStatusBars();
     this.updateLasers(deltaMs);
     this.updateRearLasers(deltaMs);
     this.updateSideLasers(deltaMs);
@@ -685,6 +760,7 @@ export class CombatScene extends Phaser.Scene {
     this.renderShieldPulseRings(deltaMs);
     this.shipSprite.setX(px(SHIP_CENTER_X) + this.driftX());
     this.shipSprite.setY(px(SHIP_Y) + this.bobY());
+    this.renderShipStatusBars();
     this.updateLasers(deltaMs);
     this.updateRearLasers(deltaMs);
     this.updateSideLasers(deltaMs);
@@ -843,9 +919,15 @@ export class CombatScene extends Phaser.Scene {
     });
   }
 
-  /** Returns the Y cursor for whatever comes next (ability slots) — fire/shield always
-   * take a row; rear/side only advance the cursor when actually equipped, so an
-   * unequipped loadout doesn't leave dead vertical space reserved for a hidden row. */
+  /** Returns the Y cursor for whatever comes next (ability slots). All four toggle
+   * rows (fire/rear/shield/side) always take a row, in the same fixed order, whether
+   * or not rear/side are actually equipped — this panel (and everything below it:
+   * ability slots, supply buttons) used to reflow around whichever of rear/side were
+   * owned, so the same screen position could be a completely different button between
+   * two missions depending on loadout. An unowned system now renders dimmed with its
+   * own "NO REAR WEAPON"/"NO SIDE WEAPON" label (updateAbilityBar) instead of
+   * disappearing, so muscle memory for "AUTO-FIRE is always row 1" transfers across
+   * every mission regardless of loadout. */
   private buildToggleButtons(startY: number): number {
     const cx = px(BTN_X + BTN_PANEL_W / 2);
     const btnW = px(BTN_PANEL_W - 40);
@@ -868,24 +950,16 @@ export class CombatScene extends Phaser.Scene {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#44ff66',
     }).setOrigin(0.5).setDepth(11);
 
-    const rearEquipped = this.core.loadout.rearWeapon !== null;
-    const rearY = cursor + ROW_PITCH / 2;
-    if (rearEquipped) cursor += ROW_PITCH;
+    const rearY = cursor + ROW_PITCH / 2; cursor += ROW_PITCH;
     this.rearBg = this.add.rectangle(cx, px(rearY), btnW, btnH, TOGGLE_OFF_FILL)
       .setStrokeStyle(px(1), 0x336622).setDepth(10);
     ensureMinTapTarget(this.rearBg);
-    this.rearBg.on('pointerdown', () => { toggleRearWeapon(this.core); });
+    // A no-op tap on an unequipped rear weapon reads as a disabled control, not a
+    // broken one — same guard shape as handleSideWeaponTap's own canFire check below.
+    this.rearBg.on('pointerdown', () => { if (this.core.loadout.rearWeapon !== null) toggleRearWeapon(this.core); });
     this.rearWeaponLabel = this.add.text(cx, px(rearY), 'REAR  ON', {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#88ff44',
     }).setOrigin(0.5).setDepth(11);
-    // A permanent loadout choice (unlike ability slots, which fill in mid-run) — an
-    // unowned system stays hidden rather than rendering a labeled "NO REAR WEAPON" row;
-    // half the panel reading as placeholders-for-things-you-don't-have was its own
-    // legibility problem. Its absence is what communicates absence.
-    if (!rearEquipped) {
-      this.rearBg.setVisible(false).removeInteractive();
-      this.rearWeaponLabel.setVisible(false);
-    }
 
     const shieldY = cursor + ROW_PITCH / 2; cursor += ROW_PITCH;
     this.shieldBg = this.add.rectangle(cx, px(shieldY), btnW, btnH, TOGGLE_OFF_FILL)
@@ -897,26 +971,16 @@ export class CombatScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(11);
 
     const sideWeapon = this.core.loadout.sideWeapon;
-    const sideEquipped = sideWeapon !== null;
-    const sideY = cursor + ROW_PITCH / 2;
-    if (sideEquipped) cursor += ROW_PITCH;
+    const sideY = cursor + ROW_PITCH / 2; cursor += ROW_PITCH;
     this.sideWeaponBg = this.add.rectangle(cx, px(sideY), btnW, btnH, TOGGLE_OFF_FILL)
       .setStrokeStyle(px(1), 0x552233).setDepth(10);
     ensureMinTapTarget(this.sideWeaponBg);
     this.sideWeaponBg.on('pointerdown', () => { this.handleSideWeaponTap(); });
     this.sideWeaponIcon = this.add.image(cx - btnW / 2 + px(9), px(sideY), iconTextureForSideWeaponId(sideWeapon?.id ?? 'focus-1'))
-      .setOrigin(0.5).setScale(0.4).setDepth(11).setVisible(sideEquipped);
+      .setOrigin(0.5).setScale(0.4).setDepth(11).setVisible(sideWeapon !== null);
     this.sideWeaponLabel = this.add.text(cx + px(4), px(sideY), '—', {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`, color: '#ff6688',
     }).setOrigin(0.5).setDepth(11);
-    // A permanent loadout choice (unlike ability slots, which fill in mid-run) — an
-    // unowned system stays hidden rather than rendering a labeled "NO SIDE WEAPON" row;
-    // half the panel reading as placeholders-for-things-you-don't-have was its own
-    // legibility problem. Its absence is what communicates absence.
-    if (!sideEquipped) {
-      this.sideWeaponBg.setVisible(false).removeInteractive();
-      this.sideWeaponLabel.setVisible(false);
-    }
 
     return cursor + SECTION_GAP;
   }
@@ -960,18 +1024,43 @@ export class CombatScene extends Phaser.Scene {
   }
 
   private updateAbilityBar(): void {
+    this.updateFireToggle();
+    this.updateRearToggle();
+    this.updateShieldToggle();
+    this.updateSideWeaponToggle();
+    this.updateAbilitySlots();
+  }
+
+  private updateFireToggle(): void {
     this.autoFireLabel.setText(`AUTO-FIRE  ${this.core.autoFireEnabled ? 'ON' : 'OFF'}`);
     this.autoFireLabel.setColor(this.core.autoFireEnabled ? '#44ff66' : '#664422');
     this.fireBg.setFillStyle(this.core.autoFireEnabled ? FIRE_ON_FILL : TOGGLE_OFF_FILL);
-    if (this.core.loadout.rearWeapon !== null) {
+  }
+
+  private updateRearToggle(): void {
+    const rearEquipped = this.core.loadout.rearWeapon !== null;
+    if (rearEquipped) {
       this.rearWeaponLabel.setText(`REAR  ${this.core.rearWeaponEnabled ? 'ON' : 'OFF'}`);
       this.rearWeaponLabel.setColor(this.core.rearWeaponEnabled ? '#88ff44' : '#446622');
       this.rearBg.setFillStyle(this.core.rearWeaponEnabled ? REAR_ON_FILL : TOGGLE_OFF_FILL);
+    } else {
+      this.rearWeaponLabel.setText('NO REAR WEAPON').setColor('#885566');
+      this.rearBg.setFillStyle(TOGGLE_OFF_FILL);
     }
+    // Unequipped stays dim but must remain legible — full 0.3 read as an unlabeled
+    // broken button, not an empty loadout slot (same reasoning as the side-weapon
+    // row's own dimming below).
+    this.rearBg.setAlpha(rearEquipped ? 1 : 0.4);
+    this.rearWeaponLabel.setAlpha(rearEquipped ? 1 : 0.6);
+  }
+
+  private updateShieldToggle(): void {
     this.autoShieldLabel.setText(`AUTO-SHIELD  ${this.core.autoShieldEnabled ? 'ON' : 'OFF'}`);
     this.autoShieldLabel.setColor(this.core.autoShieldEnabled ? '#4488ff' : '#334466');
     this.shieldBg.setFillStyle(this.core.autoShieldEnabled ? SHIELD_ON_FILL : TOGGLE_OFF_FILL);
+  }
 
+  private updateSideWeaponToggle(): void {
     const sideWeaponVm = computeSideWeaponButtonViewModel(this.core);
     this.sideWeaponLabel.setText(sideWeaponVm.equipped ? `${sideWeaponVm.label}  ${sideWeaponVm.chargesLabel}` : sideWeaponVm.label);
     this.sideWeaponLabel.setColor(sideWeaponVm.equipped ? (sideWeaponVm.canFire ? '#ff6688' : '#663344') : '#885566');
@@ -981,7 +1070,9 @@ export class CombatScene extends Phaser.Scene {
     this.sideWeaponBg.setAlpha(sideWeaponVm.equipped ? 1 : 0.4);
     this.sideWeaponLabel.setAlpha(sideWeaponVm.equipped ? 1 : 0.6);
     this.sideWeaponIcon.setAlpha(sideWeaponVm.equipped ? 1 : 0.4);
+  }
 
+  private updateAbilitySlots(): void {
     this.abilitySlots.forEach((slot, i) => {
       const equipped = this.core.equippedAbilities[i];
       if (equipped === undefined) {
@@ -1071,7 +1162,7 @@ export class CombatScene extends Phaser.Scene {
     const isLast = idx >= lines.length - 1;
     this.narratorModalObjects.add(
       addTextButton(this, {
-        x: px(cx), y: px(cy + 54), label: isLast ? 'CONTINUE' : 'NEXT →',
+        x: px(isLast ? cx : cx + 70), y: px(cy + 54), label: isLast ? 'CONTINUE' : 'NEXT →',
         color: 0x00ffee, size: 16,
         onClick: () => {
           if (isLast) {
@@ -1083,7 +1174,17 @@ export class CombatScene extends Phaser.Scene {
         },
       }).setDepth(depth + 2),
     );
-    const arrowRow = NARRATOR_ARROW_TARGETS[this.core.mission.id]?.[this.narratorEventIndex]?.[idx];
+    // Only offered before the last line — CONTINUE already dismisses the whole popup
+    // there, so a separate SKIP would be a redundant second button doing the same thing.
+    if (!isLast) {
+      this.narratorModalObjects.add(
+        addTextButton(this, {
+          x: px(cx - 70), y: px(cy + 54), label: 'SKIP', color: 0x556677, size: 13,
+          onClick: () => { resolveNarrator(this.core); },
+        }).setDepth(depth + 2),
+      );
+    }
+    const arrowRow = this.usingRetryNarration ? undefined : NARRATOR_ARROW_TARGETS[this.core.mission.id]?.[this.narratorEventIndex]?.[idx];
     if (arrowRow !== undefined) {
       const boxBounds = new Phaser.Geom.Rectangle(px(cx - panelW / 2), px(cy - panelH / 2), px(panelW), px(panelH));
       this.narratorModalObjects.add(drawPointerArrow(this, boxBounds, hudRowScreenBounds(arrowRow), 0x00ffee, depth + 2));
@@ -1293,20 +1394,28 @@ export class CombatScene extends Phaser.Scene {
     if (startY >= targetY) return;
     const color = outcome === 'crit' ? 0xff9900 : outcome === 'miss' ? 0x334455 : 0xff6600;
     const alpha = outcome === 'miss' ? 0.35 : 0.9;
+    // Bigger and with a soft trailing glow behind the core bolt — the old bare 3x8px
+    // rect read as barely-there next to the player's own textured, scaled laser bolts.
+    const glow = this.add
+      .rectangle(px(SHIP_CENTER_X), startY, px(9), px(22), color, alpha * 0.35)
+      .setDepth(4)
+      .setBlendMode(Phaser.BlendModes.ADD);
     const rect = this.add
-      .rectangle(px(SHIP_CENTER_X), startY, px(3), px(8), color, alpha)
+      .rectangle(px(SHIP_CENTER_X), startY, px(5), px(13), color, alpha)
       .setDepth(5)
       .setBlendMode(Phaser.BlendModes.ADD);
-    const travelMs = 240;
+    const travelMs = 320;
     const vy = (targetY - startY) / travelMs;
-    this.enemyBolts.push({ rect, vy, targetY });
+    this.enemyBolts.push({ rect, glow, vy, targetY });
   }
 
   private updateEnemyBolts(deltaMs: number): void {
     this.enemyBolts = this.enemyBolts.filter((bolt) => {
       bolt.rect.setY(bolt.rect.y + bolt.vy * deltaMs);
+      bolt.glow.setY(bolt.rect.y);
       if (bolt.rect.y >= bolt.targetY) {
         bolt.rect.destroy();
+        bolt.glow.destroy();
         return false;
       }
       return true;
@@ -1376,9 +1485,41 @@ export class CombatScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Two enemies can legitimately end up rendered close together — different speeds
+   * closing a gap over time, or two waves close enough in schedule to overlap on
+   * screen — even though their underlying `distance` values are perfectly valid core
+   * state. Fixed here, in the view, purely as a display-position nudge recomputed
+   * fresh from the true distance every frame: sorts by Y (closer to the ship = larger
+   * Y = "ahead") and pushes each subsequent, further-back sprite up just enough to
+   * clear a gap of half the pair's own average size between their edges. Never
+   * touches `enemy.distance` itself, so it can't compound frame-to-frame — an earlier
+   * attempt enforced this same gap in core/conveyor.ts instead, and because that
+   * correction persisted in `distance` across ticks, a backlog (player can't clear
+   * waves fast enough) fed on itself: every new spawn got pushed back by however far
+   * the existing pileup had already grown, without bound, until missions couldn't
+   * resolve (docs/known-issues.md).
+   */
+  private separateOverlappingSprites(
+    positioned: { enemy: EnemyState; sprite: Phaser.GameObjects.Image; y: number }[],
+  ): void {
+    positioned.sort((a, b) => b.y - a.y); // descending Y: closest-to-ship first
+    for (let i = 1; i < positioned.length; i++) {
+      const ahead = positioned[i - 1];
+      const behind = positioned[i];
+      if (ahead === undefined || behind === undefined) continue;
+      const rAhead = ENEMY_VISUAL_RADIUS[ahead.enemy.kind] ?? ENEMY_VISUAL_RADIUS_FALLBACK;
+      const rBehind = ENEMY_VISUAL_RADIUS[behind.enemy.kind] ?? ENEMY_VISUAL_RADIUS_FALLBACK;
+      const requiredGap = px(1.5 * (rAhead + rBehind));
+      const floor = ahead.y - requiredGap;
+      if (behind.y > floor) behind.y = floor;
+    }
+  }
+
   private renderEnemies(alpha: number): void {
     const liveIds = new Set<number>();
     this.hpBarGfx.clear();
+    const positioned: { enemy: EnemyState; sprite: Phaser.GameObjects.Image; y: number }[] = [];
     for (const enemy of this.core.enemies) {
       liveIds.add(enemy.id);
       let sprite = this.enemySprites.get(enemy.id);
@@ -1403,13 +1544,31 @@ export class CombatScene extends Phaser.Scene {
       }
       const previous = this.previousDistances.get(enemy.id) ?? enemy.distance;
       const distance = previous + (enemy.distance - previous) * alpha;
-      sprite.setY(this.laneToY(distance, enemy.kind));
+      positioned.push({ enemy, sprite, y: this.laneToY(distance, enemy.kind) });
+    }
+    this.separateOverlappingSprites(positioned);
+    for (const { enemy, sprite, y } of positioned) {
+      sprite.setY(y);
       sprite.setAlpha(0.4 + 0.6 * (enemy.hp / enemy.maxHp));
-      this.drawEnemyHpBar(sprite.x, sprite.y, enemy.hp / enemy.maxHp, enemy.isBoss);
-      this.updateEnemyHpLabel(enemy, sprite.x, sprite.y);
+      // A regular (non-boss) enemy's `distance` can sit above LANE_LENGTH for a real,
+      // multi-second stretch (spacing/jitter routinely push a wave's later spawns back
+      // that far, not just the ~4px/one-tick overshoot this used to assume) — long
+      // enough that sy-34 renders well off the top of the canvas while the sprite
+      // itself is already clearly on screen. Skipping the bar/label entirely until
+      // they'd land on-canvas (rather than clamping every enemy to one shared floor
+      // Y, boss-style) avoids two different enemies' labels ever landing on top of
+      // each other at that shared spot.
+      const hpOverlayVisible = enemy.isBoss || this.hpOverlayBarTop(sprite.y, false) >= 0;
+      if (hpOverlayVisible) {
+        this.drawEnemyHpBar(sprite.x, sprite.y, enemy.hp / enemy.maxHp, enemy.isBoss);
+        this.updateEnemyHpLabel(enemy, sprite.x, sprite.y);
+      } else {
+        this.hpLabels.get(enemy.id)?.setVisible(false);
+      }
       if (enemy.blocksConveyor && enemy.holdChargeTicks > 0) {
         this.drawHoldChargeRing(sprite.x, sprite.y, enemy.kind, enemy.holdChargeTicks, this.core.enemies.length > 1);
       }
+      this.drawEnemyFireTelegraph(sprite.x, sprite.y, enemy.kind, enemy.shootTimer, enemy.ticksBetweenShots);
     }
     // Detect deaths: any id that was alive last frame but isn't now
     for (const [id, sprite] of this.enemySprites) {
@@ -1529,12 +1688,15 @@ export class CombatScene extends Phaser.Scene {
     label.setPosition(sx, barTop - px(1));
     label.setColor(cssColor(col));
     label.setText(`${String(Math.ceil(enemy.hp))}/${String(Math.round(enemy.maxHp))}`);
+    label.setVisible(true);
   }
 
   /** The UI signal for "you're holding a blocker and charge is accruing/frozen" — a
-   * filling ring around the blocker. Hugs the sprite bounds
-   * tightly (not a big halo) since blockers commonly queue two-deep on the conveyor and a
-   * wide ring produces an unreadable venn-diagram overlap between them. Color ramps
+   * filling ring around the blocker. Hugs the sprite bounds tightly (not a big halo) —
+   * multiple blockers in one wave can still queue up close together on the conveyor
+   * (conveyor.ts's minimum-gap enforcement keeps them from actually overlapping, but
+   * not far apart), and a wide ring would produce an unreadable venn-diagram overlap
+   * between adjacent ones. Color ramps
    * amber→red as charge builds (a "heat" reading, and distinct from the booster-buff
    * line's green); accruing-vs-frozen (pressure present vs. the lane cleared to just this
    * blocker — tick.ts's accrueHoldCharge) reads through alpha/width, not hue, so the two
@@ -1559,6 +1721,28 @@ export class CombatScene extends Phaser.Scene {
     this.hpBarGfx.moveTo(tx1, ty1);
     this.hpBarGfx.lineTo(tx2, ty2);
     this.hpBarGfx.strokePath();
+  }
+
+  /** A growing, brightening warning spark at an enemy's own muzzle point (the edge
+   * facing the ship) during the last quarter of its fire cadence — advance notice
+   * that a shot is coming, not just the bolt itself appearing the instant it fires
+   * (spawnEnemyBolt). Scaled to each kind's own `ticksBetweenShots` rather than a
+   * fixed tick count, so a slow-firing kind isn't lit up for most of its cycle and a
+   * fast one isn't skipped entirely. Bright yellow-white, not a red/orange in the same
+   * family as the enemy sprites themselves — needs to read as a distinct warning
+   * signal, not blend into the sprite's own outline. */
+  private drawEnemyFireTelegraph(sx: number, sy: number, kind: string, shootTimer: number, ticksBetweenShots: number): void {
+    if (ticksBetweenShots <= 0) return;
+    const windowTicks = Math.max(1, ticksBetweenShots * 0.25);
+    if (shootTimer > windowTicks) return;
+    const frac = 1 - shootTimer / windowTicks; // 0 at window start → 1 right before firing
+    const radius = ENEMY_VISUAL_RADIUS[kind] ?? ENEMY_VISUAL_RADIUS_FALLBACK;
+    const muzzleY = sy + px(radius * 0.6); // toward the ship (larger Y = closer)
+    const coreRadius = px(3 + frac * 5.5);
+    this.hpBarGfx.fillStyle(0xffee44, 0.45 + frac * 0.5);
+    this.hpBarGfx.fillCircle(sx, muzzleY, coreRadius);
+    this.hpBarGfx.lineStyle(px(1.4), 0xffffff, 0.35 + frac * 0.55);
+    this.hpBarGfx.strokeCircle(sx, muzzleY, coreRadius + px(3));
   }
 
   private onEnemyDeath(x: number, y: number, enemyId: number): void {
@@ -1746,7 +1930,25 @@ export class CombatScene extends Phaser.Scene {
         this.spawnTweenBurst(cx, cy, 0xffcc00, 6);
       });
     }
-    this.tweens.add({ targets: this.shipSprite, alpha: 0, duration: 500, delay: 100 });
+    // Every other ship-attached visual (thruster/motor glow, gun/rear-gun/side-gun
+    // indicators, the generator core, the shield glow ring, the small hull/shield status
+    // bars) is its own Graphics object, never parented to shipSprite — fading shipSprite
+    // alone left them either frozen in place (most of them, since their own render calls
+    // stop once `finished` is set) or, for the thruster and status bars specifically,
+    // still fully opaque and visibly redrawn via updatePostFinishEffects's continued
+    // calls — an engine glow and a floating 0/0 readout with no ship left to attach to.
+    // Graphics.alpha is a multiplier over everything drawn into it regardless of how many
+    // more times it's redrawn, so fading it here works whether or not something keeps
+    // calling into it afterward.
+    this.tweens.add({
+      targets: [
+        this.shipSprite, this.thrusterGfx, this.motorGfx, this.gunGfx,
+        this.rearGunGfx, this.sideGunGfx, this.generatorGfx, this.shieldGfx, this.shipStatusBarGfx,
+      ],
+      alpha: 0,
+      duration: 500,
+      delay: 100,
+    });
   }
 
   // ── Dev-only cheats (__cheat.combat.*, main.ts) — implementations live in

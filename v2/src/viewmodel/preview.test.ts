@@ -155,6 +155,6 @@ function representativeLoadouts(): LoadoutSnapshot[] {
   return [
     FIXTURE_LOADOUT,
     { ...FIXTURE_LOADOUT, generator: { id: 'fix-gen-2', outputPerTick: 5, capacity: 30, pulseDrainFraction: 0.6 } },
-    { ...FIXTURE_LOADOUT, shield: { id: 'fix-shield-2', capacity: 80, pulseShieldFraction: 0.3 }, motor: { id: 'fix-motor-2', timelineMultiplier: 1, powerDrawPerTick: 1.2 } },
+    { ...FIXTURE_LOADOUT, shield: { id: 'fix-shield-2', capacity: 80, pulseShieldFraction: 0.3, burstMode: 'all' }, motor: { id: 'fix-motor-2', timelineMultiplier: 1, powerDrawPerTick: 1.2 } },
   ];
 }

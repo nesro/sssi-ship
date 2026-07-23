@@ -36,7 +36,7 @@ Two directory roots matter and are easy to mix up:
   with date + fix, never just delete them — follow that when you close something out.
 - `cd v2/` for everything below. Confirm the dev server is up and actually *responding*,
   not just started — `pnpm dev &` returns before Vite is listening, so poll
-  (`until curl -s -o /dev/null -w '%{http_code}' http://localhost:5173 | grep -q 200; do
+  (`until curl -s -o /dev/null -w '%{http_code}' http://localhost:5174 | grep -q 200; do
   sleep 1; done`) rather than firing the Playwright harness immediately after launch.
 - If Tomáš gave a focus area this round, treat it as the primary theme: read the
   relevant design-doc section(s) for it, and scope investigation there first. Still

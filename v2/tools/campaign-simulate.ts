@@ -55,7 +55,7 @@ import {
 } from '../src/data/items';
 import type { CatalogItem } from '../src/data/items';
 import { ALL_MISSIONS, missionById } from '../src/data/missions';
-import { resolveForcedLoadout } from '../src/data/loadouts';
+import { applyDisableAuxWeapons, applyDisableWeapon, applyGeneratorOverride, resolveForcedLoadout } from '../src/data/loadouts';
 import { SUBSCRIPTIONS } from '../src/data/subscriptions';
 import {
   type SaveData, applyMissionResult, buildLoadout, buySubscription, buySupplyCharge,
@@ -447,6 +447,15 @@ function applyPurchasePolicy(
   if (justFailedMissionId === 't2' && save.equipped.weapon === 'pulse-1') {
     return switchItem(save, 'scatter-1');
   }
+  // t1's defeat screen hard-navigates every player to the shop the same way t2's does
+  // (ResultScene's defeat-shop-redirect) — torrent-1 (the real starter default) can't
+  // refill the shield fast enough against t1's wave; surge-1 (max output, tiny battery)
+  // is the one generator kind that keeps pace, sim-verified. Same reasoning as t2's
+  // branch above: keyed on justFailedMissionId so every archetype takes this fix right
+  // after a real t1 loss, not just archetypes that would pick surge on their own.
+  if (justFailedMissionId === 't1' && save.equipped.generator === 'generator-torrent-1') {
+    return switchItem(save, 'generator-surge-1');
+  }
   if (archetype === 'expert') {
     const hasTarget = nextMissionId !== null && MISSIONS_WITH_INTENDED_TARGET.has(nextMissionId);
     const targeted = hasTarget ? buildExpertTargetedCandidates(save, nextMissionId) : [];
@@ -539,9 +548,12 @@ function runOneCampaign(archetype: Archetype, campaignSeed: number): CampaignRec
 
     while (attempts < PATIENCE_CAP && !cleared) {
       attempts++;
-      const loadout: LoadoutSnapshot = mission.forcedLoadout !== undefined
+      let loadout: LoadoutSnapshot = mission.forcedLoadout !== undefined
         ? resolveForcedLoadout(mission.forcedLoadout)
         : buildLoadout(save);
+      if (mission.disableWeapon === true) loadout = applyDisableWeapon(loadout);
+      if (mission.neutralizeGeneratorId !== undefined) loadout = applyGeneratorOverride(loadout, mission.neutralizeGeneratorId);
+      if (mission.disableAuxWeapons === true) loadout = applyDisableAuxWeapons(loadout);
       const abilityPool = abilityPoolForLoadout(loadout);
       const seed = attemptSeed(campaignSeed, missionIndex, attempts);
       const chooseTarget = chooseTargetPolicyFor(archetype);

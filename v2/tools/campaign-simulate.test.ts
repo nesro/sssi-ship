@@ -48,7 +48,7 @@ describe('MISSION_ROUTE', () => {
 
   it('unlocks a mission on completion regardless of star count — t1 has no prerequisite stars', () => {
     const t1 = missionById('t1');
-    expect(t1.forcedLoadout).toBeDefined();
+    expect(t1.disableWeapon).toBe(true);
     const incoming = MISSION_UNLOCK_EDGES.filter(([, toId]) => toId === 't1');
     expect(incoming).toHaveLength(0);
   });

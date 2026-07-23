@@ -2,10 +2,10 @@
 // lines), SupplyButtons (boost buttons), and CardOverlay (dispatch-reinforcements
 // modal). Zero Phaser import — CombatScene reads these objects and renders them.
 
-import { BROWNOUT_THRESHOLD, TICKS_PER_SECOND } from '../core/constants';
+import { BROWNOUT_THRESHOLD, LANE_LENGTH, TICKS_PER_SECOND } from '../core/constants';
 import { activeDamageMult, activeFireRateMult, activeGeneratorMult, computeEffectiveStats } from '../core/stats';
 import type { EffectiveStats } from '../core/stats';
-import type { AbilityOffer, CoreState, EnemyState, SideWeaponKind, StarSpec } from '../core/types';
+import type { AbilityOffer, CoreState, EnemyState, MissionSpec, SideWeaponKind, SpawnEvent, StarSpec } from '../core/types';
 import { abilityById } from '../data/cards';
 import { sideWeaponKindDisplayName } from '../data/items';
 import { ABILITY_COMPANY_CHARS, ABILITY_COMPANY_COLORS } from './companyColors';
@@ -17,9 +17,9 @@ export const HULL_GREEN = 0x44ff66;
 const BROWNOUT_COLOR = 0xff4400;
 // A mission's last scheduled event tick isn't quite the real end of the mission
 // (enemies from that event still have to reach the ship/die after it fires), so both
-// the progress bar and the support-call markers measure against a slightly padded
-// denominator rather than the literal last event tick — otherwise the bar would hit
-// 100% before the mission actually ends.
+// the progress bar's own total (progressTotalTicks) and the support-call markers
+// (computeSupportMarkers) measure against a slightly padded denominator rather than
+// the literal last event/arrival tick.
 const TIMELINE_TAIL_FRACTION = 1.05;
 
 export interface BarViewModel {
@@ -83,23 +83,56 @@ function computeMissionOrBossBar(boss: EnemyState | null, progressFrac: number):
   return { ...bar, label: `${String(Math.round(bar.fraction * 100))}%`, mode: boss !== null ? 'boss' : 'mission', name: boss !== null ? 'BOSS' : 'PROG' };
 }
 
-/** Padded total ticks — see TIMELINE_TAIL_FRACTION's own comment. 1 (not 0) when the
- * mission has no events at all, matching the pre-Phase-C fallback exactly. */
-function paddedTotalTicks(state: CoreState): number {
+/** The tick at which this event's farthest-spaced enemy (the last one, since `spacing`
+ * pushes each subsequent spawn back) would reach the ship if never killed — null for
+ * stationary kinds (`speed <= 0`, e.g. turret), which never travel and so have no
+ * arrival tick of their own; a mission's real clear timing is bounded by whichever
+ * other, mobile events it also has. */
+function eventArrivalTick(event: SpawnEvent, mission: MissionSpec): number | null {
+  const spec = mission.enemyKinds[event.kind];
+  if (spec === undefined || spec.speed <= 0) return null;
+  const farthestDistance = LANE_LENGTH + (event.count - 1) * event.spacing;
+  return event.atTimelineTick + farthestDistance / spec.speed;
+}
+
+/** Worst-case total duration for the progress bar: the latest arrival tick across
+ * every event that has one (stationary-only events excluded — see eventArrivalTick),
+ * padded like computeSupportMarkers's own denominator. Falls back to the mission's
+ * last event tick if every event is stationary (no mobile event to measure against at
+ * all — not a real mission shape today, but keeps this total well-defined). 1 (not 0)
+ * when the mission has no events at all, matching the pre-Phase-C fallback exactly. */
+function progressTotalTicks(state: CoreState): number {
+  const arrivals = state.mission.events
+    .map((event) => eventArrivalTick(event, state.mission))
+    .filter((tick): tick is number => tick !== null);
+  if (arrivals.length > 0) return Math.max(...arrivals) * TIMELINE_TAIL_FRACTION;
   const lastEvent = state.mission.events[state.mission.events.length - 1];
   return lastEvent !== undefined ? lastEvent.atTimelineTick * TIMELINE_TAIL_FRACTION : 1;
 }
 
 /** Single source for the mission-progress bar's fraction: 0 while a boss is up (the bar
  * switches to showing boss HP instead — see computeMissionOrBossBar), else how far
- * through the padded timeline the mission currently is. */
+ * through the worst-case mission duration `state.timelineTick` currently is.
+ *
+ * `timelineTick` already freezes on its own while a `blocksConveyor` enemy is alive
+ * (`timeline.ts`), so this reads as smooth, continuous progress that pauses exactly
+ * while something is genuinely holding the mission up — no extra logic needed for
+ * that part. A plain last-event-tick estimate broke down for a mission whose whole
+ * wave fires in one early event (t1: everything at tick 1, with the real fight —
+ * shield vs. generator — still entirely ahead): the bar reached its ceiling within the
+ * first second, then sat there for the rest of the mission. progressTotalTicks fixes
+ * that by estimating from real travel time instead of scheduling time alone. Capped
+ * below 1 while running (a worst-case estimate can still undershoot if enemies die
+ * before reaching the ship, which is the common case — the true 100% only shows once
+ * the mission has actually resolved). */
 function computeProgressFrac(state: CoreState, boss: EnemyState | null): number {
   if (boss !== null) return 0;
-  return Math.min(1, state.timelineTick / paddedTotalTicks(state));
+  const cap = state.status === 'running' ? 0.99 : 1;
+  return Math.min(cap, state.timelineTick / progressTotalTicks(state));
 }
 
 function computeSupportMarkers(state: CoreState): SupportMarkerViewModel[] {
-  const totalTicks = paddedTotalTicks(state);
+  const totalTicks = progressTotalTicks(state);
   return state.mission.supportCallTicks.map((tick) => ({ fraction: Math.min(1, tick / totalTicks) }));
 }
 
