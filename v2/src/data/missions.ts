@@ -1,4 +1,5 @@
 import { TICKS_PER_SECOND } from '../core/constants';
+import { composeEnemy } from '../core/enemyCompose';
 import type { EnemySpec, ForcedLoadout, MissionSpec, NarratorEvent, StarSpec } from '../core/types';
 
 const seconds = (n: number): number => n * TICKS_PER_SECOND;
@@ -29,6 +30,10 @@ const BLOCKER: EnemySpec = {
   kind: 'blocker', hp: 140, speed: 0.5, shotDamage: 4,
   ticksBetweenShots: seconds(1.5), blocksConveyor: true, coinReward: 25,
   critChance: 0.08, missChance: 0, critMult: 2.0,
+  // Only blocksConveyor enemy whose bonus support-call payout scales with how long
+  // it was held alive (combat.ts's bonusCallsForHoldCharge) — turret/boss/guardian
+  // stay flat-1 on purpose, unchanged from before this was a named, explicit field.
+  holdBonusTiered: true,
 };
 // Tuned via sim, not intuition: raising shotDamage only makes collision-tanking
 // costlier, it never shifts the boss kill toward weapon damage (that's governed by
@@ -38,6 +43,9 @@ const BOSS: EnemySpec = {
   kind: 'boss', hp: 1900, speed: 0.25, shotDamage: 10,
   ticksBetweenShots: seconds(1), blocksConveyor: true, coinReward: 100, isBoss: true,
   critChance: 0.12, missChance: 0, critMult: 2.5,
+  // Drives the approach/stall alternation (conveyor.ts's effectiveSpeed) — an
+  // explicit MOTOR identity now, no longer inferred from kind === 'boss'.
+  motorKind: 'stall-cycle',
 };
 const TURRET: EnemySpec = {
   kind: 'turret', hp: 80, speed: 0, shotDamage: 6,
@@ -61,7 +69,60 @@ const BOOSTER: EnemySpec = {
   kind: 'booster', hp: 45, speed: 0.7, shotDamage: 2,
   ticksBetweenShots: seconds(3), blocksConveyor: false, coinReward: 20,
   regenPerTick: 3, critChance: 0, missChance: 0, critMult: 2.0,
+  // Feeds the nearest enemy ahead instead of self-healing (combat.ts's
+  // regenerateEnemies) — an explicit GENERATOR identity now, no longer inferred
+  // from kind === 'booster'.
+  generatorKind: 'ally-regen',
 };
+
+/**
+ * BREACHER / BREACHER GUNNER: t2's named wall drones (docs/plans/modular-enemies.md
+ * — fewer, individually tougher than the old 18-count fodder wall, real modules
+ * instead of an anonymous headcount). Deliberately a fresh spec, not a FODDER edit —
+ * FODDER is shared by m1-m6 and this mission's numbers are tuned specifically for
+ * t2's own pulse-fails/scatter-clears lesson. Both carry a real SHIELD (capacity 8,
+ * absorbed before hp — genuine extra effective toughness, not cosmetic); GUNNER also
+ * carries a real rear weapon (a second, independent gun, docs/plans/modular-enemies.md
+ * — wave 2 escalates from "a wall" to "a wall that shoots back from both ends").
+ *
+ * Deliberately NOT given a real GENERATOR (generatorKind stays 'none', so the
+ * always-on core glow the view draws — CombatScene.ts's drawEnemyGeneratorCore, shown
+ * regardless of generatorKind — is purely cosmetic here): an early self-regen
+ * candidate (sim-tested at hp=20-30/regen=0.5) inverted the whole lesson — a
+ * single-target pulse loadout started CLEARING BETTER than scatter, because
+ * concentrating damage on one target at a time occasionally outraces its regen while
+ * scatter's thinner per-target damage lets regen claw back more of it, proportionally
+ * — confirmed by sim, not assumed, and specifically why regen isn't just "free" to add
+ * to every enemy that gets a generator module.
+ *
+ * hp=34/shotDamage=4/shield=8 (up from the plain-BREACHER draft's 45/4/0 once the
+ * shield was added — shield contributes real extra effective toughness, so hp came
+ * down to compensate), two waves of 3 half a second apart (down from FODDER's
+ * 2+8+8=18): sim-verified (createCoreState + advanceTick sweep, 500 seeds/config)
+ * against the pinned generator-torrent-1 this mission already neutralizes to —
+ * pulse-1 (single-target) fails 0% of the time; scatter-1 (t2's intended same-level
+ * free switch) clears 100% with real hull margin (~18% avg remaining).
+ */
+const BREACHER_MODULES = {
+  weapon: { kind: 'stinger', shotDamage: 4, ticksBetweenShots: seconds(2), critChance: 0, missChance: 0, critMult: 2.0 },
+  shield: { kind: 'aegis', capacity: 8 },
+  generator: { kind: 'none', regenPerTick: 0 },
+  motor: { kind: 'steady', speed: 1.2 },
+  gunnerRear: { kind: 'lance', shotDamage: 3, ticksBetweenShots: seconds(3), critChance: 0, missChance: 0, critMult: 2.0 },
+} as const;
+const BREACHER: EnemySpec = composeEnemy(
+  BREACHER_MODULES.weapon, BREACHER_MODULES.shield, BREACHER_MODULES.generator, BREACHER_MODULES.motor,
+  // Own `kind` (docs/plans/enemy-hull-redesign.md) — was 'fodder', silently sharing
+  // FODDER's texture. Hand-drawn-per-named-enemy needs a distinct kind per archetype.
+  { kind: 'breacher', hp: 34, coinReward: 5, displayName: 'BREACHER' },
+);
+const BREACHER_GUNNER: EnemySpec = composeEnemy(
+  BREACHER_MODULES.weapon, BREACHER_MODULES.shield, BREACHER_MODULES.generator, BREACHER_MODULES.motor,
+  {
+    kind: 'breacher-gunner', hp: 34, coinReward: 5, displayName: 'BREACHER GUNNER',
+    rearWeapon: BREACHER_MODULES.gunnerRear,
+  },
+);
 
 /** 4-star set used by tutorial missions: hull ×2, all-kills, shield-unbroken. */
 function standardStars(missionId: string): StarSpec[] {
@@ -142,31 +203,46 @@ const TUTORIAL_LOADOUT_BASE: Omit<ForcedLoadout, 'weaponId'> = {
 // ---------- Tutorial enemy archetypes ----------
 
 /**
- * Slow-crawl guardian for t1: no weapon, so the ship must "let them reach you" — the
- * shield absorbs the collision (routed shield-first, conveyor.ts) and bursts a
- * fraction of the absorbed damage back onto every other surviving guardian
- * (SHIELD_BURST_RETURN). missChance=0.9 keeps direct shot pressure non-lethal, so
- * collisions (not ranged fire) are what the mission is actually testing.
+ * SENTINEL: t1's two named guardians (docs/plans/modular-enemies.md — fewer,
+ * individually stronger, real identity instead of an anonymous headcount). No
+ * weapon, so the ship must "let them reach you" — the shield absorbs the collision
+ * (routed shield-first, conveyor.ts) and bursts a fraction of the absorbed damage
+ * back onto the other surviving guardian (SHIELD_BURST_RETURN). missChance=0.9 keeps
+ * direct shot pressure non-lethal, so collisions (not ranged fire) are what the
+ * mission is actually testing.
  *
- * speed 2.5 (not the old 2.2) stays under kamikaze's 2.8 — the fastest enemy in the
- * game — so this never becomes the single fastest thing on screen and reads as an
- * unreadable blink instead of a real "the shield absorbs a hit" beat.
+ * speed 2.5 stays under kamikaze's 2.8 — the fastest enemy in the game — so this
+ * never becomes the single fastest thing on screen and reads as an unreadable blink
+ * instead of a real "the shield absorbs a hit" beat.
  *
- * shotDamage 8 (not the old 3): t1's wave is capped at 5 guardians in one event (see
- * the mission's own event-count comment below for why — a visual-overlap constraint,
- * not a difficulty one), and 5 collisions at the old shotDamage couldn't threaten the
- * ship's hull no matter which generator kind was equipped, since capping bare
- * collision damage that low left the WHOLE wave's total damage pool too small to
- * ever fail regardless of shield timing. At 8, real HP (25) still comfortably
- * survives one burst — the design intent from the old comment stays true — but the
- * WAVE now differentiates generator kinds again (sim-verified, see the mission's own
- * forcedLoadout comment below).
+ * hp=40/shotDamage=16 (up from the old 5-count wave's 25/8): sim-verified (createCoreState
+ * + advanceTick sweep, 500-1000 seeds/config) at these numbers with the mission's own
+ * spacing=100 — generator-torrent-1 (the real starter default) fails 0% of the time;
+ * generator-surge-1 (t1's intended shop fix) clears 100% with real hull margin (~7%
+ * avg remaining). Same fail/fix split the old 5-count wave held, reproduced at 2.
  */
-const GUARDIAN_SLOW: EnemySpec = {
-  kind: 'guardian', hp: 25, speed: 2.5, shotDamage: 8,
-  ticksBetweenShots: seconds(3), blocksConveyor: false, coinReward: 15,
-  regenPerTick: 0, critChance: 0, missChance: 0.9, critMult: 2.0,
-};
+// SENTINEL carries a real SHIELD + GENERATOR (not null/'none') for visual completeness
+// — docs/plans/modular-enemies.md's "every enemy has all four modules as real hull
+// parts, not just the ones that matter this mission." Balance-safe to add here
+// specifically: t1 has no weapon at all (disableWeapon), so nothing ever damages a
+// guardian via ranged fire; the only thing that ever touches a guardian's own hp/
+// shield is the shield-burst splash (conveyor.ts) when the OTHER guardian collides —
+// and no mission outcome depends on a guardian's own survival state, only the ship's
+// hull/shield. Confirmed unchanged via the same torrent-fails/surge-clears sim sweep
+// used to tune the wave itself (see SENTINEL's own comment above).
+const SENTINEL_MODULES = {
+  weapon: { kind: 'stinger', shotDamage: 16, ticksBetweenShots: seconds(3), critChance: 0, missChance: 0.9, critMult: 2.0 },
+  shield: { kind: 'aegis', capacity: 20 },
+  generator: { kind: 'self-regen', regenPerTick: 1 },
+  motor: { kind: 'steady', speed: 2.5 },
+} as const;
+const SENTINEL: EnemySpec = composeEnemy(
+  SENTINEL_MODULES.weapon, SENTINEL_MODULES.shield, SENTINEL_MODULES.generator, SENTINEL_MODULES.motor,
+  // Own `kind` (docs/plans/enemy-hull-redesign.md) — was 'guardian', silently
+  // sharing t3's GUARDIAN_REGEN texture despite being a thematically distinct
+  // disposable training drone.
+  { kind: 'sentinel', hp: 40, coinReward: 15, displayName: 'SENTINEL' },
+);
 
 /**
  * Regenerating guardian for t3: regen (2.2/tick = 22 HP/s, 5 ticks/cycle = 11/cycle)
@@ -181,6 +257,12 @@ const GUARDIAN_REGEN: EnemySpec = {
   kind: 'guardian', hp: 55, speed: 0.3, shotDamage: 10,
   ticksBetweenShots: seconds(2), blocksConveyor: true, coinReward: 20,
   regenPerTick: 2.1, critChance: 0, missChance: 0, critMult: 2.0,
+  // Self-heals (combat.ts's regenerateEnemies) — an explicit GENERATOR identity now,
+  // matching the pre-existing default behavior (anything not 'ally-regen' self-heals).
+  generatorKind: 'self-regen',
+  // Explicit module identity so its gun mount gets a real shape (drawEnemyGunMountShape)
+  // instead of the generic null-fallback — a slow, heavy 2s cadence fits 'lance' best.
+  weaponKind: 'lance',
 };
 
 /**
@@ -199,6 +281,11 @@ const GUARDIAN_REGEN: EnemySpec = {
 export const MIN_VISUAL_SPACING: Partial<Record<string, number>> = {
   fodder: 14, striker: 15, tank: 16, swarm: 9, blocker: 19,
   guardian: 15, turret: 18, kamikaze: 12, boss: 29, booster: 15,
+  // Own kinds (docs/plans/enemy-hull-redesign.md) — same value as the same-size-class
+  // kind they used to silently share a texture with (fodder-tier for both BREACHERs,
+  // guardian-tier for SENTINEL); keep in sync if their own ENEMY_VISUAL_RADIUS ever
+  // diverges from that class once their hulls are hand-drawn.
+  breacher: 14, 'breacher-gunner': 14, sentinel: 15,
 };
 
 // ---------- Tutorial narrator events ----------
@@ -221,17 +308,18 @@ export const MIN_VISUAL_SPACING: Partial<Record<string, number>> = {
 // subscriptionCardIds: [] (loadouts.ts) — so the claim is only true outside a tutorial.
 //
 // t1 has two narratorEvents, not one: the first (tick 0) sets up the concepts before
-// any enemy arrives; the second pauses right after the first guardian collision
+// any enemy arrives; the second pauses right after the first SENTINEL's collision
 // resolves so the lines can point at real, freshly-changed numbers instead of
 // describing the mechanic in the abstract beforehand. atTimelineTick: 55 is picked to
 // land safely after the first collision, not before it — SPAWN_JITTER means the first
-// collision's exact tick varies by seed (sim-confirmed range: 46-53 for this mission's
-// current speed/spacing), so this is a safe-margin value, not the single "the" tick a
-// deterministic run would hit. If GUARDIAN_SLOW's speed or this event's spawn tick/count
-// ever change, recompute via a quick core-only probe (createCoreState + advanceTick in a
-// loop, watching state.stats.collisions for the first increment, across several seeds —
-// not just one) rather than eyeballing a new value — this tick doubles as
-// CombatScene.ts's NARRATOR_ARROW_TARGETS event-index key (t1[1]).
+// collision's exact tick varies by seed (sim-confirmed range: 46-53 — unchanged by the
+// 2-count redesign, since only the SECOND SENTINEL's spawn distance depends on
+// `spacing`; the first's depends only on LANE_LENGTH), so this is a safe-margin value,
+// not the single "the" tick a deterministic run would hit. If SENTINEL's speed or this
+// event's spawn tick/count ever change, recompute via runMission's own sampleTick
+// policy (core/replay.ts), watching state.stats.collisions for the first increment
+// across several seeds — not just one — rather than eyeballing a new value; this tick
+// doubles as CombatScene.ts's NARRATOR_ARROW_TARGETS event-index key (t1[1]).
 const T1_NARRATOR_EVENTS: NarratorEvent[] = [
   {
     atTimelineTick: 0,
@@ -350,19 +438,21 @@ const TUTORIAL_MISSIONS: MissionSpec[] = [
   // a retry (t1/t2 via a free gear switch in the shop; t3 via a correct card pick).
   {
     id: 't1', name: 'Shield Basics', completionCoins: 30, campaign: 'tutorial',
-    blurb: 'No weapon. Your shield is the only defense — and this generator can\'t keep it charged.',
-    enemyKinds: { guardian: GUARDIAN_SLOW },
-    // Spacing sets the real-time gap between collisions (~3.2s apart at GUARDIAN_SLOW's
-    // speed), not visual clearance — CombatScene.ts's view-layer overlap guard
-    // (separateOverlappingSprites) is what actually keeps guardians from rendering on
-    // top of each other. This number is load-bearing for the mission's own win
-    // condition instead: generator-surge-1 (the intended fix) needs real recharge time
-    // between each collision to keep the shield absorbing hits rather than passing them
-    // through to hull, and that time comes directly from this gap. Below ~70 that
-    // recharge falls behind and the fix stops clearing at all (sim-confirmed cliff:
-    // 100/100 clears at 70-80, 0/100 at 60) — 80 sits with real margin above it.
+    blurb: 'No weapon. Two Sentinels — your shield is the only defense, and this generator can\'t keep it charged.',
+    enemyKinds: { sentinel: SENTINEL },
+    // Both SENTINELs come from ONE event (not two count:1 events) so SPAWN_JITTER's
+    // once-per-event roll keeps their relative spacing exactly 100 apart in every
+    // run — splitting them into separate events would let each draw its own jitter
+    // independently, silently breaking the sim-verified spacing this mission's whole
+    // win condition depends on. spacing=100 is load-bearing twice over: it's the real-
+    // time gap generator-surge-1 needs to refill the shield before the second
+    // collision (sim-confirmed: torrent-1 fails 0%, surge-1 clears 100% at this gap),
+    // and it's tight enough that the second SENTINEL is still on-screen (distance <=
+    // LANE_LENGTH) at the exact moment the first collides — required for the
+    // shield-burst mechanic below to have a real target (sim-confirmed: burst landed
+    // in 100/100 probe runs at this spacing).
     events: [
-      { atTimelineTick: seconds(1), kind: 'guardian', count: 5, spacing: 80 },
+      { atTimelineTick: seconds(1), kind: 'sentinel', count: 2, spacing: 100 },
     ],
     supportCallTicks: [],
     // Tutorial stars never reach the player (isTutorial always renders "TRAINING
@@ -377,19 +467,18 @@ const TUTORIAL_MISSIONS: MissionSpec[] = [
     // fresh every attempt (ForcedLoadout's own doc comment: "the player's save is
     // ignored for this run"), so a shop fix would never actually change anything on
     // retry. torrent-1 (defaultSave()'s real starter generator) can't refill the
-    // shield fast enough against this wave — every generator kind refills the shield
-    // only once its own tank is completely full (energy.ts's pulseShield), and
-    // torrent/reserve's output-vs-capacity ratios are both too slow here (sim-confirmed
-    // 0% clear for both). generator-steady-1 is a real but unreliable ~52% coin-flip,
-    // not a hinted fix — deliberately left that way, a new pattern for this codebase's
-    // tutorials (t2/t3 each have exactly one real fix path, not a partial one).
-    // generator-surge-1 ("maximum output, tiny battery") is the one kind whose fast
-    // small-batch refill reliably keeps pace — a free same-level switch, sim-confirmed
-    // 100% clear with real margin, and now also earns a real shield-burst kill (a
-    // guardian's own coinReward, same universal per-kill path every mission uses) —
-    // burst damage only accumulates when the shield is actually absorbing hits, which
-    // structurally can't happen on a losing run, so a real fail still nets 0 coins,
-    // same as any other mission where the ship dies before a kill lands.
+    // shield fast enough against SENTINEL's two collisions — sim-confirmed 0% clear at
+    // the current 2-count/hp/shotDamage numbers, and so are reserve-1 and steady-1
+    // (also 0%, unlike the old 5-count wave where steady-1 was a real ~52% coin-flip —
+    // at 2 hits the margin for a partial fix collapsed entirely, leaving exactly one
+    // real fix path, same as t2/t3). generator-surge-1 ("maximum output, tiny battery")
+    // is the one kind whose fast small-batch refill reliably keeps pace — a free
+    // same-level switch, sim-confirmed 100% clear with real margin (~7% avg hull), and
+    // now also earns a real shield-burst kill (a guardian's own coinReward, same
+    // universal per-kill path every mission uses) — burst damage only accumulates when
+    // the shield is actually absorbing hits, which structurally can't happen on a
+    // losing run, so a real fail still nets 0 coins, same as any other mission where
+    // the ship dies before a kill lands.
     disableWeapon: true,
     completesOnDefeat: false,
     defeatHint: 'Your generator can\'t refill the shield fast enough to keep up with these hits. Look for a generator built for rapid output over capacity — it\'s a free switch at this level.',
@@ -397,24 +486,22 @@ const TUTORIAL_MISSIONS: MissionSpec[] = [
   },
   {
     id: 't2', name: 'Weapon Systems', completionCoins: 50, campaign: 'tutorial',
-    blurb: 'Your real gear, a real wall. If it beats you, the fix is a free switch away in the shop.',
-    enemyKinds: { fodder: FODDER },
+    blurb: 'Your real gear, a real wall of Breachers — the second wave shoots back from both ends. If it beats you, the fix is a free switch away in the shop.',
+    enemyKinds: { breacher: BREACHER, 'breacher-gunner': BREACHER_GUNNER },
     // No forcedLoadout — this mission runs on the player's real, equipped gear. Under
     // the forced tutorial chain (t1 is the only mission that can precede it, and t1's
     // 30-coin reward can't afford any tier change) that's always exactly starter
-    // pulse-1/wall-1/torrent-1/rush-1 on a genuinely first attempt. Split wave 2 into
-    // two sub-waves half a second apart, not a single count=16 wave: sim-verified
-    // (runMission, 2000 seeds/config) that gives pulse-1 a firm fail (10.8%) and a
-    // same-level pulse→scatter switch (free — both 100 coins at level 1) a reliable,
-    // not razor-thin, clear (99.2%, avg hull 12.3% remaining).
+    // pulse-1/wall-1/torrent-1/rush-1 on a genuinely first attempt. Two waves of 3 half
+    // a second apart (not FODDER's old 2+8+8=18): plain BREACHERs first, rear-armed
+    // BREACHER GUNNERs second — see BREACHER's own doc comment for the sim numbers
+    // this reproduces at a sixth of the old headcount.
     events: [
-      { atTimelineTick: seconds(3), kind: 'fodder', count: 2, spacing: 14 },
-      { atTimelineTick: seconds(9), kind: 'fodder', count: 8, spacing: 14 },
-      { atTimelineTick: seconds(9.5), kind: 'fodder', count: 8, spacing: 14 },
+      { atTimelineTick: seconds(3), kind: 'breacher', count: 3, spacing: 14 },
+      { atTimelineTick: seconds(3.5), kind: 'breacher-gunner', count: 3, spacing: 14 },
     ],
     supportCallTicks: [],
     // hull-90/hull-50/shield-unbroken all dropped: even the fixed (scatter) path clears
-    // with real, by-design damage taken (avg hull ~12%) — none of those thresholds are
+    // with real, by-design damage taken (avg hull ~18%) — none of those thresholds are
     // reachable. all-kills is reachable on every real clear (sim-confirmed, 100%).
     stars: [
       { id: 't2-all-kills', family: 'all-kills', threshold: 0 },

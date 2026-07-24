@@ -98,7 +98,7 @@ describe('blocker kill banks hold-charge into bonus-call payout', () => {
     state.ship.energy = 9999;
     const blocker = makeFixtureEnemy({
       id: 1, kind: 'blocker', blocksConveyor: true, hp: 1, maxHp: 9999, distance: 90,
-      holdChargeTicks: HOLD_CHARGE_TIER_3_TICKS,
+      holdChargeTicks: HOLD_CHARGE_TIER_3_TICKS, holdBonusTiered: true,
     });
     const fodder = makeFixtureEnemy({ id: 2, kind: 'fodder', blocksConveyor: false, hp: 9999, maxHp: 9999, distance: 50 });
     state.enemies = [blocker, fodder];

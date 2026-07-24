@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CARD_ACTION_REROLL } from './constants';
-import { FIXTURE_LOADOUT, FIXTURE_MISSION } from './fixtures';
+import { FIXTURE_LOADOUT, FIXTURE_MISSION, makeFixtureEnemy } from './fixtures';
 import { hashCoreState, runMission, verifyReplay } from './replay';
 import { createCoreState } from './state';
 import { advanceTick } from './tick';
@@ -109,16 +109,28 @@ describe('hashCoreState', () => {
 
   it('changes when an enemy\'s holdChargeTicks changes — a hold-charge divergence must be caught (Item 6)', () => {
     const { state } = runMission(FIXTURE_MISSION, FIXTURE_LOADOUT, 5);
-    state.enemies.push({
+    state.enemies.push(makeFixtureEnemy({
       id: 9999, kind: 'blocker', distance: 50, hp: 100, maxHp: 100, shootTimer: 10,
       speed: 0.5, shotDamage: 4, ticksBetweenShots: 15, blocksConveyor: true, coinReward: 25,
-      isBoss: false, regenPerTick: 0, critChance: 0, missChance: 0, critMult: 2, holdChargeTicks: 0,
-      aliveTicks: 0,
-    });
+      isBoss: false, regenPerTick: 0, critChance: 0, missChance: 0, critMult: 2,
+    }));
     const before = hashCoreState(state);
     const enemy = state.enemies.find((e) => e.id === 9999);
     if (enemy === undefined) throw new Error('test enemy not found');
     enemy.holdChargeTicks = 42;
+    expect(hashCoreState(state)).not.toBe(before);
+  });
+
+  it('changes when an enemy\'s shield buffer changes — a modular-enemy shield divergence must be caught (docs/plans/modular-enemies.md)', () => {
+    const { state } = runMission(FIXTURE_MISSION, FIXTURE_LOADOUT, 5);
+    state.enemies.push(makeFixtureEnemy({
+      id: 9999, kind: 'fodder', distance: 50, hp: 100, maxHp: 100,
+      shield: 20, shieldCapacity: 20,
+    }));
+    const before = hashCoreState(state);
+    const enemy = state.enemies.find((e) => e.id === 9999);
+    if (enemy === undefined) throw new Error('test enemy not found');
+    enemy.shield = 5;
     expect(hashCoreState(state)).not.toBe(before);
   });
 

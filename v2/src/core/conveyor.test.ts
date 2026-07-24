@@ -163,7 +163,7 @@ describe('advanceEnemies: shield burstMode (shield-burst-tiers)', () => {
 describe('advanceEnemies: boss stall-and-bombard cycle (F3)', () => {
   it('a boss moves normally during the approach phase', () => {
     const state = freshState();
-    state.enemies = [makeFixtureEnemy({ kind: 'boss', distance: 50, speed: 2, aliveTicks: 0 })];
+    state.enemies = [makeFixtureEnemy({ kind: 'boss', distance: 50, speed: 2, aliveTicks: 0, motorKind: 'stall-cycle' })];
     advanceEnemies(state, statsOf(state));
     expect(state.enemies[0]?.distance).toBe(48); // full speed, same as any other enemy
   });
@@ -172,7 +172,7 @@ describe('advanceEnemies: boss stall-and-bombard cycle (F3)', () => {
     const state = freshState();
     // aliveTicks lands inside the stall window (just past the approach ticks).
     state.enemies = [makeFixtureEnemy({
-      kind: 'boss', distance: 50, speed: 2, aliveTicks: BOSS_APPROACH_TICKS,
+      kind: 'boss', distance: 50, speed: 2, aliveTicks: BOSS_APPROACH_TICKS, motorKind: 'stall-cycle',
     })];
     advanceEnemies(state, statsOf(state));
     expect(state.enemies[0]?.distance).toBe(50); // unchanged — stalled
@@ -181,7 +181,7 @@ describe('advanceEnemies: boss stall-and-bombard cycle (F3)', () => {
   it('a boss resumes moving once the stall phase ends and the cycle repeats', () => {
     const state = freshState();
     state.enemies = [makeFixtureEnemy({
-      kind: 'boss', distance: 50, speed: 2, aliveTicks: BOSS_APPROACH_TICKS + BOSS_STALL_TICKS,
+      kind: 'boss', distance: 50, speed: 2, aliveTicks: BOSS_APPROACH_TICKS + BOSS_STALL_TICKS, motorKind: 'stall-cycle',
     })];
     advanceEnemies(state, statsOf(state));
     expect(state.enemies[0]?.distance).toBe(48); // back in the approach phase of cycle 2
@@ -193,7 +193,17 @@ describe('advanceEnemies: boss stall-and-bombard cycle (F3)', () => {
       kind: 'tank', distance: 50, speed: 2, aliveTicks: BOSS_APPROACH_TICKS,
     })];
     advanceEnemies(state, statsOf(state));
-    expect(state.enemies[0]?.distance).toBe(48); // moves normally — the cycle is boss-only
+    expect(state.enemies[0]?.distance).toBe(48); // moves normally — motorKind defaults to 'steady'
+  });
+
+  it('a non-boss-flavor enemy with motorKind stall-cycle still stalls — dispatch is off motorKind, not isBoss or the display kind', () => {
+    const state = freshState();
+    state.enemies = [makeFixtureEnemy({
+      kind: 'test-modular-tank', isBoss: false, distance: 50, speed: 2,
+      aliveTicks: BOSS_APPROACH_TICKS, motorKind: 'stall-cycle',
+    })];
+    advanceEnemies(state, statsOf(state));
+    expect(state.enemies[0]?.distance).toBe(50); // stalled, despite kind !== 'boss' and isBoss === false
   });
 
   it('aliveTicks increments every tick for every enemy, unconditionally', () => {

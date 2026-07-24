@@ -1,5 +1,5 @@
 import { createAbilityOffer } from './cards';
-import { fireEnemyWeapons, fireRearWeapon, fireShipWeapon, regenerateEnemies } from './combat';
+import { fireEnemyRearWeapons, fireEnemyWeapons, fireRearWeapon, fireShipWeapon, regenerateEnemies } from './combat';
 import { advanceEnemies } from './conveyor';
 import { pulseShield, regenerateEnergy } from './energy';
 import { activeDamageMult, activeFireRateMult, activeGeneratorMult, computeEffectiveStats } from './stats';
@@ -11,8 +11,9 @@ import type { CoreState } from './types';
  * Advances the simulation by exactly one fixed tick (100 ms). The phase order below is
  * part of the determinism contract — replays break if it changes. It must match the call
  * order in the body exactly:
- * energy → timeline/spawns → enemy regen → ship fire → enemy fire → movement →
- * shield pulse → prune effects → hold-charge accrual → bonus calls → outcome.
+ * energy → timeline/spawns → enemy regen → ship fire → enemy fire (front, then rear)
+ * → movement → shield pulse → prune effects → hold-charge accrual → bonus calls →
+ * outcome.
  *
  * While an ability offer is pending the sim is paused: this function returns without
  * advancing. Resolve the offer (resolveAbilityAction) to resume.
@@ -34,6 +35,7 @@ export function advanceTick(state: CoreState): void {
   fireShipWeapon(state, stats);
   fireRearWeapon(state, stats);
   fireEnemyWeapons(state, stats);
+  fireEnemyRearWeapons(state, stats);
   advanceEnemies(state, stats);
   pulseShield(state, stats);
   pruneExpiredEffects(state);

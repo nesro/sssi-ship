@@ -2,12 +2,14 @@ import Phaser from 'phaser';
 import { resolveAbilityAction } from '../core/cards';
 import { activateAbility, fireSideWeapon, nearestEnemyAhead, setPriorityTarget, toggleAutoFire, toggleAutoShield, toggleRearWeapon } from '../core/combat';
 import { resolveNarrator } from '../core/narrator';
-import { HOLD_CHARGE_TIER_2_TICKS, HOLD_CHARGE_TIER_3_TICKS, LANE_LENGTH, MS_PER_TICK } from '../core/constants';
+import { BOSS_APPROACH_TICKS, BOSS_STALL_TICKS, BROWNOUT_THRESHOLD, HOLD_CHARGE_TIER_2_TICKS, HOLD_CHARGE_TIER_3_TICKS, LANE_LENGTH, MS_PER_TICK } from '../core/constants';
 import { buildMissionResult } from '../core/result';
 import { createCoreState } from '../core/state';
 import { applyBoost } from '../core/supplies';
+import { activeDamageMult, activeFireRateMult, activeGeneratorMult, computeEffectiveStats } from '../core/stats';
+import type { EffectiveStats } from '../core/stats';
 import { abandonRun, advanceTick } from '../core/tick';
-import type { CoreState, EnemyState, MissionSpec } from '../core/types';
+import type { CoreState, EnemyState, EnemyWeaponKind, MissionSpec } from '../core/types';
 import { abilityById, abilityPoolForLoadout } from '../data/cards';
 import { missionById, narratorEventsForAttempt } from '../data/missions';
 import { DAILY_MISSION_ID, dailyDateKey } from '../data/dailyMission';
@@ -24,7 +26,7 @@ import { NarratorBar } from './NarratorBar';
 import { SupplyButtons } from './SupplyButtons';
 import { cssColor, PALETTE } from './palette';
 import { BTN_PANEL_W, BTN_X, DPR, fontPx, GAME_WIDTH, GAME_X, INFO_PANEL_W, LOGICAL_HEIGHT, LOGICAL_WIDTH, px, SHIP_GUN_X_OFFSET, SHIP_GUN_Y_OFFSET } from './layout';
-import { buildGameTextures, laserTextureForWeaponId, rearBoltTextureKey, sideBoltTextureKey, sideWeaponKindColor, textureForEnemyKind } from './textures';
+import { buildGameTextures, enemyBoltTextureForWeaponKind, laserTextureForWeaponId, rearBoltTextureKey, sideBoltTextureKey, sideWeaponKindColor, textureForEnemyKind } from './textures';
 import { iconTextureForSideWeaponId, motorKindColorFromId, motorLevelFromId, splitWeaponId, textureForShipId } from './textureKeys';
 import { drawGeneratorCore, drawRearWeaponIndicator, drawShieldRings, drawSideWeaponIndicator, renderGunIndicator, renderThrusterAssembly, tickLaserBolts, tickMuzzleFlashes } from './shipRenderers';
 import type { LaserBolt, MuzzleFlash } from './shipRenderers';
@@ -58,6 +60,7 @@ const SHIP_VISUAL_RADIUS = 26;
 const ENEMY_VISUAL_RADIUS: Record<string, number> = {
   fodder: 24, striker: 26, tank: 28, swarm: 15, blocker: 32,
   guardian: 26, turret: 30, kamikaze: 20, boss: 48, booster: 26,
+  sentinel: 26, breacher: 24, 'breacher-gunner': 24,
 };
 const ENEMY_VISUAL_RADIUS_FALLBACK = ENEMY_VISUAL_RADIUS['fodder'] ?? 24;
 const LASER_TRAVEL_MS = 180;
@@ -78,7 +81,7 @@ const MAX_CATCH_UP_MS = 250;
 // gets the longest hold since it's the one outcome worth lingering on. Abandon stays
 // short — a voluntary quit should feel snappy, not padded.
 const VICTORY_EXIT_DELAY_MS = 2000;
-const DEFEAT_EXIT_DELAY_MS = 1400;
+const DEFEAT_EXIT_DELAY_MS = 2000;
 const ABANDON_EXIT_DELAY_MS = 600;
 // Right button panel: a dynamic top-down layout, not fixed Y offsets — the row count
 // varies with loadout (toggle buttons: fire+shield always, rear/side conditional;
@@ -111,6 +114,9 @@ const ABILITY_SLOT_COOLDOWN_FILL = 0x2a1f0a;
 
 // How fast shield hit-flash decays (full fade in ~550ms, matching v1 ShieldVisual).
 const SHIELD_FLASH_DECAY = 1.8;
+/** Gun-mount recoil-kick decay rate (1/s) — a shot snaps recoil to 1, this brings it
+ * back to 0 in ~150ms, quick enough to read as a kick rather than a lingering glow. */
+const GUN_RECOIL_DECAY = 6.5;
 // Shield ring radius grows with remaining shield fraction — a live, continuous
 // reading of `ship.shield`. Contrast with ShopPreviewPanel's discrete per-tier
 // radius, which reads a simulated fraction instead — see that file for why.
@@ -121,8 +127,8 @@ const SHIELD_RADIUS_PER_FRACTION = 6;
 // (SHIELD_BASE_RADIUS + SHIELD_RADIUS_PER_FRACTION, ~32px) so they never overlap it.
 const SHIP_STATUS_BAR_W = 44;
 const SHIP_STATUS_BAR_H = 4;
-const SHIP_STATUS_BAR_GAP = 3;
-const SHIP_STATUS_BAR_Y_OFFSET = 36;
+const SHIP_STATUS_BAR_GAP = 2;
+const SHIP_STATUS_BAR_Y_OFFSET = 30;
 const SHIELD_GLOW_BASE_ALPHA = 0.04;
 const SHIELD_GLOW_FLASH_ALPHA = 0.06;
 const SHIELD_GLOW_RADIUS_PAD = 6;
@@ -132,7 +138,7 @@ const PULSE_RING_FADE_S = 1.6;
 // Hull fraction below which the red vignette starts appearing.
 const VIGNETTE_THRESHOLD = 0.35;
 // Peak alpha of the death flash — kept low enough that HUD text stays legible under it.
-const DEATH_FLASH_ALPHA = 0.4;
+const DEATH_FLASH_ALPHA = 0.55;
 // Matches the healthy-tier color in drawEnemyHpBar's own frac>0.55 branch — the booster
 // buff line reuses it so "connected to an HP bar" reads as one consistent color language.
 const BOOSTER_BUFF_GREEN = 0x22ee44;
@@ -161,6 +167,7 @@ const NARRATOR_ARROW_TARGETS: Record<string, Record<number, Record<number, numbe
 interface PreTickSnapshot {
   hull: number; shield: number; shots: number; rearShots: number; kills: number; collisions: number;
   timers: Map<number, number>;
+  rearTimers: Map<number, number>;
 }
 
 export interface CombatSceneData {
@@ -186,6 +193,12 @@ export class CombatScene extends Phaser.Scene {
   private motorLevel: 1 | 2 | 3 = 1;
   private motorKindColor: number = 0xff44cc;
   private thrusterPhase = 0;
+  /** 0–1, set to 1 on a real shot and decayed toward 0 — drives the gun-mount
+   * recoil-kick indicators (renderGuns/renderRearGuns/renderSideGuns), the player
+   * ship's own equivalent of the enemy roster's TURRET recoil tell. */
+  private gunRecoil = 0;
+  private rearGunRecoil = 0;
+  private sideGunRecoil = 0;
   private enemySprites = new Map<number, Phaser.GameObjects.Image>();
   /** Current/max HP text over each enemy's bar. A separate Text-object Map, not drawn
    * on hpBarGfx — Graphics can't render text, and unlike the bar fill (redrawn from
@@ -195,10 +208,39 @@ export class CombatScene extends Phaser.Scene {
   private targetMarkerGfx!: Phaser.GameObjects.Graphics;
   private targetMarkerPhase = 0;
   private boosterBuffGfx!: Phaser.GameObjects.Graphics;
+  /** Enemy MOTOR-module visual (docs/plans/modular-enemies.md) — one shared Graphics
+   * object cleared and redrawn every frame for every enemy together (drawn for every
+   * enemy, always-on — see drawEnemyMotorTrail), same lever that keeps hpBarGfx cheap
+   * at 15-enemy concurrency: object count stays flat regardless of enemy count. */
+  private enemyMotorGfx!: Phaser.GameObjects.Graphics;
+  /** Enemy GENERATOR-module visual — always-on pulsing core (every enemy has a
+   * generator as a structural hull part, same as the player ship's own always-visible
+   * drawGeneratorCore, independent of whether `generatorKind` does anything mechanically
+   * this mission). One shared object, same reason as enemyMotorGfx above. */
+  private enemyGeneratorGfx!: Phaser.GameObjects.Graphics;
+  /** Animated hull sub-parts (docs/plans/enemy-hull-redesign.md) — GUARDIAN's
+   * rotating inner ring, TURRET's fire-recoil flash, KAMIKAZE's proximity-brightened
+   * core, BOOSTER's flowing chevron marker, BOSS's stall-tied pulse. One more shared
+   * object, same reason as enemyMotorGfx/enemyGeneratorGfx above. */
+  private enemyHullAnimGfx!: Phaser.GameObjects.Graphics;
   private previousDistances = new Map<number, number>();
   private laserBolts: LaserBolt[] = [];
-  private enemyBolts: { rect: Phaser.GameObjects.Rectangle; glow: Phaser.GameObjects.Rectangle; vy: number; targetY: number }[] = [];
-  private stars: { rect: Phaser.GameObjects.Rectangle; speed: number }[] = [];
+  private enemyBolts: { rect: Phaser.GameObjects.Image; glow: Phaser.GameObjects.Image; vy: number; targetY: number }[] = [];
+  /** Rear-weapon bolts (docs/plans/modular-enemies.md) curve in from an X-offset
+   * rear/side mount toward the ship's centered X, unlike the front weapon's dead-
+   * straight `enemyBolts` — the visual signal that this shot came from a second,
+   * differently-mounted gun. `elapsedMs`/`durationMs` drive both axes off one
+   * eased-progress fraction rather than an independent per-axis velocity. */
+  private enemyRearBolts: {
+    rect: Phaser.GameObjects.Image; glow: Phaser.GameObjects.Image;
+    startX: number; targetX: number; startY: number; targetY: number;
+    elapsedMs: number; durationMs: number;
+  }[] = [];
+  /** `twinklePhase` is `null` for the two dimmer/farther depth tiers — only the
+   * bright near tier twinkles (docs/plans/visual-language-audit.md's light-touch
+   * starfield pass), so `updateStars` has a cheap, direct way to skip the alpha
+   * recompute for the other 2/3 of the field instead of branching on tier every frame. */
+  private stars: { rect: Phaser.GameObjects.Rectangle; speed: number; baseAlpha: number; twinklePhase: number | null }[] = [];
   private muzzleFlashes: MuzzleFlash[] = [];
   private muzzleFlashGfx!: Phaser.GameObjects.Graphics;
   private gunGfx!: Phaser.GameObjects.Graphics;
@@ -210,6 +252,12 @@ export class CombatScene extends Phaser.Scene {
   private sideLaserBolts: LaserBolt[] = [];
   private hpBarGfx!: Phaser.GameObjects.Graphics;
   private shipStatusBarGfx!: Phaser.GameObjects.Graphics;
+  /** Current/max numeric labels for the ship's own hull/shield/energy bars — a
+   * player's eyes are on the ship during combat, not the side info panel, which
+   * already has these numbers. */
+  private shipStatusHullLabel!: Phaser.GameObjects.Text;
+  private shipStatusShieldLabel!: Phaser.GameObjects.Text;
+  private shipStatusEnergyLabel!: Phaser.GameObjects.Text;
 
   private shieldGfx!: Phaser.GameObjects.Graphics;
   private accumulatorMs = 0;
@@ -322,6 +370,41 @@ export class CombatScene extends Phaser.Scene {
     return { ...mission, narratorEvents };
   }
 
+  /** All per-run Graphics objects in one place — extracted out of create() purely to
+   * keep that method under the line-count limit; ordering/depth/blend-mode choices
+   * are unchanged from before this was its own method. */
+  private initGraphicsObjects(): void {
+    this.thrusterGfx   = this.add.graphics().setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
+    this.motorGfx      = this.add.graphics().setDepth(4).setBlendMode(Phaser.BlendModes.ADD);
+    this.generatorGfx  = this.add.graphics().setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
+    this.shieldGfx     = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
+    this.shieldPulseGfx = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
+    this.muzzleFlashGfx = this.add.graphics().setDepth(6).setBlendMode(Phaser.BlendModes.ADD);
+    this.gunGfx        = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
+    this.rearGunGfx    = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
+    this.sideGunGfx    = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
+    this.particleGfx   = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
+    this.hpBarGfx = this.add.graphics().setDepth(7);
+    this.shipStatusBarGfx = this.add.graphics().setDepth(7);
+    const statusLabelStyle = {
+      fontFamily: UI_FONT, fontSize: `${String(fontPx(7))}px`,
+      stroke: cssColor(PALETTE.backgroundNearBlack), strokeThickness: px(1.2),
+    };
+    this.shipStatusHullLabel = this.add.text(0, 0, '', statusLabelStyle).setOrigin(0.5, 0.5).setDepth(8);
+    this.shipStatusShieldLabel = this.add.text(0, 0, '', statusLabelStyle).setOrigin(0.5, 0.5).setDepth(8);
+    this.shipStatusEnergyLabel = this.add.text(0, 0, '', statusLabelStyle).setOrigin(0.5, 0.5).setDepth(8);
+    this.targetMarkerGfx = this.add.graphics().setDepth(7);
+    this.boosterBuffGfx = this.add.graphics().setDepth(7);
+    this.enemyMotorGfx = this.add.graphics().setDepth(6).setBlendMode(Phaser.BlendModes.ADD);
+    // Enemy sprites use Phaser's default depth (0, no explicit setDepth) — depth 6
+    // here (like enemyMotorGfx) renders this glow above the sprite, not behind it,
+    // matching every other enemy overlay (hpBarGfx/boosterBuffGfx are depth 7).
+    this.enemyGeneratorGfx = this.add.graphics().setDepth(6).setBlendMode(Phaser.BlendModes.ADD);
+    this.enemyHullAnimGfx = this.add.graphics().setDepth(6).setBlendMode(Phaser.BlendModes.ADD);
+    this.vignetteGfx = this.add.graphics().setDepth(9);
+    this.deathFlashGfx = this.add.graphics().setDepth(9);
+  }
+
   // fallow-ignore-next-line unused-class-member
   create(data: CombatSceneData): void {
     const mission = missionById(data.missionId);
@@ -430,22 +513,7 @@ export class CombatScene extends Phaser.Scene {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(8))}px`, color: '#aa88cc',
     }).setOrigin(0.5).setDepth(11);
 
-    this.thrusterGfx   = this.add.graphics().setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
-    this.motorGfx      = this.add.graphics().setDepth(4).setBlendMode(Phaser.BlendModes.ADD);
-    this.generatorGfx  = this.add.graphics().setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
-    this.shieldGfx     = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
-    this.shieldPulseGfx = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
-    this.muzzleFlashGfx = this.add.graphics().setDepth(6).setBlendMode(Phaser.BlendModes.ADD);
-    this.gunGfx        = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
-    this.rearGunGfx    = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
-    this.sideGunGfx    = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
-    this.particleGfx   = this.add.graphics().setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
-    this.hpBarGfx = this.add.graphics().setDepth(7);
-    this.shipStatusBarGfx = this.add.graphics().setDepth(7);
-    this.targetMarkerGfx = this.add.graphics().setDepth(7);
-    this.boosterBuffGfx = this.add.graphics().setDepth(7);
-    this.vignetteGfx = this.add.graphics().setDepth(9);
-    this.deathFlashGfx = this.add.graphics().setDepth(9);
+    this.initGraphicsObjects();
 
     this.shipSprite = this.add
       .image(px(SHIP_CENTER_X), px(SHIP_Y), textureForShipId(this.core.loadout.ship.id))
@@ -508,20 +576,31 @@ export class CombatScene extends Phaser.Scene {
     this.narratorEventIndex = 0;
   }
 
+  /**
+   * Three depth tiers (docs/plans/visual-language-audit.md's light-touch starfield
+   * pass — Fable: "carries zero gameplay information... if picked up, light depth-
+   * tiered color/twinkle variation riding the existing two-alpha-tier structure, not
+   * a redesign"), replacing the old two-tier version's independently-randomized
+   * size/alpha/speed with the three moving together: near stars are bigger,
+   * brighter, faster, *and* twinkle; far stars are small, dim, slow, static. A small
+   * fraction per tier gets a faint cyan or amber tint (matching the existing neon
+   * palette) instead of every star being flat white.
+   */
   private addStarfield(): void {
-    const COUNT = 65;
-    const buf = crypto.getRandomValues(new Uint32Array(COUNT * 3));
+    const COUNT = 110;
+    const buf = crypto.getRandomValues(new Uint32Array(COUNT * 4));
     for (let i = 0; i < COUNT; i++) {
-      const rx = buf[i * 3] ?? 0;
-      const ry = buf[i * 3 + 1] ?? 0;
-      const rz = buf[i * 3 + 2] ?? 0;
+      const rx = buf[i * 4] ?? 0;
+      const ry = buf[i * 4 + 1] ?? 0;
+      const rz = buf[i * 4 + 2] ?? 0;
+      const rw = buf[i * 4 + 3] ?? 0;
       const x = GAME_X + (rx % GAME_WIDTH);
       const y = GAME_TOP_Y + (ry % (LOGICAL_HEIGHT - GAME_TOP_Y));
-      const alpha = rx % 3 === 0 ? 0.6 : 0.22;
-      const size = rx % 7 === 0 ? 2 : 1;
-      const speed = 18 + (rz % 50); // logical units / second; parallax spread (scrolls left)
-      const rect = this.add.rectangle(px(x), px(y), px(size), px(size), 0xffffff, alpha).setDepth(0);
-      this.stars.push({ rect, speed });
+      const { baseAlpha, size, speed, twinkles } = starTierParams(rz, rw);
+      const tint = starTint(rx);
+      const rect = this.add.rectangle(px(x), px(y), px(size), px(size), tint, baseAlpha).setDepth(0);
+      const twinklePhase = twinkles ? (rw % 1000) / 1000 * Math.PI * 2 : null;
+      this.stars.push({ rect, speed, baseAlpha, twinklePhase });
     }
   }
 
@@ -539,6 +618,12 @@ export class CombatScene extends Phaser.Scene {
     for (const star of this.stars) {
       star.rect.y += px(star.speed) * deltaMs / 1000;
       if (star.rect.y > px(LOGICAL_HEIGHT + 2)) star.rect.y = px(GAME_TOP_Y - 2);
+      // Near and mid twinkle (twinklePhase !== null); far stays static — animating
+      // every star in the field would read as noise rather than depth.
+      if (star.twinklePhase !== null) {
+        const flicker = 0.75 + 0.25 * Math.sin(this.thrusterPhase * 0.0025 + star.twinklePhase);
+        star.rect.setAlpha(star.baseAlpha * flicker);
+      }
     }
   }
 
@@ -563,6 +648,9 @@ export class CombatScene extends Phaser.Scene {
    * glance reading enemies already get via drawEnemyHpBar, applied to the ship itself.
    * A dedicated Graphics object (not hpBarGfx): this must stay visible during the
    * post-finish hold, where renderEnemies (and its own hpBarGfx.clear()) never runs. */
+  /** Uses `effectiveStats()` for shield/generator capacity, not the raw loadout —
+   * card/ability capacity bonuses show on the side info panel and must show here too,
+   * or the two readouts silently disagree. */
   private renderShipStatusBars(): void {
     this.shipStatusBarGfx.clear();
     const cx = px(SHIP_CENTER_X) + this.driftX();
@@ -570,6 +658,7 @@ export class CombatScene extends Phaser.Scene {
     const bw = px(SHIP_STATUS_BAR_W);
     const bh = px(SHIP_STATUS_BAR_H);
     const bx = cx - bw / 2;
+    const stats = this.effectiveStats();
 
     const hullFrac = this.core.ship.hull / this.core.ship.maxHull;
     this.shipStatusBarGfx.fillStyle(0x111122, 0.8);
@@ -577,15 +666,40 @@ export class CombatScene extends Phaser.Scene {
     const hullColor = hullFrac > 0.55 ? 0x22ee44 : hullFrac > 0.25 ? 0xffaa00 : 0xff2200;
     this.shipStatusBarGfx.fillStyle(hullColor, 0.9);
     this.shipStatusBarGfx.fillRect(bx, topY, bw * Math.max(0, hullFrac), bh);
+    this.shipStatusHullLabel.setText(
+      `${String(Math.ceil(this.core.ship.hull))}/${String(Math.round(this.core.ship.maxHull))}`,
+    ).setColor(cssColor(hullColor)).setPosition(cx, topY + bh / 2).setVisible(true);
 
-    const maxShield = this.core.loadout.shield?.capacity ?? 0;
-    if (maxShield <= 0) return;
+    const maxShield = stats.shieldCapacity;
     const shieldY = topY + bh + px(SHIP_STATUS_BAR_GAP);
-    const shieldFrac = this.core.ship.shield / maxShield;
-    this.shipStatusBarGfx.fillStyle(0x111122, 0.8);
-    this.shipStatusBarGfx.fillRect(bx, shieldY, bw, bh);
-    this.shipStatusBarGfx.fillStyle(0x2266ff, 0.9);
-    this.shipStatusBarGfx.fillRect(bx, shieldY, bw * Math.max(0, shieldFrac), bh);
+    if (maxShield > 0) {
+      const shieldFrac = this.core.ship.shield / maxShield;
+      this.shipStatusBarGfx.fillStyle(0x111122, 0.8);
+      this.shipStatusBarGfx.fillRect(bx, shieldY, bw, bh);
+      this.shipStatusBarGfx.fillStyle(0x2266ff, 0.9);
+      this.shipStatusBarGfx.fillRect(bx, shieldY, bw * Math.max(0, shieldFrac), bh);
+      this.shipStatusShieldLabel.setText(
+        `${String(Math.ceil(this.core.ship.shield))}/${String(Math.round(maxShield))}`,
+      ).setColor(cssColor(0x88bbff)).setPosition(cx, shieldY + bh / 2).setVisible(true);
+    } else {
+      this.shipStatusShieldLabel.setVisible(false);
+    }
+
+    const genCap = stats.generatorCapacity;
+    const energyY = maxShield > 0 ? shieldY + bh + px(SHIP_STATUS_BAR_GAP) : shieldY;
+    if (genCap > 0) {
+      const energyFrac = this.core.ship.energy / genCap;
+      const energyColor = energyFrac < BROWNOUT_THRESHOLD ? 0xff4400 : 0xffaa22;
+      this.shipStatusBarGfx.fillStyle(0x111122, 0.8);
+      this.shipStatusBarGfx.fillRect(bx, energyY, bw, bh);
+      this.shipStatusBarGfx.fillStyle(energyColor, 0.9);
+      this.shipStatusBarGfx.fillRect(bx, energyY, bw * Math.max(0, energyFrac), bh);
+      this.shipStatusEnergyLabel.setText(
+        `${String(Math.ceil(this.core.ship.energy))}/${String(Math.round(genCap))}`,
+      ).setColor(cssColor(energyColor)).setPosition(cx, energyY + bh / 2).setVisible(true);
+    } else {
+      this.shipStatusEnergyLabel.setVisible(false);
+    }
   }
 
   private renderShieldPulseRings(deltaMs: number): void {
@@ -715,6 +829,9 @@ export class CombatScene extends Phaser.Scene {
 
     // Decay flash
     this.shieldHitFlash = Math.max(0, this.shieldHitFlash - SHIELD_FLASH_DECAY * deltaMs / 1000);
+    this.gunRecoil = Math.max(0, this.gunRecoil - GUN_RECOIL_DECAY * deltaMs / 1000);
+    this.rearGunRecoil = Math.max(0, this.rearGunRecoil - GUN_RECOIL_DECAY * deltaMs / 1000);
+    this.sideGunRecoil = Math.max(0, this.sideGunRecoil - GUN_RECOIL_DECAY * deltaMs / 1000);
     for (const [id, remaining] of this.healFloatCooldown) this.healFloatCooldown.set(id, remaining - deltaMs);
 
     this.syncCardOverlay();
@@ -740,6 +857,7 @@ export class CombatScene extends Phaser.Scene {
     this.updateRearLasers(deltaMs);
     this.updateSideLasers(deltaMs);
     this.updateEnemyBolts(deltaMs);
+    this.updateEnemyRearBolts(deltaMs);
     this.updateBurstParticles(deltaMs);
     this.updateFloatingTexts(deltaMs);
     this.hud.update(this.core, boss, this.save.missionStars[this.core.mission.id] ?? []);
@@ -765,15 +883,21 @@ export class CombatScene extends Phaser.Scene {
     this.updateRearLasers(deltaMs);
     this.updateSideLasers(deltaMs);
     this.updateEnemyBolts(deltaMs);
+    this.updateEnemyRearBolts(deltaMs);
     this.updateBurstParticles(deltaMs);
     this.updateFloatingTexts(deltaMs);
     this.updateStars(deltaMs);
+    this.narrator.update(deltaMs);
   }
 
   /** Everything `detectCombatFeedback` needs to compare against post-tick state. */
   private snapshotPreTickState(): PreTickSnapshot {
     const timers = new Map<number, number>();
-    for (const e of this.core.enemies) timers.set(e.id, e.shootTimer);
+    const rearTimers = new Map<number, number>();
+    for (const e of this.core.enemies) {
+      timers.set(e.id, e.shootTimer);
+      rearTimers.set(e.id, e.rearShootTimer);
+    }
     return {
       hull: this.core.ship.hull,
       shield: this.core.ship.shield,
@@ -782,6 +906,7 @@ export class CombatScene extends Phaser.Scene {
       kills: this.core.stats.kills,
       collisions: this.core.stats.collisions,
       timers,
+      rearTimers,
     };
   }
 
@@ -794,8 +919,8 @@ export class CombatScene extends Phaser.Scene {
     const playerBoltKind = this.resolvePlayerBoltKind();
     for (let i = 0; i < shotsFired; i++) this.spawnLaserBolt(playerBoltKind);
     for (let i = 0; i < rearShotsFired; i++) this.spawnRearBolt();
-    if (shotsFired > 0) Sound.fire();
-    if (rearShotsFired > 0) Sound.rearFire();
+    if (shotsFired > 0) { Sound.fire(); this.gunRecoil = 1; }
+    if (rearShotsFired > 0) { Sound.rearFire(); this.rearGunRecoil = 1; }
     if (this.core.stats.kills > before.kills) Sound.kill();
 
     if (this.core.ship.hull < before.hull - 0.5) {
@@ -815,6 +940,15 @@ export class CombatScene extends Phaser.Scene {
       this.shieldPulseRings.push({ radius: px(28), alpha: 0.75 });
     }
 
+    this.detectEnemyFrontShots(before);
+    this.detectEnemyRearShots(before);
+  }
+
+  /** Spawns a front-weapon bolt for every enemy whose `shootTimer` just reset (fired
+   * this tick), tinted by whatever miss/crit event landed for it. Split out of
+   * detectCombatFeedback purely to keep that function's complexity down now that it
+   * covers front AND rear weapons. */
+  private detectEnemyFrontShots(before: PreTickSnapshot): void {
     const enemyMissIds = new Set(
       this.core.pendingVisualEvents
         .filter((e) => e.kind === 'enemy-miss' && e.enemyId !== undefined)
@@ -830,6 +964,32 @@ export class CombatScene extends Phaser.Scene {
       if (beforeTimer !== undefined && e.shootTimer > beforeTimer) {
         const outcome = enemyMissIds.has(e.id) ? 'miss' : enemyCritIds.has(e.id) ? 'crit' : 'normal';
         this.spawnEnemyBolt(e, outcome);
+        if (outcome === 'miss') this.spawnDeflectionSpark();
+      }
+    }
+  }
+
+  /** Rear weapon (docs/plans/modular-enemies.md): its own timer, its own miss/crit
+   * event kinds — a front and rear shot from the SAME enemy in the SAME tick must
+   * never be confused for one another (both would otherwise share one enemyId with
+   * no way to tell which mount produced which outcome). */
+  private detectEnemyRearShots(before: PreTickSnapshot): void {
+    const enemyRearMissIds = new Set(
+      this.core.pendingVisualEvents
+        .filter((e) => e.kind === 'enemy-rear-miss' && e.enemyId !== undefined)
+        .map((e) => e.enemyId as number),
+    );
+    const enemyRearCritIds = new Set(
+      this.core.pendingVisualEvents
+        .filter((e) => e.kind === 'enemy-rear-crit' && e.enemyId !== undefined)
+        .map((e) => e.enemyId as number),
+    );
+    for (const e of this.core.enemies) {
+      if (e.rearWeaponKind === null) continue;
+      const beforeRearTimer = before.rearTimers.get(e.id);
+      if (beforeRearTimer !== undefined && e.rearShootTimer > beforeRearTimer) {
+        const outcome = enemyRearMissIds.has(e.id) ? 'miss' : enemyRearCritIds.has(e.id) ? 'crit' : 'normal';
+        this.spawnEnemyRearBolt(e, outcome);
         if (outcome === 'miss') this.spawnDeflectionSpark();
       }
     }
@@ -1111,6 +1271,7 @@ export class CombatScene extends Phaser.Scene {
     const targets = [...this.core.enemies].sort((a, b) => a.distance - b.distance).slice(0, sideWeapon.maxTargets);
     fireSideWeapon(this.core);
     Sound.sideWeaponFire();
+    this.sideGunRecoil = 1;
     this.spawnSideWeaponBurst(sideWeaponKindColor(sideWeapon.kind, sideWeapon.id));
     this.spawnSideWeaponBolts(sideWeapon, targets);
   }
@@ -1160,9 +1321,13 @@ export class CombatScene extends Phaser.Scene {
       }).setOrigin(0.5).setDepth(depth + 2),
     );
     const isLast = idx >= lines.length - 1;
+    // NEXT →/CONTINUE is the only way to progress — one line at a time, every time.
+    // A SKIP shortcut used to sit next to it, dismissing the whole remaining sequence
+    // in one tap; easy to hit by accident while tapping quickly through dialog, and
+    // it let a player skip content NEXT → alone is meant to gate.
     this.narratorModalObjects.add(
       addTextButton(this, {
-        x: px(isLast ? cx : cx + 70), y: px(cy + 54), label: isLast ? 'CONTINUE' : 'NEXT →',
+        x: px(cx), y: px(cy + 54), label: isLast ? 'CONTINUE' : 'NEXT →',
         color: 0x00ffee, size: 16,
         onClick: () => {
           if (isLast) {
@@ -1174,16 +1339,6 @@ export class CombatScene extends Phaser.Scene {
         },
       }).setDepth(depth + 2),
     );
-    // Only offered before the last line — CONTINUE already dismisses the whole popup
-    // there, so a separate SKIP would be a redundant second button doing the same thing.
-    if (!isLast) {
-      this.narratorModalObjects.add(
-        addTextButton(this, {
-          x: px(cx - 70), y: px(cy + 54), label: 'SKIP', color: 0x556677, size: 13,
-          onClick: () => { resolveNarrator(this.core); },
-        }).setDepth(depth + 2),
-      );
-    }
     const arrowRow = this.usingRetryNarration ? undefined : NARRATOR_ARROW_TARGETS[this.core.mission.id]?.[this.narratorEventIndex]?.[idx];
     if (arrowRow !== undefined) {
       const boxBounds = new Phaser.Geom.Rectangle(px(cx - panelW / 2), px(cy - panelH / 2), px(panelW), px(panelH));
@@ -1207,7 +1362,7 @@ export class CombatScene extends Phaser.Scene {
       const line = getStoryLine(missionId, 'boss-appear');
       if (line !== undefined) this.narrator.show(line);
     }
-    if (!this.narratorBoosterShown && this.core.enemies.some((e) => e.kind === 'booster')) {
+    if (!this.narratorBoosterShown && this.core.enemies.some((e) => e.generatorKind === 'ally-regen')) {
       this.narratorBoosterShown = true;
       const line = getStoryLine(missionId, 'first-booster-appear');
       if (line !== undefined) this.narrator.show(line);
@@ -1310,26 +1465,42 @@ export class CombatScene extends Phaser.Scene {
     }
   }
 
+  /** The single source of truth for card/ability-boosted capacities (shield, generator,
+   * side-weapon charges) — computed fresh each frame (cheap, same as CombatHud's own
+   * per-frame call) so every ship-module readout agrees with the side panel's numbers
+   * instead of each reaching into the raw, un-boosted loadout separately. */
+  private effectiveStats(): EffectiveStats {
+    return computeEffectiveStats(
+      this.core.loadout, this.core.modifiers,
+      activeDamageMult(this.core), activeFireRateMult(this.core), activeGeneratorMult(this.core),
+    );
+  }
+
   private renderGuns(): void {
     renderGunIndicator(this.gunGfx, this.core.loadout.weapon,
-      px(SHIP_CENTER_X) + this.driftX(), px(SHIP_Y - SHIP_GUN_Y_OFFSET) + this.bobY());
+      px(SHIP_CENTER_X) + this.driftX(), px(SHIP_Y - SHIP_GUN_Y_OFFSET) + this.bobY(),
+      this.gunRecoil);
   }
 
   private renderRearGuns(): void {
     drawRearWeaponIndicator(this.rearGunGfx, this.core.loadout.rearWeapon,
-      px(SHIP_CENTER_X) + this.driftX(), px(SHIP_Y) + this.bobY());
+      px(SHIP_CENTER_X) + this.driftX(), px(SHIP_Y) + this.bobY(),
+      this.rearGunRecoil);
   }
 
   private renderSideGuns(): void {
+    const maxCharges = this.effectiveStats().sideWeaponMaxCharges;
+    const chargeFrac = maxCharges > 0 ? this.core.ship.sideWeaponCharges / maxCharges : 1;
     drawSideWeaponIndicator(this.sideGunGfx, this.core.loadout.sideWeapon,
-      px(SHIP_CENTER_X) + this.driftX(), px(SHIP_Y) + this.bobY());
+      px(SHIP_CENTER_X) + this.driftX(), px(SHIP_Y) + this.bobY(),
+      { recoil: this.sideGunRecoil, chargeFrac });
   }
 
   private renderGenerator(): void {
-    const genCap = this.core.loadout.generator.capacity;
+    const genCap = this.effectiveStats().generatorCapacity;
     const frac = genCap > 0 ? this.core.ship.energy / genCap : 0;
     drawGeneratorCore(this.generatorGfx,
-      px(SHIP_CENTER_X) + this.driftX(), px(SHIP_Y) + this.bobY(), frac);
+      px(SHIP_CENTER_X) + this.driftX(), px(SHIP_Y) + this.bobY(), frac, this.thrusterPhase);
   }
 
   private renderMuzzleFlashes(deltaMs: number): void {
@@ -1388,20 +1559,31 @@ export class CombatScene extends Phaser.Scene {
     }
   }
 
+  /** Shape now varies by `weaponKind` (docs/plans/visual-language-audit.md, Fable's
+   * decision: the gun mount already did, the bolt it fired forgot to match) — a
+   * baked white texture per kind (enemyBoltTextureForWeaponKind), tinted here for
+   * crit/miss/normal exactly like the old plain rects were colored, so the outcome
+   * logic is unchanged, only the shape underneath it. */
   private spawnEnemyBolt(enemy: EnemyState, outcome: 'normal' | 'crit' | 'miss' = 'normal'): void {
     const startY = this.laneToY(enemy.distance, enemy.kind) + px(12);
     const targetY = px(SHIP_Y - 20);
     if (startY >= targetY) return;
     const color = outcome === 'crit' ? 0xff9900 : outcome === 'miss' ? 0x334455 : 0xff6600;
     const alpha = outcome === 'miss' ? 0.35 : 0.9;
+    const key = enemyBoltTextureForWeaponKind(enemy.weaponKind);
     // Bigger and with a soft trailing glow behind the core bolt — the old bare 3x8px
     // rect read as barely-there next to the player's own textured, scaled laser bolts.
     const glow = this.add
-      .rectangle(px(SHIP_CENTER_X), startY, px(9), px(22), color, alpha * 0.35)
+      .image(px(SHIP_CENTER_X), startY, key)
+      .setScale(1.7)
+      .setTint(color)
+      .setAlpha(alpha * 0.35)
       .setDepth(4)
       .setBlendMode(Phaser.BlendModes.ADD);
     const rect = this.add
-      .rectangle(px(SHIP_CENTER_X), startY, px(5), px(13), color, alpha)
+      .image(px(SHIP_CENTER_X), startY, key)
+      .setTint(color)
+      .setAlpha(alpha)
       .setDepth(5)
       .setBlendMode(Phaser.BlendModes.ADD);
     const travelMs = 320;
@@ -1414,6 +1596,59 @@ export class CombatScene extends Phaser.Scene {
       bolt.rect.setY(bolt.rect.y + bolt.vy * deltaMs);
       bolt.glow.setY(bolt.rect.y);
       if (bolt.rect.y >= bolt.targetY) {
+        bolt.rect.destroy();
+        bolt.glow.destroy();
+        return false;
+      }
+      return true;
+    });
+  }
+
+  /** A rear-mounted gun's shot (EnemySpec.rearWeaponKind) — launched from an X-offset
+   * mount (alternating side by enemy id, so a wave of rear-armed enemies doesn't fire
+   * a visually identical stack of bolts) and eased back toward the ship's centered X
+   * over its travel, unlike the front weapon's fixed-X drop. Reuses the front bolt's
+   * color/size logic (outcome-tinted, glow + core rect) so it reads as "the same kind
+   * of shot, launched differently" rather than an unrelated new visual language. */
+  private spawnEnemyRearBolt(enemy: EnemyState, outcome: 'normal' | 'crit' | 'miss' = 'normal'): void {
+    const startY = this.laneToY(enemy.distance, enemy.kind) + px(12);
+    const targetY = px(SHIP_Y - 20);
+    if (startY >= targetY) return;
+    const color = outcome === 'crit' ? 0xff9900 : outcome === 'miss' ? 0x334455 : 0xff6600;
+    const alpha = outcome === 'miss' ? 0.35 : 0.9;
+    const key = enemyBoltTextureForWeaponKind(enemy.rearWeaponKind);
+    const mountOffset = enemy.id % 2 === 0 ? px(22) : -px(22);
+    const startX = px(SHIP_CENTER_X) + mountOffset;
+    const targetX = px(SHIP_CENTER_X);
+    const glow = this.add
+      .image(startX, startY, key)
+      .setScale(1.7)
+      .setTint(color)
+      .setAlpha(alpha * 0.35)
+      .setDepth(4)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    const rect = this.add
+      .image(startX, startY, key)
+      .setTint(color)
+      .setAlpha(alpha)
+      .setDepth(5)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    this.enemyRearBolts.push({ rect, glow, startX, targetX, startY, targetY, elapsedMs: 0, durationMs: 380 });
+  }
+
+  private updateEnemyRearBolts(deltaMs: number): void {
+    this.enemyRearBolts = this.enemyRearBolts.filter((bolt) => {
+      bolt.elapsedMs += deltaMs;
+      const t = Math.min(1, bolt.elapsedMs / bolt.durationMs);
+      // Curves in faster on X than Y (eased-out on X, linear on Y) — the bolt visibly
+      // arcs toward center early in its flight rather than sliding sideways the whole
+      // way down, reading as "launched from an angle" rather than "drifting."
+      const xT = 1 - (1 - t) * (1 - t);
+      const x = bolt.startX + (bolt.targetX - bolt.startX) * xT;
+      const y = bolt.startY + (bolt.targetY - bolt.startY) * t;
+      bolt.rect.setPosition(x, y);
+      bolt.glow.setPosition(x, y);
+      if (t >= 1) {
         bolt.rect.destroy();
         bolt.glow.destroy();
         return false;
@@ -1519,6 +1754,9 @@ export class CombatScene extends Phaser.Scene {
   private renderEnemies(alpha: number): void {
     const liveIds = new Set<number>();
     this.hpBarGfx.clear();
+    this.enemyMotorGfx.clear();
+    this.enemyGeneratorGfx.clear();
+    this.enemyHullAnimGfx.clear();
     const positioned: { enemy: EnemyState; sprite: Phaser.GameObjects.Image; y: number }[] = [];
     for (const enemy of this.core.enemies) {
       liveIds.add(enemy.id);
@@ -1562,6 +1800,7 @@ export class CombatScene extends Phaser.Scene {
       if (hpOverlayVisible) {
         this.drawEnemyHpBar(sprite.x, sprite.y, enemy.hp / enemy.maxHp, enemy.isBoss);
         this.updateEnemyHpLabel(enemy, sprite.x, sprite.y);
+        this.drawEnemyModuleMiniBar(sprite.x, sprite.y, enemy);
       } else {
         this.hpLabels.get(enemy.id)?.setVisible(false);
       }
@@ -1569,6 +1808,17 @@ export class CombatScene extends Phaser.Scene {
         this.drawHoldChargeRing(sprite.x, sprite.y, enemy.kind, enemy.holdChargeTicks, this.core.enemies.length > 1);
       }
       this.drawEnemyFireTelegraph(sprite.x, sprite.y, enemy.kind, enemy.shootTimer, enemy.ticksBetweenShots);
+      // SHIELD module (docs/plans/modular-enemies.md): opt-in per enemy — a modular
+      // enemy composed without a SHIELD draws nothing extra here, same as it always
+      // has.
+      if (enemy.shieldCapacity > 0) {
+        const shieldRadius = px((ENEMY_VISUAL_RADIUS[enemy.kind] ?? ENEMY_VISUAL_RADIUS_FALLBACK) + 5);
+        this.drawEnemyShieldRing(sprite.x, sprite.y, shieldRadius, enemy.shield / enemy.shieldCapacity);
+      }
+      this.drawEnemyMotorTrail(sprite.x, sprite.y, enemy);
+      this.drawEnemyGunMounts(sprite.x, sprite.y, enemy);
+      this.drawEnemyGeneratorCore(sprite.x, sprite.y, enemy.kind);
+      this.drawEnemyHullAnim(sprite.x, sprite.y, enemy);
     }
     // Detect deaths: any id that was alive last frame but isn't now
     for (const [id, sprite] of this.enemySprites) {
@@ -1584,16 +1834,19 @@ export class CombatScene extends Phaser.Scene {
     this.renderBoosterBuffs();
   }
 
-  /** Item 7's booster mechanic (regenerateEnemies, core/combat.ts) is otherwise invisible
-   * — the buff target changes tick-to-tick with no player-facing signal at all. Draws a
-   * thin pulsing line from each alive booster to whichever enemy it's currently feeding,
-   * using the exact same nearestEnemyAhead() the core uses, so this can never show a
-   * connection that doesn't match what's actually happening in the sim. */
+  /** Both non-'none' GENERATOR kinds besides self-regen (regenerateEnemies,
+   * core/combat.ts) are otherwise invisible. ally-regen (generalized from the
+   * original booster-only special case): a thin pulsing line from each alive
+   * ally-regen enemy to whichever enemy it's currently feeding, using the exact same
+   * nearestEnemyAhead() the core uses, so this can never show a connection that
+   * doesn't match what's actually happening in the sim. shield-regen: a self-directed
+   * glow (see below). Keyed off `generatorKind`, not the display `kind` — any modular
+   * enemy composed with either GENERATOR kind gets its visual, not just ones
+   * flavor-named "booster". */
   private renderBoosterBuffs(): void {
     this.boosterBuffGfx.clear();
-    const boosters = this.core.enemies.filter((e) => e.kind === 'booster');
-    if (boosters.length === 0) return;
     const pulse = 0.4 + 0.35 * Math.sin(this.targetMarkerPhase / 260);
+    const boosters = this.core.enemies.filter((e) => e.generatorKind === 'ally-regen');
     for (const booster of boosters) {
       const target = nearestEnemyAhead(this.core.enemies, booster);
       if (target === null) continue;
@@ -1611,6 +1864,29 @@ export class CombatScene extends Phaser.Scene {
       const targetRadius = px((ENEMY_VISUAL_RADIUS[target.kind] ?? ENEMY_VISUAL_RADIUS_FALLBACK) + 3);
       this.boosterBuffGfx.lineStyle(px(1.8), BOOSTER_BUFF_GREEN, pulse + 0.2);
       this.boosterBuffGfx.strokeCircle(to.x, to.y, targetRadius);
+    }
+    // shield-regen GENERATOR (docs/plans/modular-enemies.md): two ticks orbiting the
+    // enemy's own radius, not a self-directed alpha pulse — same rotation-based
+    // "it's actively regenerating" tell as GUARDIAN's inner-ring dots, so no enemy
+    // overlay in the game reads as a flat pulsing circle. Blue, matching the SHIELD
+    // ring it's topping up, and only drawn while there's actually room left to regen —
+    // a full buffer stops orbiting, same "don't render a layer that isn't doing
+    // anything" discipline as every other module overlay.
+    const shieldRegenerators = this.core.enemies.filter(
+      (e) => e.generatorKind === 'shield-regen' && e.shieldCapacity > 0 && e.shield < e.shieldCapacity,
+    );
+    for (const enemy of shieldRegenerators) {
+      const sprite = this.enemySprites.get(enemy.id);
+      if (sprite === undefined) continue;
+      const radius = px((ENEMY_VISUAL_RADIUS[enemy.kind] ?? ENEMY_VISUAL_RADIUS_FALLBACK) + 3);
+      const angle0 = this.thrusterPhase * 0.003 + enemy.id;
+      for (let i = 0; i < 2; i++) {
+        const angle = angle0 + i * Math.PI;
+        const tx = sprite.x + Math.cos(angle) * radius;
+        const ty = sprite.y + Math.sin(angle) * radius;
+        this.boosterBuffGfx.fillStyle(PALETTE.shieldBlue, 0.75);
+        this.boosterBuffGfx.fillCircle(tx, ty, px(1.5));
+      }
     }
   }
 
@@ -1665,7 +1941,37 @@ export class CombatScene extends Phaser.Scene {
     }
   }
 
-  /** Persistent current/max HP text just above each enemy's bar. Reuses
+  /** A compact shield/generator readout directly under the HP bar — the existing
+   * shield ring overlay (drawEnemyShieldRing) only conveys shield via glow intensity
+   * (no exact reading), and an enemy's generator has no readout at all beyond the
+   * cosmetic core. Opt-in per module presence, same "don't render a layer that isn't
+   * doing anything" discipline as every other module overlay: no SHIELD module means
+   * no bar segment, `generatorKind === 'none'` means no pip, and an enemy with neither
+   * draws nothing here at all. Not a fabricated energy number — the pip is a fixed
+   * activity marker, since EnemyState has no bounded energy pool to read a fraction
+   * from (regenPerTick is a rate, not a capacity). */
+  private drawEnemyModuleMiniBar(sx: number, sy: number, enemy: EnemyState): void {
+    const hasShield = enemy.shieldCapacity > 0;
+    const hasGenerator = enemy.generatorKind !== 'none';
+    if (!hasShield && !hasGenerator) return;
+    const hpBh = px(enemy.isBoss ? 5 : 3);
+    const y = this.hpOverlayBarTop(sy, enemy.isBoss) + hpBh + px(1.5);
+    const bw = px(enemy.isBoss ? 40 : 20);
+    const bx = sx - bw / 2;
+    if (hasShield) {
+      this.hpBarGfx.fillStyle(0x111122, 0.7);
+      this.hpBarGfx.fillRect(bx, y, bw, px(2));
+      this.hpBarGfx.fillStyle(PALETTE.shieldBlue, 0.85);
+      this.hpBarGfx.fillRect(bx, y, bw * Math.max(0, enemy.shield / enemy.shieldCapacity), px(2));
+    }
+    if (hasGenerator) {
+      const pipX = hasShield ? bx + bw + px(3) : sx;
+      this.hpBarGfx.fillStyle(PALETTE.generatorAmber, 0.8);
+      this.hpBarGfx.fillCircle(pipX, y + px(1), px(1.5));
+    }
+  }
+
+  /** Persistent name + current/max HP text just above each enemy's bar. Reuses
    * drawEnemyHpBar's own bar-top offset and color-tier thresholds so the number always
    * sits directly over its bar and matches its color, regardless of boss scaling.
    * Current HP rounds up (ceil), not down — an enemy on a fractional sliver of hp (e.g.
@@ -1687,7 +1993,8 @@ export class CombatScene extends Phaser.Scene {
     }
     label.setPosition(sx, barTop - px(1));
     label.setColor(cssColor(col));
-    label.setText(`${String(Math.ceil(enemy.hp))}/${String(Math.round(enemy.maxHp))}`);
+    label.setText(`${enemy.displayName}\n${String(Math.ceil(enemy.hp))}/${String(Math.round(enemy.maxHp))}`);
+    label.setAlign('center');
     label.setVisible(true);
   }
 
@@ -1745,6 +2052,193 @@ export class CombatScene extends Phaser.Scene {
     this.hpBarGfx.strokeCircle(sx, muzzleY, coreRadius + px(3));
   }
 
+  /** MOTOR module visual (docs/plans/modular-enemies.md), drawn into the shared
+   * enemyMotorGfx: 'steady' (the default for every hand-written const that predates
+   * the module system) draws nothing — this is opt-in per module, not a 4th layer
+   * every enemy pays for. 'rush' gets a short fading speed-trail above the sprite
+   * (away from the ship, i.e. the direction it came from); 'stall-cycle' gets a
+   * pulsing ring that only lights up during the actual stall half of its cycle
+   * (BOSS_APPROACH_TICKS/BOSS_STALL_TICKS — the same constants conveyor.ts's
+   * effectiveSpeed reads), giving any future non-boss stall-cycle enemy the same
+   * "it's currently anchored" signal the boss gets today from its sheer size. Reuses
+   * motorMagenta (PALETTE) — the player's own motor already taught this hue. */
+  /** MOTOR module visual, always on (docs/plans/modular-enemies.md — "I want them to
+   * have all: energy/generator/shield/front weapon," not opt-in per module presence).
+   * Every enemy shows a flickering exhaust flame behind it (away from the ship, since
+   * that's the direction it came from) sized/colored by `motorKind`: 'steady' is a
+   * modest baseline flame, 'rush' a bigger brighter one. A `stall-cycle` enemy's flame
+   * cuts out entirely during its stall half (it isn't moving — a flame would lie) and
+   * a pulsing anchor ring takes over instead, exactly as before. */
+  private drawEnemyMotorTrail(sx: number, sy: number, enemy: EnemyState): void {
+    if (enemy.motorKind === 'stall-cycle') {
+      const cycleLength = BOSS_APPROACH_TICKS + BOSS_STALL_TICKS;
+      const stalled = enemy.aliveTicks % cycleLength >= BOSS_APPROACH_TICKS;
+      if (stalled) {
+        const radius = px((ENEMY_VISUAL_RADIUS[enemy.kind] ?? ENEMY_VISUAL_RADIUS_FALLBACK) + 9);
+        const pulse = 0.35 + 0.25 * Math.sin(this.targetMarkerPhase / 220);
+        this.enemyMotorGfx.lineStyle(px(1.8), PALETTE.motorMagenta, pulse);
+        this.enemyMotorGfx.strokeCircle(sx, sy, radius);
+        return;
+      }
+    }
+    // One triangle, not a core+outer pair — this runs for all 15 enemies every frame
+    // (previously opt-in for rush/stall-cycle only), so the per-shape cost is now
+    // paid at full concurrency; a single, slightly bigger shape reads almost
+    // identically to the two-layer version at this size.
+    const big = enemy.motorKind === 'rush';
+    const radius = ENEMY_VISUAL_RADIUS[enemy.kind] ?? ENEMY_VISUAL_RADIUS_FALLBACK;
+    const trailY = sy - px(radius * 0.7);
+    const flicker = 0.75 + 0.25 * Math.sin(this.thrusterPhase * 0.02 + enemy.id);
+    const w = big ? 5 : 3.4;
+    const len = big ? 12 : 8;
+    this.enemyMotorGfx.fillStyle(PALETTE.motorMagenta, (big ? 0.3 : 0.2) * flicker);
+    this.enemyMotorGfx.fillTriangle(
+      sx - px(w), trailY, sx + px(w), trailY, sx, trailY - px(len),
+    );
+  }
+
+  /** WEAPON (and, if present, rear weapon) module visuals, always on. A small
+   * cyan-tinted mount at the front (facing the ship, the direction it fires) and,
+   * only for enemies with a `rearWeaponKind`, a second mount at the rear (facing away
+   * — where its second gun's shot actually launches from, spawnEnemyRearBolt). Not
+   * the fire telegraph (drawEnemyFireTelegraph, which still handles the "about to
+   * fire" warning spark on top of this) — this is the persistent "there is a gun
+   * bolted here" identity, mirroring the player ship's own gun-mount indicators. */
+  /** Draws one gun mount at (mx, my), shape varying by weapon kind — mirrors the
+   * player ship's own renderGunIndicator (shipRenderers.ts), which already varies
+   * shape by kind (a ring for ion, angled lines for scatter, a big ring for nova),
+   * rather than one generic mount for every weapon. `stinger` is twin needle prongs,
+   * `battery` a single wide blocky barrel, `lance` one long thin spike; `null`
+   * (specs that predate weaponKind) falls back to the original single small rect.
+   * Still 1-2 fill calls either way — real shape variety, not more draw-call cost. */
+  private drawEnemyGunMountShape(mx: number, my: number, kind: EnemyWeaponKind | null, color: number, facingUp: boolean): void {
+    const dir = facingUp ? -1 : 1;
+    this.hpBarGfx.fillStyle(color, 0.75);
+    if (kind === 'stinger') {
+      this.hpBarGfx.fillRect(mx - px(3.5), my, px(2), px(6) * dir);
+      this.hpBarGfx.fillRect(mx + px(1.5), my, px(2), px(6) * dir);
+    } else if (kind === 'battery') {
+      this.hpBarGfx.fillRect(mx - px(3.5), my, px(7), px(6) * dir);
+    } else if (kind === 'lance') {
+      this.hpBarGfx.fillRect(mx - px(1.2), my, px(2.4), px(10) * dir);
+    } else {
+      // No weaponKind (a hand-written EnemySpec that predates the module system) —
+      // a small filled core + thin ring, never a bare rectangle, so no legacy or
+      // future spec can render a plain-rect mount just by omitting the field.
+      const cy = my + px(3) * dir;
+      this.hpBarGfx.fillCircle(mx, cy, px(2));
+      this.hpBarGfx.lineStyle(px(1), color, 0.6);
+      this.hpBarGfx.strokeCircle(mx, cy, px(3.2));
+    }
+  }
+
+  private drawEnemyGunMounts(sx: number, sy: number, enemy: EnemyState): void {
+    const radius = ENEMY_VISUAL_RADIUS[enemy.kind] ?? ENEMY_VISUAL_RADIUS_FALLBACK;
+    const frontY = sy + px(radius * 0.55);
+    this.drawEnemyGunMountShape(sx, frontY, enemy.weaponKind, PALETTE.weaponCyan, false);
+    if (enemy.rearWeaponKind !== null) {
+      const rearY = sy - px(radius * 0.55);
+      this.drawEnemyGunMountShape(sx - px(4.5), rearY, enemy.rearWeaponKind, 0xff6600, true);
+      this.drawEnemyGunMountShape(sx + px(4.5), rearY, enemy.rearWeaponKind, 0xff6600, true);
+    }
+  }
+
+  /** SHIELD module visual — a leaner 2-ring version of the player's own
+   * drawShieldRings (shipRenderers.ts), not a direct reuse: that function's 4 rings
+   * (8 draw calls) are fine for the one player ship, but this runs per enemy, up to
+   * 15 at once, every frame. 2 rings reads almost the same at this sprite scale for
+   * roughly half the cost. Fades out at intensity 0 exactly like the full version. */
+  private drawEnemyShieldRing(sx: number, sy: number, radius: number, intensity: number): void {
+    this.hpBarGfx.lineStyle(px(2), 0x2255ff, 0.22 * intensity);
+    this.hpBarGfx.strokeCircle(sx, sy, radius + px(3));
+    this.hpBarGfx.lineStyle(px(1), 0xaaddff, Math.min(1, 0.5 * intensity));
+    this.hpBarGfx.strokeCircle(sx, sy, radius);
+  }
+
+  /** GENERATOR module visual, always on — a small pulsing amber core at the enemy's
+   * center, mirroring the player ship's own drawGeneratorCore (shipRenderers.ts) so
+   * the same hue reads as "generator" on both sides. Purely structural — shown
+   * regardless of `generatorKind`, since every enemy has a generator as a hull part
+   * even on missions where it does nothing mechanically (e.g. `generatorKind: 'none'`
+   * still gets the glow; only `ally-regen`/`shield-regen`'s own additional feed-line
+   * or self-glow, drawn separately in renderBoosterBuffs, are conditional). */
+  private drawEnemyGeneratorCore(sx: number, sy: number, kind: string): void {
+    // A fixed-alpha core with two ticks orbiting it, not an alpha/radius pulse — the
+    // same rotation-based "it's running" tell GUARDIAN's ring dots use, applied here
+    // since every enemy in the game pays this overlay. `kind.length` offsets the
+    // phase per kind so a wave of identical enemies doesn't orbit in lockstep.
+    this.enemyGeneratorGfx.fillStyle(PALETTE.generatorAmber, 0.4);
+    this.enemyGeneratorGfx.fillCircle(sx, sy, px(3));
+    const angle0 = this.thrusterPhase * 0.004 + kind.length;
+    for (let i = 0; i < 2; i++) {
+      const angle = angle0 + i * Math.PI;
+      const tx = sx + Math.cos(angle) * px(5.5);
+      const ty = sy + Math.sin(angle) * px(5.5);
+      this.enemyGeneratorGfx.fillStyle(PALETTE.generatorAmber, 0.85);
+      this.enemyGeneratorGfx.fillCircle(tx, ty, px(1.3));
+    }
+  }
+
+  /** Animated hull sub-parts, dispatched by kind (docs/plans/enemy-hull-redesign.md)
+   * — five enemies, five signals, each tied to a real gameplay state rather than
+   * decoration for its own sake. Every other kind draws nothing extra here, same
+   * "don't render a layer that isn't doing anything" discipline as every other
+   * module overlay. */
+  private drawEnemyHullAnim(sx: number, sy: number, enemy: EnemyState): void {
+    if (enemy.kind === 'guardian') {
+      // Inner-ring rotation — the regen "tell": 3 bright ticks orbiting the ring
+      // baked into the hull, continuous, tied to the shared thrusterPhase clock.
+      const angle0 = this.thrusterPhase * 0.003;
+      for (let i = 0; i < 3; i++) {
+        const angle = angle0 + (i * Math.PI * 2) / 3;
+        const tx = sx + Math.cos(angle) * px(9);
+        const ty = sy + Math.sin(angle) * px(9);
+        this.enemyHullAnimGfx.fillStyle(PALETTE.shieldBlue, 0.8);
+        this.enemyHullAnimGfx.fillCircle(tx, ty, px(1.6));
+      }
+    } else if (enemy.kind === 'turret') {
+      // Barrel recoil — reuses drawEnemyFireTelegraph's own frac formula so the
+      // recoil flash peaks exactly when the telegraph does, not a separate timer.
+      if (enemy.ticksBetweenShots <= 0) return;
+      const windowTicks = Math.max(1, enemy.ticksBetweenShots * 0.25);
+      if (enemy.shootTimer > windowTicks) return;
+      const frac = 1 - enemy.shootTimer / windowTicks;
+      const kick = px(frac * 3);
+      this.enemyHullAnimGfx.fillStyle(0xffee44, 0.5 + frac * 0.4);
+      this.enemyHullAnimGfx.fillRect(sx - px(4) - px(1), sy - px(24) + kick, px(2), px(3));
+      this.enemyHullAnimGfx.fillRect(sx + px(4) - px(1), sy - px(24) + kick, px(2), px(3));
+    } else if (enemy.kind === 'kamikaze') {
+      // Core brightens with proximity — a genuine "getting more dangerous" readout.
+      const proximity = 1 - Math.min(1, Math.max(0, enemy.distance / LANE_LENGTH));
+      this.enemyHullAnimGfx.fillStyle(0xffffff, 0.15 + proximity * 0.55);
+      this.enemyHullAnimGfx.fillCircle(sx, sy, px(2 + proximity * 3));
+    } else if (enemy.kind === 'booster') {
+      // Chevron flow — a bright marker cycling down through the two baked chevrons,
+      // reinforcing the ally-regen feed direction on top of the existing buff-line.
+      const t = (this.thrusterPhase * 0.0006) % 1;
+      const flowY = sy - px(16) + px(26 * t);
+      this.enemyHullAnimGfx.fillStyle(PALETTE.generatorAmber, 0.7 * (1 - t * 0.6));
+      this.enemyHullAnimGfx.fillCircle(sx, flowY, px(2.2));
+    } else if (enemy.isBoss) {
+      // Outer-ring pincer sweep — three arcs rotating around the ring, faster during
+      // the stall phase, tying into the existing stall-only anchor-ring overlay
+      // (drawEnemyMotorTrail). Rotation speed carries the "stall" signal instead of
+      // an alpha pulse, matching the rotation-based tell every other module overlay
+      // now uses.
+      const cycleLength = BOSS_APPROACH_TICKS + BOSS_STALL_TICKS;
+      const stalled = enemy.aliveTicks % cycleLength >= BOSS_APPROACH_TICKS;
+      const rate = stalled ? 0.006 : 0.0018;
+      const angle0 = this.targetMarkerPhase * rate;
+      this.enemyHullAnimGfx.lineStyle(px(2), PALETTE.enemyRed, 0.65);
+      for (let i = 0; i < 3; i++) {
+        const start = angle0 + (i * Math.PI * 2) / 3;
+        this.enemyHullAnimGfx.beginPath();
+        this.enemyHullAnimGfx.arc(sx, sy, px(31), start, start + 0.6, false);
+        this.enemyHullAnimGfx.strokePath();
+      }
+    }
+  }
+
   private onEnemyDeath(x: number, y: number, enemyId: number): void {
     const coinReward = this.enemyCoinRewards.get(enemyId) ?? 0;
     this.enemyCoinRewards.delete(enemyId);
@@ -1753,26 +2247,43 @@ export class CombatScene extends Phaser.Scene {
     if (coinReward > 0) this.spawnCoinFloat(x, y, coinReward);
   }
 
+  /**
+   * docs/plans/enemy-hull-redesign.md's `addEnemyAnimTween` conflict: the redesigned
+   * hulls are directional silhouettes (swept wings, a riot-shield face, forward gun
+   * mounts) — a continuous 360° spin would tumble them nose-over-tail forever, which
+   * reads as broken, not "complex," and fights two of the new hull overlays directly
+   * (GUARDIAN's inner-ring rotation, BOSS's stall-tied pulse both assume a host sprite
+   * that isn't independently spinning). Resolved by shape, not by exemption
+   * list-creep: only kinds whose redesigned hull is rotationally symmetric (SWARM's
+   * bare dart, KAMIKAZE's radial spiky star) keep the old continuous spin — a
+   * "tumbling warhead" is a coherent read for a suicide unit besides. Every other
+   * kind gets a small yaw wobble instead (±8°, yoyo, `Sine.easeInOut` — the exact
+   * technique `turret`'s own scale-pulse already used, just applied to `angle`):
+   * real motion, without breaking the hull's front-facing orientation. BOSS drops the
+   * spin entirely (keeps its existing scale-pulse) so its new pincer/ring pulse
+   * overlay reads clearly instead of competing with a spinning host. TURRET stays
+   * exactly as it always was — the model this fix generalizes from.
+   */
   private addEnemyAnimTween(sprite: Phaser.GameObjects.Image, enemy: EnemyState): void {
     const delay = (enemy.id % 8) * 125;
     if (enemy.isBoss) {
       this.tweens.add({ targets: sprite, scaleX: 1.18, scaleY: 1.18, duration: 1400, yoyo: true, repeat: -1, ease: 'Sine.easeInOut', delay });
-      this.tweens.add({ targets: sprite, angle: 360, duration: 4000, repeat: -1, ease: 'Linear', delay });
     } else if (enemy.kind === 'swarm') {
       this.tweens.add({ targets: sprite, angle: 360, duration: 800, repeat: -1, ease: 'Linear', delay });
-    } else if (enemy.kind === 'striker') {
-      this.tweens.add({ targets: sprite, angle: 360, duration: 1800, repeat: -1, ease: 'Linear', delay });
-    } else if (enemy.kind === 'blocker') {
-      this.tweens.add({ targets: sprite, angle: 360, duration: 5000, repeat: -1, ease: 'Linear', delay });
-    } else if (enemy.kind === 'tank') {
-      this.tweens.add({ targets: sprite, angle: 360, duration: 3200, repeat: -1, ease: 'Linear', delay });
+    } else if (enemy.kind === 'kamikaze') {
+      this.tweens.add({ targets: sprite, angle: 360, duration: 600, repeat: -1, ease: 'Linear', delay });
     } else if (enemy.kind === 'turret') {
       // Turret oscillates but never rotates fully — it's a stationary emplacement.
       this.tweens.add({ targets: sprite, scaleX: 1.08, scaleY: 1.08, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut', delay });
-    } else if (enemy.kind === 'kamikaze') {
-      this.tweens.add({ targets: sprite, angle: 360, duration: 600, repeat: -1, ease: 'Linear', delay });
     } else {
-      this.tweens.add({ targets: sprite, angle: 360, duration: 2400, repeat: -1, ease: 'Linear', delay });
+      const duration = enemy.kind === 'striker' ? 1400
+        : enemy.kind === 'tank' ? 2200
+        : enemy.kind === 'blocker' ? 2600
+        : 1800; // fodder, guardian, sentinel, booster, breacher, breacher-gunner, anything else
+      // Starts at -8° so the yoyo wobble is symmetric (-8°→8°→-8°...), not a
+      // one-sided tween from the sprite's default 0°.
+      sprite.setAngle(-8);
+      this.tweens.add({ targets: sprite, angle: 8, duration, yoyo: true, repeat: -1, ease: 'Sine.easeInOut', delay });
     }
   }
 
@@ -1835,6 +2346,11 @@ export class CombatScene extends Phaser.Scene {
       // that visual means "you were destroyed" and this player wasn't.
       this.time.delayedCall(ABANDON_EXIT_DELAY_MS, () => { this.scene.start('ResultScene', sceneData); });
     } else {
+      // A tutorial mission's fix-it message (missions.ts's defeatHint, also shown as
+      // static text on ResultScene) now lands as a narrator line during the death
+      // animation itself — the player sees the lesson while the moment that taught it
+      // is still on screen, not seconds later on a results panel.
+      if (this.core.mission.defeatHint !== undefined) this.narrator.showInstant(this.core.mission.defeatHint);
       this.playDeathAnimation();
       this.time.delayedCall(DEFEAT_EXIT_DELAY_MS, () => { this.scene.start('ResultScene', sceneData); });
     }
@@ -1907,13 +2423,13 @@ export class CombatScene extends Phaser.Scene {
     this.tweens.add({
       targets: flashState,
       alpha: 0,
-      duration: 550,
+      duration: 700,
       ease: 'Cubic.easeOut',
       onUpdate: () => {
         this.deathFlashGfx.clear();
         if (flashState.alpha <= 0) return;
         const vx = px(GAME_X); const vw = px(GAME_WIDTH); const vh = px(LOGICAL_HEIGHT);
-        const edgeW = px(50);
+        const edgeW = px(60);
         this.deathFlashGfx.fillStyle(0xff2200, flashState.alpha);
         this.deathFlashGfx.fillRect(vx, 0, edgeW, vh);
         this.deathFlashGfx.fillRect(vx + vw - edgeW, 0, edgeW, vh);
@@ -1921,15 +2437,47 @@ export class CombatScene extends Phaser.Scene {
         this.deathFlashGfx.fillRect(vx + edgeW, vh - edgeW * 0.6, vw - 2 * edgeW, edgeW * 0.6);
       },
     });
-    this.cameras.main.shake(400, 0.018);
+    this.cameras.main.shake(550, 0.024);
     const cx = px(SHIP_CENTER_X) + this.driftX();
     const cy = px(SHIP_Y) + this.bobY();
-    for (let ring = 0; ring < 3; ring++) {
-      this.time.delayedCall(ring * 160, () => {
-        this.spawnTweenBurst(cx, cy, 0xff4400, 18);
-        this.spawnTweenBurst(cx, cy, 0xffcc00, 6);
+
+    // Expanding shockwave ring — a bright ring racing outward from the ship, the
+    // "something just detonated" read the burst particles alone don't give at a
+    // glance. A scoped, one-shot Graphics object (not a shared field): this only ever
+    // runs once per death, and the scene fully restarts on retry anyway.
+    const shockwaveGfx = this.add.graphics().setDepth(9);
+    const shockwaveState = { radius: px(6), alpha: 0.9 };
+    this.tweens.add({
+      targets: shockwaveState,
+      radius: px(90),
+      alpha: 0,
+      duration: 650,
+      ease: 'Cubic.easeOut',
+      onUpdate: () => {
+        shockwaveGfx.clear();
+        shockwaveGfx.lineStyle(px(3), 0xffaa33, shockwaveState.alpha);
+        shockwaveGfx.strokeCircle(cx, cy, shockwaveState.radius);
+      },
+      onComplete: () => { shockwaveGfx.destroy(); },
+    });
+
+    // Four burst waves, not three — staggered and escalating, the last one clearly
+    // bigger so the sequence reads as building toward something rather than one flat
+    // pop repeated three times.
+    const burstCounts = [16, 20, 24, 32];
+    const burstDelays = [0, 150, 300, 480];
+    for (let i = 0; i < burstCounts.length; i++) {
+      const count = burstCounts[i] ?? 18;
+      this.time.delayedCall(burstDelays[i] ?? 0, () => {
+        this.spawnTweenBurst(cx, cy, 0xff4400, count);
+        this.spawnTweenBurst(cx, cy, 0xffcc00, Math.round(count / 3));
       });
     }
+
+    // Ember drift — slower, longer-lived embers starting after the main bursts finish
+    // (~700ms in), so the screen keeps doing something through the rest of the
+    // now-longer DEFEAT_EXIT_DELAY_MS hold instead of sitting idle.
+    this.time.delayedCall(700, () => { this.spawnEmberDrift(cx, cy); });
     // Every other ship-attached visual (thruster/motor glow, gun/rear-gun/side-gun
     // indicators, the generator core, the shield glow ring, the small hull/shield status
     // bars) is its own Graphics object, never parented to shipSprite — fading shipSprite
@@ -1944,11 +2492,33 @@ export class CombatScene extends Phaser.Scene {
       targets: [
         this.shipSprite, this.thrusterGfx, this.motorGfx, this.gunGfx,
         this.rearGunGfx, this.sideGunGfx, this.generatorGfx, this.shieldGfx, this.shipStatusBarGfx,
+        this.shipStatusHullLabel, this.shipStatusShieldLabel, this.shipStatusEnergyLabel,
       ],
       alpha: 0,
-      duration: 500,
-      delay: 100,
+      duration: 700,
+      delay: 200,
     });
+  }
+
+  /** Slower, longer-lived embers for the tail of the death animation's hold window —
+   * drift up and outward rather than spawnTweenBurst's own sharp radial pop, reading
+   * as wreckage settling rather than a second explosion. */
+  private spawnEmberDrift(x: number, y: number): void {
+    const count = 10;
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2 + (i % 3) * 0.4;
+      const dist = px(50 + (i % 5) * 18);
+      const dot = this.add.rectangle(x, y, px(2), px(2), 0xff8822).setDepth(5);
+      this.tweens.add({
+        targets: dot,
+        x: x + Math.cos(angle) * dist,
+        y: y + Math.sin(angle) * dist - px(20 + (i % 4) * 8),
+        alpha: 0,
+        duration: 900 + (i % 4) * 100,
+        ease: 'Sine.easeOut',
+        onComplete: () => { dot.destroy(); },
+      });
+    }
   }
 
   // ── Dev-only cheats (__cheat.combat.*, main.ts) — implementations live in
@@ -1992,6 +2562,27 @@ export class CombatScene extends Phaser.Scene {
 
 function randomSeed(): number {
   return crypto.getRandomValues(new Uint32Array(1))[0] ?? 1;
+}
+
+/** Per-tier starfield visuals, keyed by depth tier (not three independent per-attribute
+ * coin flips) — a bright star is also bigger, faster, and twinkling, a coherent
+ * "distance" read. Near/mid twinkle; only far stays static. */
+function starTierParams(rz: number, rw: number): { baseAlpha: number; size: number; speed: number; twinkles: boolean } {
+  const tier = rz % 10; // 0-1 near, 2-4 mid, 5-9 far
+  if (tier < 2) return { baseAlpha: 0.9, size: 2.5, speed: 70 + (rw % 35), twinkles: true };
+  if (tier < 5) return { baseAlpha: 0.55, size: 1.5, speed: 42 + (rw % 28), twinkles: true };
+  return { baseAlpha: 0.28, size: 1, speed: 20 + (rw % 18), twinkles: false };
+}
+
+/** 4-way starfield tint split (cyan/amber/magenta-violet/white) — white stays the
+ * majority so the field doesn't read as a color wash, but three tinted minorities give
+ * it real variety rather than two token accents. */
+function starTint(rx: number): number {
+  const roll = rx % 6;
+  if (roll === 0) return 0x99e6ff;
+  if (roll === 1) return 0xffcc88;
+  if (roll === 2) return 0xcc99ff;
+  return 0xffffff;
 }
 
 /** Glow/size multiplier for a laser bolt: level 1 = 0.85×, level 5 = 1.13×. */

@@ -695,7 +695,7 @@ const SHOTS: Shot[] = [
       await driveThroughOnboardingIfShown(page);
       await cheat(page, 'startMission', 't1');
       await waitForMissionReady(page, 't1');
-      await advanceUntil(page, (s) => hasKind(s, 'guardian'));
+      await advanceUntil(page, (s) => hasKind(s, 'sentinel'));
     },
     cleanup: restoreBaseline,
   },

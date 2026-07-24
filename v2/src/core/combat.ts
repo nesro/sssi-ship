@@ -49,7 +49,7 @@ export function fireShipWeapon(state: CoreState, stats: EffectiveStats): void {
     }
     if (wasCrit) state.pendingVisualEvents.push({ kind: 'player-crit', enemyId: enemy.id });
     const finalDamage = applyRandomness(rolledDamage, mods, state.rng);
-    enemy.hp -= finalDamage;
+    damageEnemy(enemy, finalDamage);
     state.stats.damageDealt += finalDamage;
     hitCount += 1;
   });
@@ -77,22 +77,31 @@ export function fireShipWeapon(state: CoreState, stats: EffectiveStats): void {
 }
 
 /**
- * Enemy regenerates HP before the ship fires. Two mechanisms share the `regenPerTick`
- * field: most regenerating enemies (t3's guardian) heal themselves. `booster`
- * (fable-fun-review-followup.md Item 7) instead grants its `regenPerTick` to whichever
- * alive enemy is currently nearest-ahead of it — distance-based, recomputed every tick
- * (decision #14: enemies move at independent speeds and can overtake each other, so a
- * spawn-order rule would sometimes buff an enemy that's visually behind the booster).
- * No stacking: each booster targets exactly one nearest-ahead enemy; if that enemy is
- * itself another booster, the buff chains rather than two boosters ever double-feeding
- * the same target directly.
+ * Enemy regenerates HP or shield before the ship fires, dispatched off the enemy's own
+ * `generatorKind` (module identity — docs/plans/modular-enemies.md), never the display
+ * `kind` string. `ally-regen` (the booster mechanic, fable-fun-review-followup.md Item
+ * 7) grants its `regenPerTick` to whichever alive enemy is currently nearest-ahead of
+ * it — distance-based, recomputed every tick (decision #14: enemies move at
+ * independent speeds and can overtake each other, so a spawn-order rule would
+ * sometimes buff an enemy that's visually behind it). No stacking: each ally-regen
+ * enemy targets exactly one nearest-ahead enemy; if that enemy is itself another
+ * ally-regen enemy, the buff chains rather than two ever double-feeding the same
+ * target directly. `shield-regen` restores its own shield buffer instead (a no-op if
+ * it has no SHIELD module, since shieldCapacity is then 0). Everything else
+ * (including legacy specs with no generatorKind set, which default to 'none' at
+ * spawn but may still carry a nonzero regenPerTick) self-heals — the pre-existing
+ * default behavior, now explicit rather than inferred from "not booster".
  */
 export function regenerateEnemies(state: CoreState): void {
   for (const enemy of state.enemies) {
     if (enemy.regenPerTick <= 0) continue;
-    if (enemy.kind === 'booster') {
+    if (enemy.generatorKind === 'ally-regen') {
       const target = nearestEnemyAhead(state.enemies, enemy);
       if (target !== null) target.hp = Math.min(target.maxHp, target.hp + enemy.regenPerTick);
+      continue;
+    }
+    if (enemy.generatorKind === 'shield-regen') {
+      enemy.shield = Math.min(enemy.shieldCapacity, enemy.shield + enemy.regenPerTick);
       continue;
     }
     enemy.hp = Math.min(enemy.maxHp, enemy.hp + enemy.regenPerTick);
@@ -133,6 +142,33 @@ export function fireEnemyWeapons(state: CoreState, stats: EffectiveStats): void 
   }
 }
 
+/** A second, independent gun for enemies with `rearWeaponKind` set (docs/plans/
+ * modular-enemies.md) — real extra DPS, not a cosmetic variant of the front shot.
+ * Its own timer (`rearShootTimer`), its own roll, its own damageShip call: a
+ * rear-armed enemy can land both shots in the same tick if both timers happen to
+ * elapse together. `null` (every spec that predates this field) skips entirely —
+ * zero behavior or RNG-cursor change for existing missions. Separate ShotEventKinds
+ * (`enemy-rear-*`) so the view can tell which mount fired when both crit/miss land
+ * on the same enemy in the same tick. */
+export function fireEnemyRearWeapons(state: CoreState, stats: EffectiveStats): void {
+  for (const enemy of state.enemies) {
+    if (enemy.rearWeaponKind === null) continue;
+    enemy.rearShootTimer -= 1;
+    if (enemy.rearShootTimer > 0) continue;
+    enemy.rearShootTimer += enemy.rearTicksBetweenShots;
+    const effectiveMissChance = Math.min(1, enemy.rearMissChance + stats.shipEnemyMissBonus);
+    const { damage, wasMiss, wasCrit } = rollShotOutcome(
+      effectiveMissChance, enemy.rearCritChance, enemy.rearCritMult, enemy.rearShotDamage, state.rng,
+    );
+    if (wasMiss) {
+      state.pendingVisualEvents.push({ kind: 'enemy-rear-miss', enemyId: enemy.id });
+      continue;
+    }
+    if (wasCrit) state.pendingVisualEvents.push({ kind: 'enemy-rear-crit', enemyId: enemy.id });
+    damageShip(state, damage);
+  }
+}
+
 /**
  * Rear weapon fires sideways at mid-queue enemies: a centered slice around
  * enemies[floor(N/2)]. Brownout does NOT stretch the rear weapon — it fires on a fixed
@@ -161,7 +197,7 @@ export function fireRearWeapon(state: CoreState, stats: EffectiveStats): void {
       ? rollShotOutcome(rearWeapon.missChance, rearWeapon.critChance, rearWeapon.critMult, stats.rearWeaponDamage * falloff, state.rng)
       : { damage: stats.rearWeaponDamage * falloff, wasMiss: false };
     if (wasMiss) return;
-    enemy.hp -= damage;
+    damageEnemy(enemy, damage);
     state.stats.damageDealt += damage;
   });
 
@@ -206,7 +242,7 @@ export function fireSideWeapon(state: CoreState): void {
       stats.sideWeaponDamage * falloff, state.rng,
     );
     if (wasMiss) return;
-    enemy.hp -= damage;
+    damageEnemy(enemy, damage);
     state.stats.damageDealt += damage;
   });
   state.stats.sideShotsFired += 1;
@@ -254,6 +290,18 @@ export function activateAbility(state: CoreState, slotIndex: number): void {
   state.ship.energy = Math.max(0, state.ship.energy - cost);
   if (def.activate !== undefined) def.activate(state);
   equipped.cooldownLeft = def.cooldownTicks ?? 0;
+}
+
+/** Shield absorbs first, remainder reaches hp — the enemy-side mirror of damageShip.
+ * Every damage source routes through this, including the player's own shield-burst
+ * splash (conveyor.ts): one uniform rule, no special-cased exception for any source. */
+export function damageEnemy(enemy: EnemyState, amount: number): void {
+  if (enemy.shield > 0) {
+    const absorbed = Math.min(enemy.shield, amount);
+    enemy.shield -= absorbed;
+    amount -= absorbed;
+  }
+  enemy.hp -= amount;
 }
 
 /** Shield absorbs first; remainder reaches hull. Resets MOMENTUM on hull damage. */
@@ -408,7 +456,7 @@ function applyEnemyDeathEffects(
     state.ship.hull = Math.min(state.ship.maxHull, state.ship.hull + mods.hullPerKill);
   }
   if (enemy.blocksConveyor) {
-    state.bonusCallsPending += enemy.kind === 'blocker' ? bonusCallsForHoldCharge(enemy.holdChargeTicks) : 1;
+    state.bonusCallsPending += enemy.holdBonusTiered ? bonusCallsForHoldCharge(enemy.holdChargeTicks) : 1;
     if (mods.extraEnergyOnBlockerKill > 0) {
       state.ship.energy = Math.min(
         stats.generatorCapacity,
@@ -449,7 +497,7 @@ export function removeDeadEnemies(state: CoreState, stats: EffectiveStats): void
   }
 
   if (explosionDmg > 0) {
-    for (const survivor of survivors) survivor.hp -= explosionDmg;
+    for (const survivor of survivors) damageEnemy(survivor, explosionDmg);
   }
   state.enemies = survivors.filter((e) => e.hp > 0);
 

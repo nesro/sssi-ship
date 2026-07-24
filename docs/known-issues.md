@@ -15,6 +15,18 @@ Move resolved items to the bottom with the date and what fixed them, instead of 
 
 ## Open
 
+### Reported stale main-menu tutorial copy about Settings/Credits — not reproduced
+Tomáš (2026-07-24): "main menu tutorial have outdated into about settings, there are
+no credits and message anymore." Investigated thoroughly — read `HubTour.ts`,
+`HubScene.ts`'s `NAV_ITEMS`/`buildSettingsContent`/`buildCreditsContent`, then verified
+live via Playwright screenshots of the Settings panel, Credits panel, and the tour's
+own `settings` step — and found nothing stale: CREDITS is a live nav item, the "Hi, I
+am Nesro..." developer's note renders under it exactly as before, and the settings
+tour step's caption matches both precisely. Not fixed because nothing reproduced.
+Likely either an older build/deployment (not this working tree) or a different screen
+than the one investigated — needs the actual screen/flow pinned down with Tomáš before
+attempting a fix.
+
 ### Shield kind is a campaign-wide balance variable that's never actually been validated — every m1-m6 mission trivializes on Reflex/Flux/Bulwark
 Found 2026-07-23 verifying the shield-burst-tiers change (`docs/plans/shield-burst-tiers.md`)
 — confirmed pre-existing, not caused by that change. `tools/loadoutPresets.ts`'s
@@ -323,6 +335,390 @@ actionable headlessly.**
 
 ## Resolved
 
+### Round 4 polish pass — landed 2026-07-24, docs/plans/round4-brief.md
+Tomáš's 8-item follow-up round after the visual-language audit: "use fable again and
+let fable write you what to do." Investigated each item against the real code
+(`docs/plans/round4-brief.md`), handed to Fable for the concrete plan, implemented
+exactly as returned, in Fable's own recommended sequencing (rotation-dot technique
+first, since two other items build on it).
+
+1. **Rotating-dot replaces pulsating-circle, 3 sites** (`CombatScene.ts`) —
+   `drawEnemyGeneratorCore` (every enemy), BOSS's stall-tied ring, and
+   `renderBoosterBuffs`'s shield-regen self-glow all switched from an alpha/radius
+   sine pulse to ticks orbiting a fixed core/ring, mirroring GUARDIAN's own rotating
+   ring dots (the one Tomáš explicitly liked — "the rotating circle one").
+2. **Player ship module animation parity** (`shipRenderers.ts`) — front/rear/side gun
+   indicators gained a `recoil` kick (0→1, decaying ~150ms) tied to real
+   `shotsFired`/`rearShotsFired`/manual-fire deltas, the same fire-tell TURRET already
+   had; `drawGeneratorCore` reworked to a fixed core + 2 orbiting dots whose rotation
+   speed scales with `energyFrac` and recolors to the brownout hue below
+   `BROWNOUT_THRESHOLD`; side-weapon indicator alpha now dims with charge fraction.
+   Also fixed `renderGenerator`'s own capacity read (raw `loadout.generator.capacity`
+   → `computeEffectiveStats().generatorCapacity`), the same class of bug as item 6's.
+3. **Death animation, longer and more eventful** — `DEFEAT_EXIT_DELAY_MS` 1400→2000;
+   flash/shake intensified; 3 burst waves → 4, escalating in size; new expanding
+   shockwave ring; new slow ember-drift stage filling the back half of the hold
+   instead of sitting idle; ship-attached fade re-timed to match.
+4. **Starfield intensified further** — `COUNT` 65→110; every tier's alpha/size/speed
+   boosted; twinkle extended from near-only to near+mid; tint split from 2 accent
+   colors to 4 (cyan/amber/new magenta-violet/white).
+5. **Tutorial SKIP button removed** — `showNarratorLine` no longer offers a second
+   button that dismissed the whole remaining narrator sequence in one tap; `NEXT →`/
+   `CONTINUE` (re-centered) is now the only way to progress, one line at a time.
+   Confirmed the dev-only tutorial autopilot was never affected either way — it only
+   ever taps `NEXT →`/`CONTINUE`.
+6. **Player ship status bars: numbers + energy bar + a real capacity bug fixed** —
+   `renderShipStatusBars` now shows numeric current/max labels on all three bars and
+   adds a third (energy) bar; the shield bar was silently reading raw
+   `loadout.shield?.capacity` instead of `computeEffectiveStats().shieldCapacity`, so
+   card/ability shield-capacity bonuses showed on the side panel but not under the
+   ship — fixed. `SHIP_STATUS_BAR_Y_OFFSET`/`GAP` retuned (36→30, 3→2) for the extra
+   row.
+7. **Enemy shield/generator mini-bar** — a small 2-segment readout
+   (`drawEnemyModuleMiniBar`) under each enemy's HP bar: a shield-fraction fill bar
+   (only for enemies with a real SHIELD module) and a generator-activity pip (only for
+   `generatorKind !== 'none'`) — not a fabricated energy number, since `EnemyState`
+   has no bounded energy pool, only a regen rate.
+8. **The last plain-rectangle mount, fixed at both ends** — `GUARDIAN_REGEN` (t3, a
+   hand-written spec predating the module system) got an explicit `weaponKind:
+   'lance'`; `drawEnemyGunMountShape`'s `null`-fallback changed from a bare `fillRect`
+   to a small filled circle + thin ring, so no legacy or future spec can render a
+   plain rectangle just by omitting the field.
+
+**Mid-turn follow-up items, same round:**
+- **t1's defeat hint now also delivered by the narrator during the death
+  animation**, not just as static `ResultScene` text — `NarratorBar` gained a
+  `showInstant()` method (full text revealed immediately, no typewriter) since the
+  hint's ~175 characters would take ~7s to type out at the normal per-character pace,
+  far longer than the death hold; `updatePostFinishEffects` now calls
+  `this.narrator.update(deltaMs)` so the bar actually animates during the hold.
+  Verified via a forced Playwright capture of t1's death sequence: the full hint text
+  and the death FX (vignette, embers) are visible together mid-hold. `ResultScene`'s
+  own copy is untouched (both surfaces now show it, not a migration).
+- **Stale main-menu tutorial copy about Settings/Credits** — investigated
+  thoroughly (read `HubTour.ts`, `HubScene.ts`'s `NAV_ITEMS`/`buildSettingsContent`/
+  `buildCreditsContent`, then verified live via Playwright screenshots of Settings,
+  Credits, and the tour's own `settings` step): found nothing stale. CREDITS is still
+  a live nav item, the "Hi, I am Nesro..." developer's note still renders under it,
+  and the settings tour step's caption ("Audio, dev tools, and this tour again — any
+  time. Credits, right next to it, has the developer's note.") matches all of it
+  exactly. Flagging as unresolved, not fixed — Tomáš's report doesn't match current
+  code or a live run, so either it describes an older build/deployment, or a
+  different screen than the one investigated here. Needs the actual screen/flow
+  identified before any fix is attempted.
+- **Procedural sound generation, investigated (not built)** — feasible: Web Audio
+  supports rendering a synthesized clip into a real `AudioBuffer` (`OfflineAudioContext`,
+  then registered into Phaser's audio cache), which could mirror the baked-texture
+  technique (`textures.ts`'s `bake()`) — generate once at load, replay many times —
+  giving each `EnemyWeaponKind`/shield/generator/motor kind its own distinct
+  synthesized SFX instead of today's sample-based `SoundManager.ts` (3 laser samples
+  reused for every weapon). Real risk: raw-oscillator synthesis tends to sound harsh/
+  chiptune unless carefully shaped (envelopes, filters), and — unlike a baked
+  texture — sound quality can't be verified by screenshot, only by ear. This is a
+  genuinely new subsystem (the codebase's first procedural audio), not a small tweak;
+  scoping and design-quality judgment calls of this size are exactly what this
+  session's Fable-consultation process exists for. Deliberately not implemented this
+  round — recommend a dedicated Fable consultation before building it, given the
+  scope already in flight this round.
+
+**Verified**: `pnpm build:dry`/`lint`/`lint:comments` clean (one new lint fix along
+the way: `drawSideWeaponIndicator` grew a 6th param over ESLint's `max-params` limit,
+resolved by bundling `recoil`/`chargeFrac` into a `SideWeaponIndicatorOpts` object;
+one `pnpm dlx fallow` regression fixed inline: `addStarfield`'s cyclomatic complexity
+tripped the HIGH threshold after the 4-way tint split, resolved by extracting
+`starTierParams`/`starTint` into pure module-level helpers — also removed one
+unrelated stale `fallow-ignore` suppression in `tools/pacing-report.ts` found by the
+same run). `pnpm test` 779/779 unchanged (pure rendering/timing/data changes, no core
+logic touched). `pnpm campaign` 100%/100% completion, `pnpm balance` all 7 intended
+loadouts still clear at their documented rates, `pnpm pacing` clean, `pnpm audit-taps`
+0 failures across 21 states, full `pnpm screenshot` batch (77 shots) 0 failures.
+Remaining `fallow` health flags (`src/data/cards.ts`, `src/core/combat.ts`,
+`tools/campaign-simulate.ts`'s `runOneCampaign`) are pre-existing baseline, untouched
+by this round.
+
+### Full visual-language audit + enemy bolts now shaped by weaponKind — landed 2026-07-24, docs/plans/visual-language-audit.md
+Tomáš: "can you go over all the graphics in this game again, write a docs about the
+shape and then we let fable to decide what to add?" — a from-scratch catalog of
+every baked texture and runtime-drawn shape in the game (player ships, enemy hulls,
+all projectile tiers, all shop icon tiers, combat particles, the starfield, the hub
+galaxy map), written by reading the actual drawing code, not memory. Handed to Fable
+to decide priority, per the explicit instruction — not resolved into a plan myself.
+
+**Fable's decision** (verified the doc's claims against the code first, catching one
+factual error: the starfield scrolls *down*, not left — `updateStars` increments
+`.y`, matching the direction enemies approach from): **enemy bolts first**, because
+it's not just an untouched area but an actual contradiction this same session
+created — a gun mount now visibly shaped per `weaponKind` (the immediately prior fix)
+was firing a bolt that forgot what fired it. **Front weapon shop icons second** — a
+real, bounded, independent gap (the one icon tier every player owns and looks at
+most, yet the plainest). **Starfield last, and scoped down** — carries zero gameplay
+information, and Category 6's deliberately-restrained particles/floating text mean
+the starfield's flatness is partially by the same design restraint, not pure neglect.
+Everything else (player ships, rear/side projectile textures, equipment icons, hub
+map, combat particles) confirmed correct as-is, not worth revisiting.
+
+**Enemy bolts, implemented**: `textures.ts` gained 3 baked bolt textures
+(`enemyBoltStinger`/`Battery`/`Lance`, one per `EnemyWeaponKind`) — baked white so
+`CombatScene.ts` can `setTint()` per crit/miss/normal outcome at runtime exactly like
+the old plain rects were colored, only the shape underneath changed. Shape echoes
+the matching gun mount: stinger a thin sharp needle diamond, battery a chunky
+rounded slug, lance a long thin spike. `spawnEnemyBolt`/`spawnEnemyRearBolt` swapped
+`add.rectangle()` for `add.image()` + `enemyBoltTextureForWeaponKind()`, keeping the
+exact core+glow (scaled-up, dimmer copy) layering the rect version already had.
+Verified via a forced-fire Playwright capture: bolts render as distinct diamond/
+needle shapes with a soft halo, not rectangles.
+
+Verified: `pnpm build:dry`/`lint`/`lint:comments`/`test` (779, unchanged — pure
+rendering) clean; `pnpm dlx fallow` back to the same 2 pre-existing findings; the
+full `pnpm screenshot` batch (77 shots) passes with zero failures (one transient
+`combat-m6-boss` failure on the real-random-seed shot, confirmed flaky-by-design on
+retry, same as previous rounds, unrelated to this change).
+
+**Update, same day**: Tomáš — "no, everything that fable said must be addressed."
+Items #2 and #3 landed too, not left deferred:
+
+- **Front weapon shop icons** (`buildWeaponIconTextures`): all 4 real weapon kinds
+  (pulse/ion/scatter/nova, both tiers each = 8 icons) redesigned to the rear/side
+  icon tiers' density (6-9 primitives, up from 2-4) — pulse gained a cross-brace and
+  mount plate unifying its twin barrels plus small energy-node accents; ion's icon
+  changed from a beam+rect that matched neither its own kind nor its bolt into the
+  actual glowing orb its projectile (`laserIon`) already is; scatter's 3-prong fan
+  gained tip dots and a connecting brace; nova gained the second ring its own
+  shockwave bolt (`laserNova1/2`) already has plus burst ticks. `y2010` deliberately
+  untouched — the Easter egg's own "deliberately unpolished" joke, not a gap.
+  Screenshot-verified in the shop weapon list.
+- **Starfield** (`CombatScene.ts`'s `addStarfield`/`updateStars`): light-touch per
+  Fable's own explicit scoping ("not a redesign project"). Replaced the old
+  independently-randomized size/alpha/speed with 3 coherent depth tiers (near/mid/
+  far moving together — bigger+brighter+faster vs. small+dim+slow), a small fraction
+  per tier tinted faint cyan or amber instead of uniform white, and a subtle twinkle
+  on the near tier only (`thrusterPhase`-driven, matching this file's existing
+  shared-clock pattern). Also fixed a stale comment claiming the field "scrolls
+  left" — it scrolls down (`.y +=`), matching the direction enemies approach from,
+  exactly as Fable's own review of the audit doc caught.
+
+Verified again after both: `pnpm build:dry`/`lint`/`lint:comments`/`test` (779,
+unchanged) clean; `pnpm dlx fallow` still at the same 2 pre-existing findings; full
+`pnpm screenshot` batch (77 shots) passes with zero failures.
+
+### Enemy hull redesign: 13 hand-drawn hulls + 5 animated overlays — landed 2026-07-23, docs/plans/enemy-hull-redesign.md
+Tomáš, after seeing round 2's module overlays: "you just added a circle inside of the
+square... the problem is really just the enemies are a stupid square. I want ALL part
+of the enemies to be complex: their 'ship' AND all the modules." Told to spend real
+time on this ("I have time and a lot of claude ai limit... take your time"), asked
+directly rather than guessed at: no external visual reference ("try it yourself
+first"), hand-drawn per named enemy over a procedural-from-modules alternative
+(explicitly chosen), and pushed past even the player ship's own texture complexity —
+plus real animation, not just static detail.
+
+**The actual bar, read from the code, not assumed**: `buildShipTextures`'s
+`interceptor` hull is 10 primitives (triangle + wing struts + twin gun barrels +
+cockpit + engine struts), `warship` is 13. Today's enemy hulls were nowhere close —
+`fodder`/`swarm` were a single `strokeDiamond`, the literal "stupid square." Target
+set at 10-13 primitives per hull, matching or exceeding the player ship, with a
+deliberate named exception for `fodder`/`swarm` (this game's highest-concurrency
+enemies per `pacing-report.md` — m5 peaks at 15.0, driven largely by swarm).
+
+**Kind split, required first**: hand-drawn-per-named-enemy meant BREACHER/
+BREACHER_GUNNER (previously `kind: 'fodder'`) and SENTINEL (previously `kind:
+'guardian'`) could no longer silently share another enemy's texture — gave each its
+own `kind` (`breacher`/`breacher-gunner`/`sentinel`) plus matching
+`ENEMY_VISUAL_RADIUS`/`MIN_VISUAL_SPACING`/`textureForEnemyKind` entries.
+
+**13 hulls hand-drawn** (`textures.ts`'s `buildEnemyTextures`, now split across two
+functions to stay under the line-count limit): each enemy got a distinct shape
+grammar — FODDER a minimal dart-drone, STRIKER a swept-wing starfighter, TANK an
+octagonal armor block with side plates, BLOCKER a hexagonal fortress bulkhead with
+corner bolts, GUARDIAN/SENTINEL split into their own ring-and-cross vs.
+hexagonal-target-frame identities, TURRET a proper gun emplacement, KAMIKAZE a spiked
+warhead, BOOSTER a hexagonal support-drone housing its existing feed-emitter,
+BOSS pushed to 15 primitives (added an outer ring + pincer wings + plate dividers) as
+the densest hull in the game, and BREACHER/BREACHER_GUNNER a riot-shield-faced wall
+unit — GUNNER's baked rear stub-cannons are the one case where the static hull
+directly represents a real module (`rearWeaponKind !== null`).
+
+**A real, code-verified blocker found by Fable's review, not discovered after
+implementation**: `CombatScene.ts`'s existing `addEnemyAnimTween` already spun almost
+every enemy sprite continuously (360°) — which would have made every new directional
+hull (swept wings, a riot-shield face, forward chevrons) tumble nose-over-tail
+forever, reading as broken rather than complex, and directly conflicted with two of
+the five new animated overlays (GUARDIAN's ring rotation, BOSS's stall pulse, both
+assuming a host sprite that isn't independently spinning). Resolved by shape, not
+exemption-list-creep: kinds whose redesigned hull is rotationally symmetric (SWARM's
+bare dart, KAMIKAZE's radial star) keep the old spin; everything else switches to a
+small ±8° yaw wobble (same `yoyo`/`Sine.easeInOut` technique `turret`'s existing
+scale-pulse already used); BOSS drops the spin entirely so its new pulse overlay reads
+clearly.
+
+**5 animated overlays, each tied to a real gameplay signal, not decoration**: GUARDIAN
+gets 3 orbiting ticks on its ring (a genuine self-regen "tell"); TURRET's barrels
+flash-recoil reusing `drawEnemyFireTelegraph`'s own fire-cadence fraction; KAMIKAZE's
+core brightens with proximity (`enemy.distance` — a real "getting more dangerous"
+readout); BOOSTER gets a marker flowing down through its chevrons; BOSS's outer ring
+pulses faster during the stall phase, tying into the existing stall-only anchor ring.
+Every other kind gets no new animated overlay — a deliberate scope line, not sparseness
+by accident.
+
+**Performance, re-measured, not assumed**: the exact profiling methodology from round
+2 (15 synthetic enemies, `requestAnimationFrame` delta, worst case = every
+animation-eligible kind cycling with every module overlay on) came back at **-0.05ms
+to -0.008ms** across 3 repeated runs — comfortably inside the +3ms budget, and the
+static per-hull primitive additions cost nothing per frame at all (baked once via the
+existing `bake()`/`GLOW_PASSES` mechanism, same as `buildShipTextures` already proves
+at zero measured runtime cost).
+
+Verified: `pnpm build:dry`/`lint`/`lint:comments`/`test` (779, unchanged — this round
+was pure rendering, no core logic) clean; `pnpm campaign` 100%/100% both archetypes
+unchanged; `pnpm balance` m1-m6 intended clear rates bit-for-bit identical; `pnpm
+pacing`/`audit-taps` clean; `pnpm dlx fallow` back to the same 2 pre-existing
+findings; the full `pnpm screenshot` batch (77 shots) passes with zero failures (one
+transient failure during the pass — `combat-m6-boss`, which uses a real random seed,
+not a fixed one — confirmed flaky-by-design on retry, unrelated to this change, and a
+stale `hasKind(s, 'guardian')` check in `combat-t1`'s own screenshot setup was caught
+and fixed as part of the kind split). Every redesigned enemy inspected directly in a
+real running mission (t1/t2/m1/m3b/m6), not just code-reviewed.
+
+### Modular enemies round 2: rear-weapon system + full always-on module rendering — landed 2026-07-23
+Tomáš, after seeing round 1's t1/t2 result: "this still looks lame. When the enemy is
+JUST A SQUARE, it feels so cheap... I want the enemies to look 'real' like the player
+ship. Detailed graphics, mounted modules and I want their missiles to be animated and
+visually complex. I want them to have all: energy/generator/shield/front weapon. Some
+enemies can use rear weapon that will shoot from behind." Confirmed with him that the
+rear weapon should be a real second gun with real independent damage (matching the
+player ship's own front+rear system), not a cosmetic trajectory variant.
+
+**Rear-weapon system** (`core/types.ts`, `core/combat.ts`, `core/tick.ts`,
+`core/enemyCompose.ts`): `EnemySpec`/`EnemyState` gained a full second weapon slot
+(`rearWeaponKind`/`rearShotDamage`/`rearTicksBetweenShots`/`rearCritChance`/
+`rearMissChance`/`rearCritMult`/`rearShootTimer`), `null` by default (zero behavior or
+RNG-cursor change for every spec that predates this). `fireEnemyRearWeapons` mirrors
+`fireEnemyWeapons` exactly — its own timer, its own roll, its own `damageShip` call —
+wired into `tick.ts`'s phase order right after the front weapon. Two new
+`ShotEventKind`s (`enemy-rear-crit`/`enemy-rear-miss`) so the view can tell front and
+rear shots on the same enemy in the same tick apart. `composeEnemy` gained a
+`rearWeapon` field on its `base` param (not a 6th positional arg — ESLint's
+`max-params` caps at 5).
+
+**Always-on module rendering** (`CombatScene.ts`): every enemy now shows all four
+modules as real hull parts, not opt-in per module presence — an always-on pulsing
+GENERATOR core (`drawEnemyGeneratorCore`, shown regardless of `generatorKind`, purely
+structural), an always-on MOTOR exhaust flame (`drawEnemyMotorTrail`, broadened from
+rush/stall-cycle-only), a WEAPON gun mount plus a second rear mount for
+`rearWeaponKind`-carrying enemies (`drawEnemyGunMounts`), and a leaner 2-ring SHIELD
+visual (`drawEnemyShieldRing`, a dedicated cheaper variant — not a reuse of the
+player's own 4-ring `drawShieldRings`, see the profiling note below for why). Rear
+weapon shots get their own projectile (`spawnEnemyRearBolt`): launched from an
+X-offset rear mount and eased back toward the ship's centered X over its flight,
+unlike the front weapon's dead-straight drop — confirmed visually via a forced-fire
+Playwright capture (not just code review) that it actually arcs in off-center.
+
+**Performance, re-checked and fixed for real once "always-on" made it a real risk**:
+the first profiling pass (15 synthetic enemies, every module overlay on every one —
+the deliberate worst case) came back at **+4.2ms** over baseline, well over the +3ms
+budget the round-1 plan pinned — a genuine regression, since "opt-in per module" had
+kept cost low before and this round deliberately dropped that gate. Trimmed the
+actual cost instead of accepting the regression: cut stroke-outline passes from the
+gun mounts and generator core (fill-only, half the draw calls), collapsed the motor
+trail from a two-layer triangle to one, and replaced the shield ring's reused 4-ring
+player version with a dedicated 2-ring enemy variant. Re-measured: **-0.01ms**,
+confirmed stable across 3 repeated runs — the always-on redesign ended up *cheaper*
+than the original opt-in one once the per-shape cost was actually trimmed, not just
+tolerated.
+
+**t1/t2 rebalanced for the new real modules** (`data/missions.ts`): SENTINEL (t1)
+gained a real SHIELD (capacity 20) and GENERATOR (self-regen) — balance-safe there
+specifically, since t1 has no weapon at all and no mission outcome depends on a
+guardian's own hp/shield survival. BREACHER (t2) gained a real SHIELD (capacity 8);
+a new **BREACHER GUNNER** variant (wave 2) additionally carries the real rear weapon.
+Re-tuned via the same sim-sweep discipline as round 1 (createCoreState+advanceTick,
+500 seeds/config): hp came down from 45→34 to compensate for the added shield, landing
+at pulse-1 fails 0%, scatter-1 clears 100% (avgHull ~18%). **A real balance trap found
+and avoided by sim, not assumed**: an early candidate gave BREACHER a real self-regen
+GENERATOR too — sim showed this *inverted* the whole lesson (pulse started clearing
+*better* than scatter), because concentrating damage on one target at a time
+occasionally outraces regen while scatter's thinner spread lets regen claw back more
+of it proportionally. Dropped regen from BREACHER entirely (generator stays
+`'none'`, cosmetically inert — the core glow shows regardless) rather than chase a
+fix, once the risk was confirmed real rather than theoretical.
+
+Verified: `pnpm build:dry`/`lint`/`lint:comments`/`test` (779, +5 from round 1) clean;
+`pnpm campaign` 100%/100% both archetypes unchanged; `pnpm balance` m1-m6 intended
+clear rates bit-for-bit identical; `pnpm pacing`/`audit-taps` clean; `pnpm dlx fallow`
+back to the same 2 pre-existing findings (one new complexity flag from this round's
+own `detectCombatFeedback` growth was found and fixed by extracting
+`detectEnemyFrontShots`/`detectEnemyRearShots`, not left as a new regression).
+Screenshot-verified both missions show visibly detailed, multi-part enemies (hull +
+shield ring + glowing generator core + gun mount, GUNNER's rear mounts too) instead of
+a flat outline shape.
+
+### Modular enemies (engine + visuals + t1/t2 rebuild) — landed 2026-07-23, docs/plans/modular-enemies.md
+Tomáš: "I currently dislike the enemy design now. they feel really flat - circles that
+shoot," wanting enemies built from the same WEAPON/SHIELD/GENERATOR/MOTOR modules the
+player ship has, with visible module rendering. Two Fable review rounds before
+implementation (spec revised in full detail after round 1's risk findings, per "we are
+still pre-alpha... don't be afraid to refactor very hard"); round 2 signed off with 3
+small fixes, all applied.
+
+**Engine** (`core/enemyCompose.ts`, `data/enemyModules.ts`): `composeEnemy` folds
+concrete WEAPON/SHIELD/GENERATOR/MOTOR module objects into the existing flat
+`EnemySpec` shape — spawn-agnostic, so hand-written consts stay valid with zero forced
+migration. New `EnemyState`/`EnemySpec` fields (`weaponKind`/`shieldKind`/
+`generatorKind`/`motorKind`/`shield`/`shieldCapacity`/`holdBonusTiered`/`displayName`)
+carry module identity separately from the display `kind` string. `damageEnemy`
+(mirrors `damageShip`'s shield-first pattern) replaces all 5 direct `enemy.hp -=`
+sites; the player's own shield-burst splash routes through it too — one uniform
+damage rule, no source-specific exception. `hashCoreState` gained the new mutable
+`shield` field as a named line item. Five kind-string behavior/reward/visual checks
+(boss stall-cycle, booster ally-regen, blocker's tiered bonus, the booster-buff line
+draw, the first-booster narrator line) all regeneralized off the new kind fields.
+
+**Visuals** (`CombatScene.ts`): SHIELD reuses the player's own `drawShieldRings`
+(opt-in per `shieldCapacity > 0`); MOTOR gets a new shared `enemyMotorGfx` (rush =
+speed trail, stall-cycle = pulsing ring only during the actual stall phase);
+GENERATOR extends the existing ally-regen buff-line renderer with a self-directed glow
+for shield-regen. WEAPON reuses the already-built fire telegraph — no new draw needed.
+Verified against real composed test enemies injected directly into a live
+`CombatScene` (no mission uses random module composition yet) via a throwaway,
+never-committed Playwright script — caught and fixed one of my own analysis mistakes
+along the way (misread which on-screen sprite was which by guessing screen-Y order
+instead of reading it back). Profiling checkpoint (15 synthetic enemies, all 4
+overlays, `requestAnimationFrame` frame-time delta vs. today's baseline): +0.54ms,
+comfortably inside the +3ms budget Fable's review asked to have pinned down.
+
+**t1/t2 content rebuild**: Tomáš, after seeing the plan: "let's finish t1 and t2 ...
+I would like to have each enemy a meaning, maybe a name? I want less, but stronger
+enemies. I think t1 should have just 2 enemies, t2, like 5-10 max." Added
+`EnemySpec.displayName`/`EnemyState.displayName` (shown above the HP number in
+`updateEnemyHpLabel`, defaults to uppercased `kind` if unset).
+- **t1**: `GUARDIAN_SLOW`'s 5-count wave → two named **SENTINEL**s (`composeEnemy`,
+  hp=40, shotDamage=16, spacing=100). Sim-verified (createCoreState+advanceTick sweep,
+  500-1000 seeds/config): generator-torrent-1/reserve-1/steady-1 all fail 0% (steady-1
+  used to be a real ~52% coin-flip at 5-count — at 2 hits that margin collapsed,
+  leaving exactly one real fix path, same shape as t2/t3 now); generator-surge-1
+  clears 100% (~7% avg hull). spacing=100 is load-bearing twice: it's the real-time gap
+  surge-1 needs to refill the shield before the second collision, AND it's tight enough
+  that the second SENTINEL is still on-screen when the first collides — required for
+  the shield-burst mechanic to have a live target (confirmed 100/100 probe runs; a
+  wider, difficulty-equivalent spacing tested at 140 gave the burst 0/100 — the second
+  guardian was off-screen by the time the first one collided).
+- **t2**: `FODDER`'s 2+8+8=18-count wave → six named **BREACHER**s (own spec, not a
+  FODDER edit — FODDER is shared by m1-m6), two waves of 3 half a second apart, hp=45,
+  shotDamage=4. Sim-verified against the mission's own pinned generator-torrent-1:
+  pulse-1 fails ~97% (avgHull ~0.2%), scatter-1 clears ~100% (avgHull ~27%) — same
+  fail/fix split the old 18-count wall held, at a third the headcount.
+
+Verified: `pnpm build:dry`/`lint`/`lint:comments`/`test` (774, +10 from phase 1) clean;
+`pnpm campaign` 100%/100% both archetypes unchanged; `pnpm balance` m1-m6 intended
+clear rates bit-for-bit identical (m1-m6 don't use SENTINEL/BREACHER); `pnpm pacing`/
+`audit-taps` clean; `pnpm dlx fallow` back to the same 2 pre-existing findings
+(confirmed via `git stash -u` before/after — neither is new). Screenshot-verified t1/
+t2's HP labels show "SENTINEL 40/40" / "BREACHER 25/45" correctly, and both tutorials'
+narrator modals still fire at the right ticks with the right enemies on screen.
+
+Deferred, not started: phases 4-5 (m1/m2/m3 hand-authored modular rebuild, m3b-m6
+loose/randomized module assembly) — explicitly put on hold by Tomáš ("keep this at
+later") pending his look at t1/t2.
+
 ### Four t1/t2 polish items: tutorial-autopilot pacing, ship-destruction artifacts, invisible enemy fire, bottom-bar support hints — fixed 2026-07-23
 Tomáš, after a fresh look: (1) "the autoclicker is too fast," (2) "ship being destroyed
 is missing animation and there are some artefacts left," (3) "there is no indicator of
@@ -463,6 +859,31 @@ Verified with a Playwright script that overrides `document.hidden` and dispatche
 `visibilitychange` event mid-mission: an 8-second "hidden" window advances zero ticks,
 and resuming visibility ticks forward at normal real-time pace (not a burst) immediately
 after. `pnpm test`/`lint`/`lint:comments`/`build:dry` all clean.
+
+**Follow-up, 2026-07-24 — the fix above was incomplete, not wrong.** Tomáš: "the bug is
+still there - when I switch back to the chrome tab after a while, a lot of sounds play
+together at once and it hurts my ears. it's not wixed." Both layers above were real and
+necessary but missed a *third*, independent mechanism: Phaser's own
+`BaseSoundManager.pauseOnBlur` (default `true`, never explicitly configured) runs
+completely separately from `Sound.suspend()`/`resume()`'s mute pair. On tab blur it
+**pauses every currently-playing sound instance**, freezing each one's exact playback
+position; on focus it **resumes all of them**. Muting (the existing fix) silences
+output but doesn't stop Phaser's own pause/resume bookkeeping underneath it — any sfx
+mid-flight the instant the tab backgrounds (easy during active combat, several laser/
+ding one-shots routinely overlap) gets frozen mid-sound and then **all resume at the
+exact same instant** the tab regains focus, each finishing out its remaining tail —
+the "lot of sounds play together at once" burst, now correctly identified as resumed
+overlapping tails, not newly-queued sounds slipping past the tick-skip.
+
+**Fix**: `SoundManager.ts`'s `attach()` now sets `sound.pauseOnBlur = false` the
+moment it binds to Phaser's sound manager, disabling Phaser's own mechanism entirely
+so `suspend()`/`resume()` (mute-based) is the *only* visibility-driven audio behavior.
+Under mute alone, backgrounded sfx simply keep playing (silently) to their own short
+natural completion — nothing is left mid-flight to resume in a batch. Confirmed via
+Playwright that `window.__game.sound.pauseOnBlur` reads `false` immediately at boot
+and stays `false` through scene transitions (`Sound.attach()` is called from
+BootScene/CombatScene/HubScene's own `create()`, idempotently). `pnpm test`/`lint`/
+`lint:comments`/`build:dry` all clean.
 
 ### t1's guardians were too far apart, and a straggler could arrive already damaged before ever being seen — fixed 2026-07-22
 Tomáš noticed both while playing: guardians felt strung out, and one visibly showed up

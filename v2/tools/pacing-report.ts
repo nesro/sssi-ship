@@ -85,8 +85,7 @@ const HARD_IDLE_GAP_THRESHOLD_SECONDS = 13;
 // freeze behind a blocksConveyor enemy) at which the player's ship has done SOMETHING
 // to or with an enemy — fired a shot or taken a collision — "how long until something
 // actually happens." 30 ticks = 3s, the same "nothing happening for more than 2-3
-// seconds is bad" rule that drove t1's guardian-speed fix (missions.ts's
-// GUARDIAN_SLOW).
+// seconds is bad" rule that drove t1's guardian-speed fix (missions.ts's SENTINEL).
 //
 // Deliberately shotsFired, not kills: an early draft used kills+collisions and
 // falsely flagged t3 at 36s — t3's guardian is a stationary blocksConveyor enemy the
@@ -419,9 +418,7 @@ function main(): void {
 
   const jsonReport = buildJsonReport(results);
   if (options.json) {
-    // An output path being constructed, not a module import — only unresolved until
-    // the first `--json` run writes the file.
-    // fallow-ignore-next-line unresolved-import
+    // An output path being constructed, not a module import.
     const jsonPath = new URL('./pacing-report.json', import.meta.url).pathname;
     writeFileSync(jsonPath, JSON.stringify(jsonReport, null, 2), 'utf8');
     console.log(`JSON report written to tools/pacing-report.json`);

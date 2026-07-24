@@ -19,6 +19,9 @@ export const TEXTURE_KEYS = {
   turret: 'enemy-turret',
   kamikaze: 'enemy-kamikaze',
   booster: 'enemy-booster',
+  sentinel: 'enemy-sentinel',
+  breacher: 'enemy-breacher',
+  breacherGunner: 'enemy-breacher-gunner',
   // Projectiles — one per weapon kind+tier
   laserPulse1: 'laser-pulse-1',
   laserPulse2: 'laser-pulse-2',
@@ -28,6 +31,13 @@ export const TEXTURE_KEYS = {
   laserNova1: 'laser-nova-1',
   laserNova2: 'laser-nova-2',
   laserY2010: 'laser-y2010', // secret Easter egg weapon — the retired v1 zigzag shape
+  // Enemy bolts — one per EnemyWeaponKind (docs/plans/visual-language-audit.md).
+  // Baked white (bake()'s own 4-pass glow already gives each a soft-to-sharp edge,
+  // same technique laserIon uses) so CombatScene.ts can setTint() per crit/miss/
+  // normal outcome at runtime — 3 kinds cover both front and rear mounts.
+  enemyBoltStinger: 'enemy-bolt-stinger',
+  enemyBoltBattery: 'enemy-bolt-battery',
+  enemyBoltLance: 'enemy-bolt-lance',
   // Weapon icons for shop list
   iconPulse1: 'icon-pulse-1',
   iconPulse2: 'icon-pulse-2',

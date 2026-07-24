@@ -143,6 +143,21 @@ const UNKILLABLE_ENEMY = (id: number, distance: number) => ({
   critMult: 1,
   holdChargeTicks: 0,
   aliveTicks: 0,
+  weaponKind: null,
+  shieldKind: null,
+  generatorKind: 'none' as const,
+  motorKind: 'steady' as const,
+  holdBonusTiered: false,
+  shield: 0,
+  shieldCapacity: 0,
+  displayName: 'FODDER',
+  rearWeaponKind: null,
+  rearShotDamage: 0,
+  rearTicksBetweenShots: 0,
+  rearCritChance: 0,
+  rearMissChance: 0,
+  rearCritMult: 2.0,
+  rearShootTimer: 0,
 });
 
 describe('Nova Wave weapon', () => {

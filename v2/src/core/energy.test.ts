@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BROWNOUT_MAX_STRETCH, BROWNOUT_THRESHOLD } from './constants';
 import { brownoutFactor, pulseShield, regenerateEnergy } from './energy';
-import { FIXTURE_LOADOUT, FIXTURE_MISSION } from './fixtures';
+import { FIXTURE_LOADOUT, FIXTURE_MISSION, makeFixtureEnemy } from './fixtures';
 import { computeEffectiveStats, defaultModifiers } from './stats';
 import { createCoreState } from './state';
 import type { CoreState, LoadoutSnapshot } from './types';
@@ -67,10 +67,9 @@ describe('regenerateEnergy: conditional output bonuses', () => {
   it('bossAliveGenBonus: extra output when a boss is present', () => {
     const state = freshState();
     state.modifiers = { ...state.modifiers, bossAliveGenBonus: 0.5 };
-    state.enemies = [{ id: 1, kind: 'boss', hp: 100, maxHp: 100, distance: 50, speed: 0,
+    state.enemies = [makeFixtureEnemy({ id: 1, kind: 'boss', hp: 100, maxHp: 100, distance: 50, speed: 0,
       shootTimer: 10, ticksBetweenShots: 10, blocksConveyor: true, coinReward: 50,
-      isBoss: true, regenPerTick: 0, shotDamage: 5, critChance: 0, missChance: 0, critMult: 2,
-      holdChargeTicks: 0, aliveTicks: 0 }];
+      isBoss: true, regenPerTick: 0, shotDamage: 5, critChance: 0, missChance: 0, critMult: 2 })];
     state.ship.energy = 0;
     const stats = statsFor();
     regenerateEnergy(state, stats);

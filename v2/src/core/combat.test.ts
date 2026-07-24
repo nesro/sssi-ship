@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { damageShip, fireEnemyWeapons, fireShipWeapon, regenerateEnemies, setPriorityTarget } from './combat';
+import { damageEnemy, damageShip, fireEnemyRearWeapons, fireEnemyWeapons, fireShipWeapon, regenerateEnemies, setPriorityTarget } from './combat';
 import { advanceEnemies } from './conveyor';
+import { composeEnemy } from './enemyCompose';
+import { ENEMY_GENERATORS, ENEMY_MOTORS, ENEMY_SHIELDS, ENEMY_WEAPONS } from '../data/enemyModules';
 import { FIXTURE_LOADOUT, FIXTURE_MISSION, FIXTURE_SHIP, FIXTURE_WEAPON, makeFixtureEnemy } from './fixtures';
 import { computeEffectiveStats } from './stats';
 import { createCoreState } from './state';
@@ -154,6 +156,45 @@ describe('fireEnemyWeapons', () => {
     fireEnemyWeapons(state, statsOf(state));
     expect(state.ship.shield).toBe(15);
     expect(state.ship.hull).toBe(state.ship.maxHull);
+  });
+});
+
+describe('fireEnemyRearWeapons', () => {
+  it('a rearWeaponKind: null enemy never fires — zero behavior change for pre-existing specs', () => {
+    const state = freshState();
+    state.ship.shield = 20;
+    state.enemies = [makeFixtureEnemy({ rearShootTimer: 1, rearShotDamage: 999, rearWeaponKind: null })];
+    fireEnemyRearWeapons(state, statsOf(state));
+    expect(state.ship.shield).toBe(20);
+    expect(state.ship.hull).toBe(state.ship.maxHull);
+  });
+
+  it('damages the ship independently of the front weapon when its own timer elapses', () => {
+    const state = freshState();
+    state.ship.shield = 20;
+    state.enemies = [makeFixtureEnemy({
+      shootTimer: 999, shotDamage: 0, // front weapon nowhere near firing
+      rearWeaponKind: 'stinger', rearShootTimer: 1, rearShotDamage: 6, rearTicksBetweenShots: 20,
+      rearCritChance: 0, rearMissChance: 0, rearCritMult: 2,
+    })];
+    fireEnemyRearWeapons(state, statsOf(state));
+    expect(state.ship.shield).toBe(14);
+    const enemy = state.enemies[0];
+    expect(enemy?.rearShootTimer).toBe(20); // reset to its own interval, not the front's
+  });
+
+  it('front and rear weapons both land in the same tick when both timers elapse together', () => {
+    const state = freshState();
+    state.ship.shield = 50;
+    state.enemies = [makeFixtureEnemy({
+      shootTimer: 1, shotDamage: 4,
+      rearWeaponKind: 'stinger', rearShootTimer: 1, rearShotDamage: 6, rearTicksBetweenShots: 20,
+      rearCritChance: 0, rearMissChance: 0, rearCritMult: 2,
+    })];
+    const stats = statsOf(state);
+    fireEnemyWeapons(state, stats);
+    fireEnemyRearWeapons(state, stats);
+    expect(state.ship.shield).toBe(40); // 50 - 4 (front) - 6 (rear)
   });
 });
 
@@ -633,7 +674,7 @@ describe('regenerateEnemies: booster buff-ahead mechanic', () => {
     const state = freshState();
     state.enemies = [
       makeFixtureEnemy({ id: 1, kind: 'fodder', hp: 50, maxHp: 100, distance: 10 }), // ahead
-      makeFixtureEnemy({ id: 2, kind: 'booster', hp: 50, maxHp: 100, distance: 50, regenPerTick: 5 }),
+      makeFixtureEnemy({ id: 2, kind: 'booster', hp: 50, maxHp: 100, distance: 50, regenPerTick: 5, generatorKind: 'ally-regen' }),
     ];
     regenerateEnemies(state);
     const target = state.enemies.find((e) => e.id === 1);
@@ -645,7 +686,7 @@ describe('regenerateEnemies: booster buff-ahead mechanic', () => {
   it('does nothing when the booster is already the closest enemy on the lane (nothing ahead of it)', () => {
     const state = freshState();
     state.enemies = [
-      makeFixtureEnemy({ id: 1, kind: 'booster', hp: 50, maxHp: 100, distance: 10, regenPerTick: 5 }),
+      makeFixtureEnemy({ id: 1, kind: 'booster', hp: 50, maxHp: 100, distance: 10, regenPerTick: 5, generatorKind: 'ally-regen' }),
       makeFixtureEnemy({ id: 2, kind: 'fodder', hp: 50, maxHp: 100, distance: 50 }), // behind, not ahead
     ];
     regenerateEnemies(state);
@@ -660,8 +701,8 @@ describe('regenerateEnemies: booster buff-ahead mechanic', () => {
     const state = freshState();
     state.enemies = [
       makeFixtureEnemy({ id: 1, kind: 'fodder', hp: 50, maxHp: 100, distance: 50 }), // C
-      makeFixtureEnemy({ id: 2, kind: 'booster', hp: 50, maxHp: 100, distance: 90, regenPerTick: 5 }), // A
-      makeFixtureEnemy({ id: 3, kind: 'booster', hp: 50, maxHp: 100, distance: 92, regenPerTick: 7 }), // B
+      makeFixtureEnemy({ id: 2, kind: 'booster', hp: 50, maxHp: 100, distance: 90, regenPerTick: 5, generatorKind: 'ally-regen' }), // A
+      makeFixtureEnemy({ id: 3, kind: 'booster', hp: 50, maxHp: 100, distance: 92, regenPerTick: 7, generatorKind: 'ally-regen' }), // B
     ];
     regenerateEnemies(state);
     expect(state.enemies.find((e) => e.id === 1)?.hp).toBe(55); // C: +5 from A only, once
@@ -675,7 +716,7 @@ describe('regenerateEnemies: booster buff-ahead mechanic', () => {
       // Distance is measured from the ship — smaller is closer/"ahead". Enemy 1 starts
       // BEHIND the booster (distance 80 > booster's 70), so it starts out of range.
       makeFixtureEnemy({ id: 1, kind: 'fodder', hp: 50, maxHp: 100, distance: 80 }),
-      makeFixtureEnemy({ id: 2, kind: 'booster', hp: 50, maxHp: 100, distance: 70, regenPerTick: 5 }),
+      makeFixtureEnemy({ id: 2, kind: 'booster', hp: 50, maxHp: 100, distance: 70, regenPerTick: 5, generatorKind: 'ally-regen' }),
     ];
     regenerateEnemies(state);
     // Not yet ahead (80 > 70) — booster has nothing to buff.
@@ -689,6 +730,130 @@ describe('regenerateEnemies: booster buff-ahead mechanic', () => {
     // Now ahead (40 < 70) — the booster's target picks it up live, no re-spawn or
     // re-pairing needed, exactly the recomputed-every-tick guarantee decision #14 requires.
     expect(state.enemies.find((e) => e.id === 1)?.hp).toBe(55);
+  });
+
+  it('shield-regen restores its own shield buffer instead of healing hp or feeding an ally', () => {
+    const state = freshState();
+    state.enemies = [
+      makeFixtureEnemy({
+        id: 1, kind: 'fodder', hp: 50, maxHp: 100, distance: 50,
+        regenPerTick: 4, generatorKind: 'shield-regen', shield: 10, shieldCapacity: 20,
+      }),
+    ];
+    regenerateEnemies(state);
+    const enemy = state.enemies.find((e) => e.id === 1);
+    expect(enemy?.shield).toBe(14); // +4, capped at capacity
+    expect(enemy?.hp).toBe(50); // unaffected
+  });
+
+  it('shield-regen is a no-op once the buffer is already at capacity', () => {
+    const state = freshState();
+    state.enemies = [
+      makeFixtureEnemy({
+        id: 1, kind: 'fodder', hp: 50, maxHp: 100, distance: 50,
+        regenPerTick: 4, generatorKind: 'shield-regen', shield: 20, shieldCapacity: 20,
+      }),
+    ];
+    regenerateEnemies(state);
+    expect(state.enemies.find((e) => e.id === 1)?.shield).toBe(20);
+  });
+});
+
+describe('damageEnemy', () => {
+  it('drains the shield buffer before hp', () => {
+    const enemy = makeFixtureEnemy({ hp: 50, maxHp: 100, shield: 10, shieldCapacity: 20 });
+    damageEnemy(enemy, 6);
+    expect(enemy.shield).toBe(4);
+    expect(enemy.hp).toBe(50); // untouched — shield absorbed it all
+  });
+
+  it('overflow past the shield reaches hp in the same hit', () => {
+    const enemy = makeFixtureEnemy({ hp: 50, maxHp: 100, shield: 10, shieldCapacity: 20 });
+    damageEnemy(enemy, 15);
+    expect(enemy.shield).toBe(0);
+    expect(enemy.hp).toBe(45); // 15 - 10 absorbed = 5 through to hp
+  });
+
+  it('a shield-less enemy (shield 0) takes full damage straight to hp', () => {
+    const enemy = makeFixtureEnemy({ hp: 50, maxHp: 100, shield: 0, shieldCapacity: 0 });
+    damageEnemy(enemy, 12);
+    expect(enemy.hp).toBe(38);
+  });
+});
+
+describe('composeEnemy', () => {
+  it('folds four modules into a flat EnemySpec, tagging each module\'s kind separately from the display kind', () => {
+    const spec = composeEnemy(
+      ENEMY_WEAPONS.battery,
+      ENEMY_SHIELDS.barrier,
+      ENEMY_GENERATORS['shield-regen'],
+      ENEMY_MOTORS.rush,
+      { kind: 'test-composite', hp: 200, coinReward: 40 },
+    );
+    expect(spec.kind).toBe('test-composite'); // display identity, independent of module kinds
+    expect(spec.hp).toBe(200);
+    expect(spec.coinReward).toBe(40);
+    expect(spec.speed).toBe(ENEMY_MOTORS.rush.speed);
+    expect(spec.shotDamage).toBe(ENEMY_WEAPONS.battery.shotDamage);
+    expect(spec.shieldCapacity).toBe(ENEMY_SHIELDS.barrier.capacity);
+    expect(spec.weaponKind).toBe('battery');
+    expect(spec.shieldKind).toBe('barrier');
+    expect(spec.generatorKind).toBe('shield-regen');
+    expect(spec.motorKind).toBe('rush');
+    expect(spec.regenPerTick).toBe(ENEMY_GENERATORS['shield-regen'].regenPerTick);
+    expect(spec.blocksConveyor).toBe(false); // default when base doesn't set it
+    expect(spec.holdBonusTiered).toBe(false); // default when base doesn't set it
+  });
+
+  it('a null shield module composes to shieldKind null and shieldCapacity 0', () => {
+    const spec = composeEnemy(
+      ENEMY_WEAPONS.stinger, null, ENEMY_GENERATORS.none, ENEMY_MOTORS.steady,
+      { kind: 'unshielded', hp: 30, coinReward: 5 },
+    );
+    expect(spec.shieldKind).toBeNull();
+    expect(spec.shieldCapacity).toBe(0);
+  });
+
+  it('a null rear weapon composes to rearWeaponKind null and every rear stat 0', () => {
+    const spec = composeEnemy(
+      ENEMY_WEAPONS.stinger, null, ENEMY_GENERATORS.none, ENEMY_MOTORS.steady,
+      { kind: 'no-rear', hp: 30, coinReward: 5 },
+    );
+    expect(spec.rearWeaponKind).toBeNull();
+    expect(spec.rearShotDamage).toBe(0);
+    expect(spec.rearTicksBetweenShots).toBe(0);
+  });
+
+  it('a real rear weapon module composes to a fully independent second gun', () => {
+    const spec = composeEnemy(
+      ENEMY_WEAPONS.stinger, null, ENEMY_GENERATORS.none, ENEMY_MOTORS.steady,
+      { kind: 'dual-gun', hp: 30, coinReward: 5, rearWeapon: ENEMY_WEAPONS.lance },
+    );
+    expect(spec.rearWeaponKind).toBe('lance');
+    expect(spec.rearShotDamage).toBe(ENEMY_WEAPONS.lance.shotDamage);
+    expect(spec.rearTicksBetweenShots).toBe(ENEMY_WEAPONS.lance.ticksBetweenShots);
+    // Independent from the front weapon, which is a different kind entirely here.
+    expect(spec.weaponKind).toBe('stinger');
+    expect(spec.shotDamage).toBe(ENEMY_WEAPONS.stinger.shotDamage);
+  });
+
+  it('generatorKind "none" always composes to regenPerTick 0, regardless of the module\'s own field', () => {
+    const spec = composeEnemy(
+      ENEMY_WEAPONS.stinger, null, { kind: 'none', regenPerTick: 999 }, ENEMY_MOTORS.steady,
+      { kind: 'test', hp: 10, coinReward: 1 },
+    );
+    expect(spec.regenPerTick).toBe(0);
+  });
+
+  it('base.isBoss/blocksConveyor/holdBonusTiered pass through when set', () => {
+    const spec = composeEnemy(
+      ENEMY_WEAPONS.lance, null, ENEMY_GENERATORS.none, ENEMY_MOTORS['stall-cycle'],
+      { kind: 'test-boss', hp: 500, coinReward: 100, isBoss: true, blocksConveyor: true, holdBonusTiered: true },
+    );
+    expect(spec.isBoss).toBe(true);
+    expect(spec.blocksConveyor).toBe(true);
+    expect(spec.holdBonusTiered).toBe(true);
+    expect(spec.motorKind).toBe('stall-cycle');
   });
 });
 

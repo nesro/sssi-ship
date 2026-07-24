@@ -3,6 +3,7 @@ import { PALETTE, WEAPON_PALETTE } from './palette';
 import { px } from './layout';
 import { splitWeaponId, TEXTURE_KEYS } from './textureKeys';
 import type { ShipKindName } from './textureKeys';
+import type { EnemyWeaponKind } from '../core/types';
 
 // Baked glow (V2_HANDOFF.md §4.3): paint each shape several times with increasing
 // thickness and decreasing alpha ONCE at startup, then rely on ADD blend at runtime.
@@ -28,6 +29,9 @@ export function textureForEnemyKind(kind: string, isBoss: boolean, blocks: boole
     turret: TEXTURE_KEYS.turret,
     kamikaze: TEXTURE_KEYS.kamikaze,
     booster: TEXTURE_KEYS.booster,
+    sentinel: TEXTURE_KEYS.sentinel,
+    breacher: TEXTURE_KEYS.breacher,
+    'breacher-gunner': TEXTURE_KEYS.breacherGunner,
   };
   // Unnamed blockers (kind not in map) fall back to the blocker texture.
   if (blocks && !(kind in known)) return TEXTURE_KEYS.blocker;
@@ -72,6 +76,17 @@ export function laserTextureForWeaponId(weaponId: string): string {
   return TEXTURE_KEYS.laserPulse1;
 }
 
+/** Maps an enemy's `weaponKind`/`rearWeaponKind` to its bolt texture — shared by
+ * CombatScene.ts's spawnEnemyBolt (front) and spawnEnemyRearBolt (rear), since both
+ * draw from the same EnemyWeaponKind set. `null` (specs that predate weaponKind)
+ * falls back to `stinger`, the plainest/thinnest shape — closest to the original
+ * bare rect this replaces. */
+export function enemyBoltTextureForWeaponKind(kind: EnemyWeaponKind | null): string {
+  if (kind === 'battery') return TEXTURE_KEYS.enemyBoltBattery;
+  if (kind === 'lance') return TEXTURE_KEYS.enemyBoltLance;
+  return TEXTURE_KEYS.enemyBoltStinger;
+}
+
 type ShapePainter = (g: Phaser.GameObjects.Graphics, lineWidth: number, alpha: number) => void;
 
 export function buildGameTextures(scene: Phaser.Scene): void {
@@ -79,6 +94,7 @@ export function buildGameTextures(scene: Phaser.Scene): void {
   buildShipTextures(scene);
   buildEnemyTextures(scene);
   buildProjectileTextures(scene);
+  buildEnemyBoltTextures(scene);
   buildRearProjectileTextures(scene);
   buildSideProjectileTextures(scene);
   buildWeaponIconTextures(scene);
@@ -208,71 +224,186 @@ function buildShipTextures(scene: Phaser.Scene): void {
   }
 }
 
+/**
+ * Hand-drawn hulls (docs/plans/enemy-hull-redesign.md): every enemy at or above the
+ * player ship's own 10-13 primitive density (buildShipTextures), each with a distinct
+ * shape grammar rather than a recolored variant of the next one's silhouette. Enemies
+ * travel top→bottom down the lane (toward the ship at the bottom) — "front"/nose/
+ * weapon-facing is the larger-Y (bottom) edge of each canvas, "rear"/engine-facing is
+ * the smaller-Y (top) edge, matching CombatScene.ts's own module-overlay placement
+ * convention (drawEnemyGunMounts' frontY/rearY, drawEnemyMotorTrail's trailY).
+ *
+ * FODDER and SWARM are a deliberate, named exception to the density target — this
+ * game's highest-concurrency enemies (pacing-report.md: m5 peaks at 15.0, driven
+ * largely by SWARM), kept intentionally sparse rather than paying the same per-hull
+ * primitive cost 15 times over.
+ */
 function buildEnemyTextures(scene: Phaser.Scene): void {
+  // Minimal dart-drone — the deliberate low-complexity exception.
   bake(scene, TEXTURE_KEYS.fodder, px(48), px(48), (g, w, a) => {
     g.lineStyle(w, PALETTE.enemyRed, a);
-    strokeDiamond(g, px(24), px(24), px(18));
+    strokePolygon(g, [[px(24), px(42)], [px(34), px(22)], [px(24), px(6)], [px(14), px(22)]]);
+    g.lineBetween(px(34), px(22), px(40), px(28));
+    g.lineBetween(px(14), px(22), px(8), px(28));
+    g.strokeCircle(px(24), px(16), px(3));
   });
+  // Swept-wing starfighter.
   bake(scene, TEXTURE_KEYS.striker, px(52), px(52), (g, w, a) => {
     g.lineStyle(w, PALETTE.enemyOrange, a);
-    traceStar(g, px(26), px(26), px(22), px(9));
+    strokePolygon(g, [[px(26), px(46)], [px(32), px(26)], [px(26), px(10)], [px(20), px(26)]]);
+    g.strokeTriangle(px(20), px(26), px(4), px(14), px(14), px(34));
+    g.strokeTriangle(px(32), px(26), px(48), px(14), px(38), px(34));
+    g.strokeCircle(px(26), px(22), px(5));
+    g.lineBetween(px(4), px(14), px(2), px(10));
+    g.lineBetween(px(48), px(14), px(50), px(10));
   });
+  // Reinforced armor block.
   bake(scene, TEXTURE_KEYS.tank, px(56), px(56), (g, w, a) => {
     g.lineStyle(w, PALETTE.enemyRed, a);
-    g.strokeRect(px(10), px(10), px(36), px(36));
-    g.lineBetween(px(28), px(7), px(28), px(49));
-    g.lineBetween(px(7), px(28), px(49), px(28));
+    strokeOctagon(g, px(28), px(28), px(20));
+    g.lineBetween(px(28), px(8), px(28), px(48));
+    g.lineBetween(px(8), px(28), px(48), px(28));
+    g.strokeRect(px(6), px(20), px(8), px(16));
+    g.strokeRect(px(42), px(20), px(8), px(16));
+    g.strokeCircle(px(28), px(28), px(8));
   });
+  // Bare dart, deliberately rotation-tolerant (no directional tail — see
+  // enemy-hull-redesign.md's animation-conflict note for why) — the other
+  // deliberate low-complexity exception.
   bake(scene, TEXTURE_KEYS.swarm, px(30), px(30), (g, w, a) => {
     g.lineStyle(w, PALETTE.enemyOrange, a);
     strokeDiamond(g, px(15), px(15), px(10));
+    g.strokeCircle(px(15), px(15), px(3));
   });
+  // Fortress bulkhead — reads as immovable.
   bake(scene, TEXTURE_KEYS.blocker, px(64), px(64), (g, w, a) => {
     g.lineStyle(w, PALETTE.enemyOrange, a);
-    g.strokeRect(px(9), px(9), px(46), px(46));
-    strokeDiamond(g, px(32), px(32), px(22));
+    strokeHexagon(g, px(32), px(32), px(26));
+    strokeDiamond(g, px(32), px(32), px(16));
+    g.strokeCircle(px(14), px(20), px(2.5));
+    g.strokeCircle(px(50), px(20), px(2.5));
+    g.strokeCircle(px(14), px(44), px(2.5));
+    g.strokeCircle(px(50), px(44), px(2.5));
+    traceChevronDown(g, px(32), px(14), px(10));
   });
+  buildEnemyTexturesTier2(scene);
+}
+
+/** Second half of the hand-drawn hull roster — split from buildEnemyTextures purely
+ * to stay under the function line-count limit; same conventions apply throughout
+ * (see that function's own doc comment). */
+function buildEnemyTexturesTier2(scene: Phaser.Scene): void {
+  // Orbital sentinel — inner ring rotates at runtime (regen "tell", see
+  // drawEnemyHullAnim).
   bake(scene, TEXTURE_KEYS.guardian, px(52), px(52), (g, w, a) => {
     g.lineStyle(w, PALETTE.shieldBlue, a);
     g.strokeCircle(px(26), px(26), px(20));
     g.strokeCircle(px(26), px(26), px(9));
     g.lineBetween(px(26), px(6), px(26), px(46));
     g.lineBetween(px(6), px(26), px(46), px(26));
+    g.lineBetween(px(26 + 6), px(26 - 6), px(26 + 13), px(26 - 13));
+    g.lineBetween(px(26 - 6), px(26 - 6), px(26 - 13), px(26 - 13));
+    g.lineBetween(px(26 + 6), px(26 + 6), px(26 + 13), px(26 + 13));
+    g.lineBetween(px(26 - 6), px(26 + 6), px(26 - 13), px(26 + 13));
   });
+  // Training-dummy target frame — distinct from GUARDIAN, t1's disposable drone.
+  bake(scene, TEXTURE_KEYS.sentinel, px(52), px(52), (g, w, a) => {
+    g.lineStyle(w, PALETTE.shieldBlue, a);
+    strokeHexagon(g, px(26), px(26), px(20));
+    g.lineBetween(px(26), px(10), px(26), px(42));
+    g.lineBetween(px(10), px(26), px(42), px(26));
+    g.strokeCircle(px(26), px(11), px(2));
+    g.strokeCircle(px(26), px(41), px(2));
+    g.strokeCircle(px(11), px(26), px(2));
+    g.strokeCircle(px(41), px(26), px(2));
+  });
+  // Gun emplacement — barrels recoil on fire at runtime (see drawEnemyHullAnim).
   bake(scene, TEXTURE_KEYS.turret, px(60), px(60), (g, w, a) => {
     g.lineStyle(w, 0xcc8800, a);
-    g.strokeRect(px(12), px(24), px(36), px(27));
-    g.lineBetween(px(30), px(3), px(30), px(24));
-    g.lineBetween(px(21), px(12), px(39), px(12));
-    g.strokeCircle(px(30), px(34), px(8));
+    strokePolygon(g, [[px(18), px(58)], [px(42), px(58)], [px(48), px(38)], [px(12), px(38)]]);
+    g.strokeCircle(px(30), px(34), px(10));
+    g.lineBetween(px(24), px(34), px(24), px(10));
+    g.lineBetween(px(21), px(10), px(27), px(10));
+    g.lineBetween(px(36), px(34), px(36), px(10));
+    g.lineBetween(px(33), px(10), px(39), px(10));
+    g.lineBetween(px(12), px(38), px(4), px(48));
+    g.lineBetween(px(48), px(38), px(56), px(48));
   });
+  // Spiked warhead — core brightens with proximity at runtime (see drawEnemyHullAnim).
   bake(scene, TEXTURE_KEYS.kamikaze, px(40), px(40), (g, w, a) => {
     g.lineStyle(w, 0xff2255, a);
     traceStar(g, px(20), px(20), px(17), px(7));
     g.strokeCircle(px(20), px(20), px(5));
+    g.lineBetween(px(20), px(3), px(15), px(9));
+    g.lineBetween(px(20), px(3), px(25), px(9));
   });
   // Booster (fable-fun-review-followup.md Item 7): a core ring feeding two forward
   // chevrons — "forward" meaning toward the ship (enemies move top→bottom down the
   // lane, so distance-toward-0 is *down*), matching its actual mechanic of buffing
-  // whichever enemy is nearest-ahead of it (combat.ts's regenerateEnemies). Previously
-  // had no entry here at all, so it silently fell back to the fodder texture — a
-  // buff-support unit rendering identically to weak filler enemies.
+  // whichever enemy is nearest-ahead of it (combat.ts's regenerateEnemies). Housed in
+  // a support-drone frame with antenna struts; chevrons flow downward at runtime (see
+  // drawEnemyHullAnim).
   bake(scene, TEXTURE_KEYS.booster, px(52), px(52), (g, w, a) => {
     g.lineStyle(w, PALETTE.generatorAmber, a);
+    strokeHexagon(g, px(26), px(28), px(22));
     g.strokeCircle(px(26), px(16), px(11));
     traceChevronDown(g, px(26), px(32), px(11));
     traceChevronDown(g, px(26), px(42), px(11));
+    g.lineBetween(px(18), px(8), px(14), px(3));
+    g.lineBetween(px(34), px(8), px(38), px(3));
   });
+  // Layered dreadnought — the densest hull in the game, matching its role. Outer
+  // ring/pincer wings pulse faster during the boss's stall phase at runtime (see
+  // drawEnemyHullAnim), tying into the existing stall-only anchor-ring overlay.
   bake(scene, TEXTURE_KEYS.boss, px(96), px(96), (g, w, a) => {
     g.lineStyle(w, PALETTE.enemyRed, a);
     strokeDiamond(g, px(48), px(48), px(40));
     g.strokeCircle(px(48), px(48), px(22));
+    g.strokeCircle(px(48), px(48), px(31));
     g.lineBetween(px(48), px(27), px(48), px(69));
     g.lineBetween(px(27), px(48), px(69), px(48));
     g.lineBetween(px(48), px(8), px(48), px(3));
     g.lineBetween(px(48), px(88), px(48), px(93));
     g.lineBetween(px(8), px(48), px(3), px(48));
     g.lineBetween(px(88), px(48), px(93), px(48));
+    g.strokeTriangle(px(8), px(48), px(20), px(30), px(20), px(66));
+    g.strokeTriangle(px(88), px(48), px(76), px(30), px(76), px(66));
+    g.lineBetween(px(38), px(20), px(34), px(28));
+    g.lineBetween(px(58), px(20), px(62), px(28));
+    g.lineBetween(px(38), px(76), px(34), px(68));
+    g.lineBetween(px(58), px(76), px(62), px(68));
+  });
+  // Riot-shield wall unit — a wide, flattened hull reading as "a wall," not a fighter.
+  // Carries a real SHIELD module (data/missions.ts's BREACHER_MODULES) — the two
+  // small emitter nodes echo that structurally, distinct from the runtime shield-ring
+  // overlay (which stays the live, capacity-aware readout).
+  bake(scene, TEXTURE_KEYS.breacher, px(48), px(56), (g, w, a) => {
+    g.lineStyle(w, PALETTE.enemyRed, a);
+    strokePolygon(g, [[px(8), px(32)], [px(16), px(18)], [px(32), px(18)], [px(40), px(32)], [px(32), px(46)], [px(16), px(46)]]);
+    g.lineBetween(px(8), px(32), px(2), px(38));
+    g.lineBetween(px(40), px(32), px(46), px(38));
+    g.strokeRect(px(21), px(44), px(6), px(8));
+    g.strokeCircle(px(14), px(32), px(2.5));
+    g.strokeCircle(px(34), px(32), px(2.5));
+    g.lineBetween(px(16), px(22), px(16), px(42));
+    g.lineBetween(px(32), px(22), px(32), px(42));
+  });
+  // Same shield-wall hull as BREACHER, visibly escalated: two rear stub-cannons baked
+  // in (echoing its real rear weapon, data/missions.ts's BREACHER_GUNNER) in addition
+  // to the runtime rear-mount overlay — reads as "the same drone, now armed further,"
+  // not an unrelated new shape.
+  bake(scene, TEXTURE_KEYS.breacherGunner, px(48), px(56), (g, w, a) => {
+    g.lineStyle(w, PALETTE.enemyRed, a);
+    strokePolygon(g, [[px(8), px(32)], [px(16), px(18)], [px(32), px(18)], [px(40), px(32)], [px(32), px(46)], [px(16), px(46)]]);
+    g.lineBetween(px(8), px(32), px(2), px(38));
+    g.lineBetween(px(40), px(32), px(46), px(38));
+    g.strokeRect(px(21), px(44), px(6), px(8));
+    g.strokeCircle(px(14), px(32), px(2.5));
+    g.strokeCircle(px(34), px(32), px(2.5));
+    g.lineBetween(px(16), px(22), px(16), px(42));
+    g.lineBetween(px(32), px(22), px(32), px(42));
+    g.strokeRect(px(10), px(4), px(5), px(10));
+    g.strokeRect(px(33), px(4), px(5), px(10));
   });
 }
 
@@ -324,6 +455,39 @@ function buildProjectileTextures(scene: Phaser.Scene): void {
     g.strokeCircle(px(26), px(26), px(22));
     g.lineStyle(w * 0.5, WEAPON_PALETTE.nova2, a * 0.4);
     g.strokeCircle(px(26), px(26), px(14));
+  });
+}
+
+/**
+ * Enemy bolts — one per EnemyWeaponKind (docs/plans/visual-language-audit.md,
+ * Fable's decision: "a mount now visibly shaped per weaponKind fires a bolt that
+ * forgets what fired it"). Baked in white; CombatScene.ts's spawnEnemyBolt/
+ * spawnEnemyRearBolt apply the crit/miss/normal tint at runtime the same way it
+ * always colored the old plain rects — the shape is new, the outcome-color logic
+ * isn't. Shape echoes the matching gun mount (drawEnemyGunMountShape): stinger a
+ * thin sharp needle, battery a chunky rounded slug, lance a long thin spike.
+ */
+function fillPolygon(g: Phaser.GameObjects.Graphics, points: [number, number][]): void {
+  g.beginPath();
+  points.forEach(([x, y], i) => {
+    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+  });
+  g.closePath();
+  g.fillPath();
+}
+
+function buildEnemyBoltTextures(scene: Phaser.Scene): void {
+  bake(scene, TEXTURE_KEYS.enemyBoltStinger, px(10), px(24), (g, w, a) => {
+    g.fillStyle(0xffffff, a * 0.55);
+    fillPolygon(g, [[px(5), px(1)], [px(8), px(12)], [px(5), px(23)], [px(2), px(12)]]);
+  });
+  bake(scene, TEXTURE_KEYS.enemyBoltBattery, px(14), px(20), (g, w, a) => {
+    g.fillStyle(0xffffff, a * 0.55);
+    g.fillRoundedRect(px(2), px(2), px(10), px(16), px(3));
+  });
+  bake(scene, TEXTURE_KEYS.enemyBoltLance, px(8), px(30), (g, w, a) => {
+    g.fillStyle(0xffffff, a * 0.55);
+    fillPolygon(g, [[px(4), px(0)], [px(6), px(15)], [px(4), px(30)], [px(2), px(15)]]);
   });
 }
 
@@ -416,6 +580,17 @@ export function sideBoltTextureKey(sideWeaponId: string): string {
   }
 }
 
+/**
+ * Front weapon icons (docs/plans/visual-language-audit.md — Fable's #2 priority:
+ * "the one icon tier every player owns and looks at most, yet the plainest").
+ * Redesigned to match the richer rear/side icon tiers' density (6-9 primitives) and,
+ * where the weapon's own in-flight bolt has a distinct shape (buildProjectileTextures),
+ * to echo it — pulse's twin barrels get an energy-node accent, ion's icon becomes the
+ * glowing orb its bolt actually is (the old version was a beam+rect, mismatched with
+ * its own circular projectile), nova's icon gains the second ring its own shockwave
+ * bolt has. `y2010` is untouched — deliberately unpolished by design (the Easter
+ * egg's own joke), not a gap.
+ */
 function buildWeaponIconTextures(scene: Phaser.Scene): void {
   bake(scene, TEXTURE_KEYS.iconPulse1, px(24), px(32), (g, w, a) => {
     g.lineStyle(w, WEAPON_PALETTE.pulse1, a);
@@ -423,6 +598,10 @@ function buildWeaponIconTextures(scene: Phaser.Scene): void {
     g.lineBetween(px(5), px(6), px(9), px(6));
     g.lineBetween(px(17), px(28), px(17), px(6));
     g.lineBetween(px(15), px(6), px(19), px(6));
+    g.lineBetween(px(7), px(20), px(17), px(20));
+    g.strokeRect(px(9), px(25), px(6), px(4));
+    strokeDiamond(g, px(7), px(10), px(2));
+    strokeDiamond(g, px(17), px(10), px(2));
   });
   bake(scene, TEXTURE_KEYS.iconPulse2, px(24), px(32), (g, w, a) => {
     g.lineStyle(w, WEAPON_PALETTE.pulse2, a);
@@ -430,13 +609,24 @@ function buildWeaponIconTextures(scene: Phaser.Scene): void {
     g.lineBetween(px(4), px(4), px(10), px(4));
     g.lineBetween(px(17), px(28), px(17), px(4));
     g.lineBetween(px(14), px(4), px(20), px(4));
+    g.lineBetween(px(7), px(18), px(17), px(18));
+    g.strokeRect(px(8), px(24), px(8), px(5));
+    strokeDiamond(g, px(7), px(9), px(2.5));
+    strokeDiamond(g, px(17), px(9), px(2.5));
   });
+  // The icon now shows the glowing orb the ion bolt actually is (laserIon,
+  // buildProjectileTextures) instead of a beam+rect that matched neither.
   bake(scene, TEXTURE_KEYS.iconIon, px(24), px(32), (g, w, a) => {
-    g.lineStyle(w * 1.5, WEAPON_PALETTE.ion, a);
-    g.lineBetween(px(12), px(28), px(12), px(4));
-    g.lineBetween(px(8), px(4), px(16), px(4));
+    g.fillStyle(WEAPON_PALETTE.ion, a * 0.5);
+    g.fillCircle(px(12), px(11), px(6));
     g.lineStyle(w, WEAPON_PALETTE.ion, a);
-    g.strokeRect(px(9), px(14), px(6), px(10));
+    g.strokeCircle(px(12), px(11), px(6));
+    g.lineBetween(px(12), px(2), px(12), px(4));
+    g.lineBetween(px(12), px(18), px(12), px(20));
+    g.lineBetween(px(3), px(11), px(5), px(11));
+    g.lineBetween(px(19), px(11), px(21), px(11));
+    g.lineBetween(px(12), px(20), px(12), px(28));
+    strokeDiamond(g, px(12), px(28), px(2.5));
   });
   bake(scene, TEXTURE_KEYS.iconScatter1, px(28), px(32), (g, w, a) => {
     g.lineStyle(w, WEAPON_PALETTE.scatter1, a);
@@ -446,6 +636,11 @@ function buildWeaponIconTextures(scene: Phaser.Scene): void {
     g.lineBetween(px(3), px(8), px(7), px(8));
     g.lineBetween(px(21), px(28), px(23), px(8));
     g.lineBetween(px(21), px(8), px(25), px(8));
+    g.lineBetween(px(6), px(11), px(22), px(11));
+    g.fillStyle(WEAPON_PALETTE.scatter1, a);
+    g.fillCircle(px(14), px(6), px(1.4));
+    g.fillCircle(px(5), px(8), px(1.2));
+    g.fillCircle(px(23), px(8), px(1.2));
   });
   bake(scene, TEXTURE_KEYS.iconScatter2, px(28), px(32), (g, w, a) => {
     g.lineStyle(w, WEAPON_PALETTE.scatter2, a);
@@ -455,19 +650,33 @@ function buildWeaponIconTextures(scene: Phaser.Scene): void {
     g.lineBetween(px(1), px(7), px(5), px(7));
     g.lineBetween(px(21), px(28), px(25), px(7));
     g.lineBetween(px(23), px(7), px(27), px(7));
+    g.lineBetween(px(4), px(10), px(24), px(10));
+    g.fillStyle(WEAPON_PALETTE.scatter2, a);
+    g.fillCircle(px(14), px(5), px(1.6));
+    g.fillCircle(px(3), px(7), px(1.4));
+    g.fillCircle(px(25), px(7), px(1.4));
   });
+  // Gains the second ring the real nova bolt has (laserNova1/2, buildProjectileTextures
+  // already draws a double-ring shockwave) plus burst ticks around it.
   bake(scene, TEXTURE_KEYS.iconNova1, px(28), px(32), (g, w, a) => {
     g.lineStyle(w, WEAPON_PALETTE.nova1, a);
     g.strokeCircle(px(14), px(20), px(8));
+    g.strokeCircle(px(14), px(20), px(4.5));
     g.lineBetween(px(14), px(12), px(14), px(4));
+    g.lineBetween(px(14), px(9), px(19), px(6));
+    g.lineBetween(px(14), px(9), px(9), px(6));
   });
   bake(scene, TEXTURE_KEYS.iconNova2, px(28), px(32), (g, w, a) => {
     g.lineStyle(w, WEAPON_PALETTE.nova2, a);
     g.strokeCircle(px(14), px(20), px(10));
+    g.strokeCircle(px(14), px(20), px(5.5));
     g.lineBetween(px(14), px(10), px(14), px(2));
     g.lineBetween(px(6), px(14), px(22), px(14));
+    g.lineBetween(px(14), px(8), px(20), px(4));
+    g.lineBetween(px(14), px(8), px(8), px(4));
   });
   // The old zigzag, shrunk to icon size — the shop row's own little nostalgia wink.
+  // Deliberately left plain (see buildProjectileTextures's own comment on laserY2010).
   bake(scene, TEXTURE_KEYS.iconY2010, px(24), px(32), (g, w, a) => {
     g.lineStyle(w, WEAPON_PALETTE.y2010, a);
     traceZigzag(g, [[12,3],[5,13],[15,17],[6,27],[15,29]]);
@@ -788,6 +997,39 @@ function strokeDiamond(
   g.lineTo(cx - radius, cy);
   g.closePath();
   g.strokePath();
+}
+
+/** Strokes a closed polygon through already-scaled (px()) coordinate pairs — the
+ * general building block behind every angular enemy hull below (hexagons,
+ * octagons, kite/dart fuselages) that the existing strokeDiamond/traceStar
+ * shape-specific helpers don't cover. */
+function strokePolygon(g: Phaser.GameObjects.Graphics, points: [number, number][]): void {
+  g.beginPath();
+  points.forEach(([x, y], i) => {
+    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+  });
+  g.closePath();
+  g.strokePath();
+}
+
+/** Regular hexagon, point-up. Args already in baked-canvas pixel space. */
+function strokeHexagon(g: Phaser.GameObjects.Graphics, cx: number, cy: number, r: number): void {
+  const points: [number, number][] = [];
+  for (let i = 0; i < 6; i++) {
+    const angle = (Math.PI / 3) * i - Math.PI / 2;
+    points.push([cx + Math.cos(angle) * r, cy + Math.sin(angle) * r]);
+  }
+  strokePolygon(g, points);
+}
+
+/** Regular octagon. Args already in baked-canvas pixel space. */
+function strokeOctagon(g: Phaser.GameObjects.Graphics, cx: number, cy: number, r: number): void {
+  const points: [number, number][] = [];
+  for (let i = 0; i < 8; i++) {
+    const angle = (Math.PI / 4) * i - Math.PI / 2;
+    points.push([cx + Math.cos(angle) * r, cy + Math.sin(angle) * r]);
+  }
+  strokePolygon(g, points);
 }
 
 /** Open "v" chevron pointing down — used by the booster texture to signal "pushes

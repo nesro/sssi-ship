@@ -56,6 +56,18 @@ class SoundManager {
   /** Bind to the game-level sound manager. Safe to call from every scene's create(). */
   attach(sound: Phaser.Sound.BaseSoundManager): void {
     this.sound = sound;
+    // Phaser's own pauseOnBlur (default true) is a SEPARATE mechanism from the
+    // suspend()/resume() mute pair below — on tab blur it PAUSES every currently-
+    // playing sound (freezing playback position), then RESUMES all of them on
+    // focus, each continuing from wherever it was paused. That resume is itself a
+    // burst: any sfx that happened to be mid-flight the instant the tab backgrounded
+    // (easy during active combat — several laser/ding one-shots overlapping) all
+    // become audible again at the exact same instant on refocus, on top of whatever
+    // our own mute-based fix does. Disabling it here leaves suspend()/resume() as
+    // the only visibility-driven audio behavior: sounds keep playing (silently,
+    // muted) to their own short natural completion instead of freezing and later
+    // resuming in a batch.
+    sound.pauseOnBlur = false;
     this.applyMusicMute();
   }
 

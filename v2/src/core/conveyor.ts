@@ -1,17 +1,18 @@
 import { BOSS_APPROACH_TICKS, BOSS_STALL_TICKS, COLLISION_DAMAGE_MULTIPLIER, LANE_LENGTH, SHIELD_BURST_RETURN } from './constants';
-import { damageShip, removeDeadEnemies } from './combat';
+import { damageEnemy, damageShip, removeDeadEnemies } from './combat';
 import type { EffectiveStats } from './stats';
 import type { CoreState, EnemyState } from './types';
 
 /**
- * A boss alternates APPROACH (moves at its normal `speed`) and STALL (speed 0) in a
- * repeating cycle keyed off `aliveTicks` — see the BOSS_APPROACH_TICKS/BOSS_STALL_TICKS
- * comment in constants.ts for why (F3: stops the boss from just walking into the player
- * and winning via collision before weapon DPS gets a real shot at it). Every other
- * enemy kind moves at its own `speed`, unchanged.
+ * A `motorKind: 'stall-cycle'` enemy (the boss, and any future modular enemy that
+ * opts into the same MOTOR kind) alternates APPROACH (moves at its normal `speed`)
+ * and STALL (speed 0) in a repeating cycle keyed off `aliveTicks` — see the
+ * BOSS_APPROACH_TICKS/BOSS_STALL_TICKS comment in constants.ts for why (F3: stops it
+ * from just walking into the player and winning via collision before weapon DPS gets
+ * a real shot at it). Every other motor kind moves at its own `speed`, unchanged.
  */
 function effectiveSpeed(enemy: EnemyState): number {
-  if (enemy.kind !== 'boss') return enemy.speed;
+  if (enemy.motorKind !== 'stall-cycle') return enemy.speed;
   const cycleLength = BOSS_APPROACH_TICKS + BOSS_STALL_TICKS;
   const cyclePosition = enemy.aliveTicks % cycleLength;
   return cyclePosition < BOSS_APPROACH_TICKS ? enemy.speed : 0;
@@ -64,7 +65,10 @@ export function advanceEnemies(state: CoreState, stats: EffectiveStats): void {
       ? [nearestOnScreenSurvivor(survivors)].filter((e): e is EnemyState => e !== null)
       : survivors.filter((s) => s.distance <= LANE_LENGTH);
     for (const s of targets) {
-      s.hp -= totalBurst;
+      // Routed through damageEnemy like every other damage source — an enemy's own
+      // SHIELD module (if any) absorbs burst splash the same as weapon fire, no
+      // special-cased exception for this source specifically.
+      damageEnemy(s, totalBurst);
       // Lets the view tell this apart from weapon damage (CombatScene.ts's detectHits) —
       // a plain hp-before/after comparison can't distinguish the two on its own.
       state.pendingVisualEvents.push({ kind: 'shield-burst', enemyId: s.id });

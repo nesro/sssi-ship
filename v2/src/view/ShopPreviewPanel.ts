@@ -337,7 +337,7 @@ export class ShopPreviewPanel {
   }
 
   private renderGenerator(): void {
-    drawGeneratorCore(this.generatorGfx, this.shipX, this.shipY, this.simStep?.energyFraction ?? 0);
+    drawGeneratorCore(this.generatorGfx, this.shipX, this.shipY, this.simStep?.energyFraction ?? 0, this.phase);
   }
 
   private spawnRearBolt(): void {

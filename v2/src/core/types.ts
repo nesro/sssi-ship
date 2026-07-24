@@ -252,6 +252,63 @@ export interface AbilityOffer {
   abilityIds: [string, string, string];
 }
 
+// ---------- Enemy modules (docs/plans/modular-enemies.md) ----------
+//
+// Four slots mirroring the player ship's own WEAPON/SHIELD/GENERATOR/MOTOR systems.
+// `composeEnemy` (core/enemyCompose.ts) folds concrete module objects into a flat
+// `EnemySpec` — the shape every enemy has always had, unchanged for hand-written
+// consts that never call composeEnemy at all. The four `*Kind` fields on
+// EnemySpec/EnemyState below carry module identity separately from the display
+// `kind` string specifically so behavior dispatch (generator regen target, motor
+// movement pattern) never has to special-case a flavor name again.
+
+export type EnemyWeaponKind = 'stinger' | 'battery' | 'lance';
+
+export interface EnemyWeaponModule {
+  kind: EnemyWeaponKind;
+  shotDamage: number;
+  ticksBetweenShots: number;
+  critChance: number;
+  missChance: number;
+  critMult: number;
+}
+
+export type EnemyShieldKind = 'aegis' | 'barrier' | 'ward';
+
+/** An enemy's shield is a fixed-capacity absorb buffer, not a ported version of the
+ * player's own generator→shield pulse/brownout resource loop — see the plan doc for
+ * why porting that per-enemy at 15 concurrent instances would be a second resource
+ * system, not a simple generalization. */
+export interface EnemyShieldModule {
+  kind: EnemyShieldKind;
+  capacity: number;
+}
+
+export type EnemyGeneratorKind = 'none' | 'self-regen' | 'ally-regen' | 'shield-regen';
+
+/** `regenPerTick`'s unit depends on `kind`: hp/tick for self-regen (heals its own hp)
+ * and ally-regen (feeds the nearest enemy ahead of it, combat.ts's regenerateEnemies —
+ * the booster mechanic, generalized), or shield-buffer/tick for shield-regen (only
+ * has an effect paired with a SHIELD module — a shield-less enemy has no buffer to
+ * regenerate). `none` never regenerates anything. */
+export interface EnemyGeneratorModule {
+  kind: EnemyGeneratorKind;
+  regenPerTick: number;
+}
+
+export type EnemyMotorKind = 'steady' | 'stall-cycle' | 'rush';
+
+/** `stall-cycle` alternates approach/stall using BOSS_APPROACH_TICKS/BOSS_STALL_TICKS
+ * (conveyor.ts's effectiveSpeed) — the boss mechanic, generalized to any enemy that
+ * opts in, not inferred from `isBoss` or the display `kind`. `steady` and `rush` both
+ * move at `speed` unconditionally; `rush` exists as a distinct catalog entry (a fast
+ * `speed` value) rather than a distinct behavior, matching how WEAPON/SHIELD kinds
+ * also don't need dispatch code — most module variety is numeric, not behavioral. */
+export interface EnemyMotorModule {
+  kind: EnemyMotorKind;
+  speed: number;
+}
+
 // ---------- Mission data ----------
 
 export interface EnemySpec {
@@ -261,11 +318,13 @@ export interface EnemySpec {
   speed: number;
   shotDamage: number;
   ticksBetweenShots: number;
-  /** Blockers pause the wave timeline until killed — the DPS check (V2_HANDOFF.md §3.1). */
+  /** Blockers pause the wave timeline until killed — the DPS check (V2_HANDOFF.md §3.1).
+   * Independent of `motorKind` — a designer can pair blocking with any motor pattern. */
   blocksConveyor: boolean;
   coinReward: number;
   isBoss?: boolean;
-  /** HP restored per tick; regenerates up to maxHp. Used by tutorial guardian. */
+  /** HP restored per tick; regenerates up to maxHp. Used by tutorial guardian.
+   * Meaning depends on `generatorKind` when set — see EnemyGeneratorModule. */
   regenPerTick?: number;
   /** 0–1 probability of dealing critMult × damage on a shot. */
   critChance: number;
@@ -273,6 +332,37 @@ export interface EnemySpec {
   missChance: number;
   /** Damage multiplier on a critical hit. */
   critMult: number;
+  /** Module identity, separate from the display `kind` string — undefined on
+   * hand-written consts that predate the module system; timeline.ts's spawnEnemy
+   * defaults each to its behaviorally-inert value ('none'/'steady'/null). */
+  weaponKind?: EnemyWeaponKind;
+  shieldKind?: EnemyShieldKind | null;
+  generatorKind?: EnemyGeneratorKind;
+  motorKind?: EnemyMotorKind;
+  /** Max shield absorb-buffer; 0 (or unset) means no SHIELD module. */
+  shieldCapacity?: number;
+  /** Scales this blocksConveyor enemy's support-call bonus payout with how long it
+   * was held alive (combat.ts's bonusCallsForHoldCharge) instead of a flat 1. A named
+   * trait, not inferred from `kind === 'blocker'` — set explicitly per spec so a new
+   * modular "tank" role can opt in without silently changing turret/boss/guardian
+   * payouts that were never meant to scale this way. */
+  holdBonusTiered?: boolean;
+  /** Shown above the HP number (CombatScene.ts's updateEnemyHpLabel) — a real identity
+   * distinct from `kind` (the texture/behavior-family lookup). Undefined on specs that
+   * predate this field; timeline.ts's spawnEnemy defaults it to the uppercased `kind`. */
+  displayName?: string;
+  /** A second, independent gun mounted at the rear — real extra DPS, not a cosmetic
+   * variant of the front shot (combat.ts's fireEnemyRearWeapons runs as its own tick
+   * phase, mirroring fireEnemyWeapons exactly). `null`/unset means no rear weapon —
+   * zero behavior change for every spec that predates this field. Rendered from a
+   * rear mount with a curved inbound trajectory (CombatScene.ts's spawnEnemyRearBolt),
+   * distinct from the front weapon's straight drop. */
+  rearWeaponKind?: EnemyWeaponKind | null;
+  rearShotDamage?: number;
+  rearTicksBetweenShots?: number;
+  rearCritChance?: number;
+  rearMissChance?: number;
+  rearCritMult?: number;
 }
 
 export interface SpawnEvent {
@@ -411,16 +501,50 @@ export interface EnemyState {
   missChance: number;
   critMult: number;
   /** Ticks this enemy has spent alive on the conveyor while at least one other enemy
-   * was also present (Item 6). Only accrues for `blocksConveyor` enemies; only a
-   * `blocker`'s kill handler reads it to scale its bonus support-call payout. */
+   * was also present (Item 6). Only accrues for `blocksConveyor` enemies; only read by
+   * enemies with `holdBonusTiered` set to scale their bonus support-call payout. */
   holdChargeTicks: number;
-  /** Ticks this enemy has been alive on the conveyor, unconditionally (F3). Only a
-   * `boss` reads this — to drive its approach/stall cycle (see conveyor.ts's
-   * `effectiveSpeed`) — but it's simplest to track for every enemy uniformly. */
+  /** Ticks this enemy has been alive on the conveyor, unconditionally (F3). Only read
+   * by `motorKind === 'stall-cycle'` enemies to drive their approach/stall cycle (see
+   * conveyor.ts's `effectiveSpeed`) — but it's simplest to track for every enemy
+   * uniformly. */
   aliveTicks: number;
+  /** Module identity, mirrored from EnemySpec at spawn — see EnemySpec's own fields
+   * for what each governs. Always set (defaulted by timeline.ts's spawnEnemy), unlike
+   * the optional spec fields hand-written consts may omit. */
+  weaponKind: EnemyWeaponKind | null;
+  shieldKind: EnemyShieldKind | null;
+  generatorKind: EnemyGeneratorKind;
+  motorKind: EnemyMotorKind;
+  holdBonusTiered: boolean;
+  /** Current shield absorb-buffer (combat.ts's damageEnemy drains this before hp); 0 if
+   * no SHIELD module. Mutates per tick (collision/weapon/shield-regen) — included in
+   * hashCoreState's per-enemy hash alongside hp. */
+  shield: number;
+  /** Max shield buffer; immutable post-spawn — safe to leave out of hashCoreState,
+   * same reasoning as `maxHp`. */
+  shieldCapacity: number;
+  /** Mirrored from EnemySpec at spawn (defaulted if unset) — see EnemySpec's own
+   * comment. Immutable post-spawn, view-only: never included in hashCoreState. */
+  displayName: string;
+  /** Rear-mounted gun — see EnemySpec.rearWeaponKind's own comment. `null` means no
+   * rear weapon (the default for every spec that predates this field, zero behavior
+   * change). Mirrors the front weapon's own fields exactly, one slot over. */
+  rearWeaponKind: EnemyWeaponKind | null;
+  rearShotDamage: number;
+  rearTicksBetweenShots: number;
+  rearCritChance: number;
+  rearMissChance: number;
+  rearCritMult: number;
+  /** Counts down independently of the front `shootTimer` — see fireEnemyRearWeapons. */
+  rearShootTimer: number;
 }
 
-export type ShotEventKind = 'player-crit' | 'player-miss' | 'enemy-crit' | 'enemy-miss' | 'enemy-killed' | 'shield-burst';
+export type ShotEventKind =
+  | 'player-crit' | 'player-miss'
+  | 'enemy-crit' | 'enemy-miss'
+  | 'enemy-rear-crit' | 'enemy-rear-miss'
+  | 'enemy-killed' | 'shield-burst';
 
 export interface ShotEvent {
   kind: ShotEventKind;

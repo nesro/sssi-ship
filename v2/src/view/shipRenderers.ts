@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { BROWNOUT_THRESHOLD } from '../core/constants';
 import { px, SHIP_GUN_X_OFFSET, SHIP_GUN_Y_OFFSET } from './layout';
 import { sideWeaponKindColor, weaponKindColor } from './textures';
 
@@ -165,47 +166,67 @@ export function renderThrusterAssembly(
   drawMotorHousing(motorGfx, shipCenterX, shipCenterY, motorLevel, kindColor);
 }
 
-/** Draws the weapon-kind indicator at the gun hardpoints. Clears `g` before drawing. */
+/** Draws the weapon-kind indicator at the gun hardpoints. Clears `g` before drawing.
+ * `recoil` (0–1, decaying from 1 on each real shot) kicks the mount toward the ship
+ * and brightens it briefly — the same fire-tell the enemy roster's TURRET already has. */
 export function renderGunIndicator(
   g: Phaser.GameObjects.Graphics,
   weapon: { kind: string; id: string } | null,
   cx: number, cy: number,
+  recoil = 0,
 ): void {
   g.clear();
   if (weapon === null) return;
   const color = weaponKindColor(weapon.kind, weapon.id);
-  g.lineStyle(px(1.5), color, 0.7);
+  const ky = cy + px(recoil * 3);
+  const alpha = 0.7 + recoil * 0.25;
+  g.lineStyle(px(1.5), color, alpha);
   if (weapon.kind === 'ion') {
-    g.strokeCircle(cx, cy - px(2), px(3));
+    g.strokeCircle(cx, ky - px(2), px(3));
   } else if (weapon.kind === 'scatter') {
-    g.lineBetween(cx - px(10), cy + px(2), cx - px(13), cy - px(6));
-    g.lineBetween(cx, cy, cx, cy - px(8));
-    g.lineBetween(cx + px(10), cy + px(2), cx + px(13), cy - px(6));
+    g.lineBetween(cx - px(10), ky + px(2), cx - px(13), ky - px(6));
+    g.lineBetween(cx, ky, cx, ky - px(8));
+    g.lineBetween(cx + px(10), ky + px(2), cx + px(13), ky - px(6));
   } else if (weapon.kind === 'nova') {
-    g.strokeCircle(cx, cy + px(4), px(8));
+    g.strokeCircle(cx, ky + px(4), px(8));
   } else {
-    g.fillStyle(color, 0.6);
-    g.fillCircle(cx - px(SHIP_GUN_X_OFFSET), cy, px(2));
-    g.fillCircle(cx + px(SHIP_GUN_X_OFFSET), cy, px(2));
+    g.fillStyle(color, 0.6 + recoil * 0.3);
+    g.fillCircle(cx - px(SHIP_GUN_X_OFFSET), ky, px(2));
+    g.fillCircle(cx + px(SHIP_GUN_X_OFFSET), ky, px(2));
   }
 }
 
 /**
- * Draws a pulsing amber energy-core glow at the ship's center — the generator indicator.
- * energyFrac: 0–1 (current energy / capacity). Clears `g` before drawing.
+ * Draws the generator indicator at the ship's center: a fixed core with two ticks
+ * orbiting it, rotation speed scaled by energyFrac — a stalled generator visibly
+ * slows rather than just dimming, mirroring GUARDIAN's orbiting-ring tell instead of
+ * an idle alpha pulse. Recolors to the brownout hue below BROWNOUT_THRESHOLD, the
+ * same convention the side-panel energy bar already uses. Clears `g` before drawing.
+ * energyFrac: 0–1 (current energy / capacity). phase: a continuously-advancing clock
+ * shared with the rest of the scene's animation (e.g. thrusterPhase).
  */
 export function drawGeneratorCore(
   g: Phaser.GameObjects.Graphics,
   cx: number, cy: number,
   energyFrac: number,
+  phase: number,
 ): void {
   g.clear();
   if (energyFrac <= 0) return;
-  const alpha = 0.12 + energyFrac * 0.32;
-  g.fillStyle(0xffaa22, alpha);
-  g.fillCircle(cx, cy, px(4 + energyFrac * 2));
-  g.lineStyle(px(1), 0xffcc44, alpha * 1.2);
+  const color = energyFrac < BROWNOUT_THRESHOLD ? 0xff4400 : 0xffaa22;
+  g.fillStyle(color, 0.28);
+  g.fillCircle(cx, cy, px(4));
+  g.lineStyle(px(1), color, 0.5);
   g.strokeCircle(cx, cy, px(5));
+  const speed = 0.001 + energyFrac * 0.005;
+  const angle0 = phase * speed;
+  for (let i = 0; i < 2; i++) {
+    const angle = angle0 + i * Math.PI;
+    const tx = cx + Math.cos(angle) * px(7);
+    const ty = cy + Math.sin(angle) * px(7);
+    g.fillStyle(color, 0.85);
+    g.fillCircle(tx, ty, px(1.4));
+  }
 }
 
 const REAR_WEAPON_KIND_COLORS: Readonly<Record<string, number>> = {
@@ -216,16 +237,19 @@ const REAR_WEAPON_KIND_COLORS: Readonly<Record<string, number>> = {
   cluster: 0xffaa22,
 };
 
-/** Draws rear-weapon mount indicators on the ship's aft hull — shape varies by kind. Clears `g` before drawing. */
+/** Draws rear-weapon mount indicators on the ship's aft hull — shape varies by kind.
+ * `recoil` (0–1, decaying from 1 on each real shot) kicks the mount and brightens it
+ * briefly, mirroring the front gun's own fire-tell. Clears `g` before drawing. */
 export function drawRearWeaponIndicator(
   g: Phaser.GameObjects.Graphics,
   rearWeapon: { kind: string } | null,
   cx: number, cy: number,
+  recoil = 0,
 ): void {
   g.clear();
   if (rearWeapon === null) return;
   const color = REAR_WEAPON_KIND_COLORS[rearWeapon.kind] ?? 0xff8833;
-  const mountY = cy + px(SHIP_GUN_Y_OFFSET);
+  const mountY = cy + px(SHIP_GUN_Y_OFFSET) + px(recoil * 3);
   const lx = cx - px(SHIP_GUN_X_OFFSET);
   const rx = cx + px(SHIP_GUN_X_OFFSET);
 
@@ -275,22 +299,35 @@ export function drawRearWeaponIndicator(
   }
 }
 
+export interface SideWeaponIndicatorOpts {
+  /** 0–1, decaying from 1 on each manual shot — brightens the mount briefly on fire,
+   * the same fire-tell the front/rear guns use. */
+  recoil?: number;
+  /** 0–1, current/max charges — dims the whole mount as charges run out, so an empty
+   * mount reads visibly different from a full one, not just the HUD's own counter. */
+  chargeFrac?: number;
+}
+
 /** Draws side-weapon wing-mount indicators — shape varies by kind. Clears `g` before drawing. */
 export function drawSideWeaponIndicator(
   g: Phaser.GameObjects.Graphics,
   sideWeapon: { kind: string; id: string } | null,
   cx: number, cy: number,
+  opts: SideWeaponIndicatorOpts = {},
 ): void {
   g.clear();
   if (sideWeapon === null) return;
+  const { recoil = 0, chargeFrac = 1 } = opts;
   const color = sideWeaponKindColor(sideWeapon.kind, sideWeapon.id);
   const lx = cx - px(SIDE_WEAPON_MOUNT_X_OFFSET);
   const rx = cx + px(SIDE_WEAPON_MOUNT_X_OFFSET);
+  const dim = Math.min(1, 0.35 + chargeFrac * 0.65 + recoil * 0.3);
+  const a = (base: number): number => Math.min(1, base * dim);
 
   if (sideWeapon.kind === 'focus') {
     // Focused lens: ring + crosshair
     for (const bx of [lx, rx]) {
-      g.lineStyle(px(1.2), color, 0.85);
+      g.lineStyle(px(1.2), color, a(0.85));
       g.strokeCircle(bx, cy, px(3.5));
       g.lineBetween(bx - px(5), cy, bx + px(5), cy);
       g.lineBetween(bx, cy - px(5), bx, cy + px(5));
@@ -298,25 +335,25 @@ export function drawSideWeaponIndicator(
   } else if (sideWeapon.kind === 'flechette') {
     // Small diverging fan of darts
     for (const bx of [lx, rx]) {
-      g.lineStyle(px(1.3), color, 0.85);
+      g.lineStyle(px(1.3), color, a(0.85));
       g.lineBetween(bx, cy, bx - px(4), cy - px(4));
       g.lineBetween(bx, cy, bx, cy - px(5));
       g.lineBetween(bx, cy, bx + px(4), cy - px(4));
     }
   } else if (sideWeapon.kind === 'railgun') {
     // Long thin barrel stub pointing outward
-    g.fillStyle(color, 0.85);
+    g.fillStyle(color, a(0.85));
     g.fillRect(lx - px(6), cy - px(1.2), px(6), px(2.4));
     g.fillRect(rx, cy - px(1.2), px(6), px(2.4));
-    g.fillStyle(0xffffff, 0.6);
+    g.fillStyle(0xffffff, a(0.6));
     g.fillCircle(lx - px(6), cy, px(1.3));
     g.fillCircle(rx + px(6), cy, px(1.3));
   } else {
     // Orbital: planet ring with a small orbiting satellite dot
     for (const bx of [lx, rx]) {
-      g.lineStyle(px(1), color, 0.6);
+      g.lineStyle(px(1), color, a(0.6));
       g.strokeCircle(bx, cy, px(4.5));
-      g.fillStyle(color, 0.9);
+      g.fillStyle(color, a(0.9));
       g.fillCircle(bx, cy - px(4.5), px(1.2));
     }
   }

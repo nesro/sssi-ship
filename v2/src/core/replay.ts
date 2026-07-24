@@ -247,7 +247,8 @@ export function hashCoreState(state: CoreState): string {
     wavesClearedThisRun: state.wavesClearedThisRun,
     firedNarratorTicks: state.firedNarratorTicks,
     enemies: state.enemies.map((e) => ({
-      id: e.id, distance: e.distance, hp: e.hp, holdChargeTicks: e.holdChargeTicks, aliveTicks: e.aliveTicks,
+      id: e.id, distance: e.distance, hp: e.hp, shield: e.shield,
+      holdChargeTicks: e.holdChargeTicks, aliveTicks: e.aliveTicks,
     })),
   });
   let hash = 0x811c9dc5;
