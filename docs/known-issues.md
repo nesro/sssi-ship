@@ -335,6 +335,101 @@ actionable headlessly.**
 
 ## Resolved
 
+### Reconciled a second, independent audio-visual rework done in a parallel sandbox — landed 2026-07-25
+Tomáš had a second agent session running in a separate sandbox at the same time as this
+one, working on its own "audio-visual-rework" branch. Both sessions forked from the same
+auto-checkpoint commit and independently reworked overlapping territory — this session's
+own round 4 (above) plus this branch's earlier modular-enemies/hull-redesign work vs.
+the other branch's procedural-SFX system and its own "richer procedural visuals" pass.
+Fetched `origin/nesro/audio-visual-rework`, read its full `v2/docs/SESSION_HANDOFF.md`
+re-apply guide, and reviewed every piece against this branch's actual current code
+before touching anything (not a blind merge) — the user's own instruction was "look at
+all the changes and then incorporate it into the code IF you think they are good
+changes."
+
+**Adopted, verbatim or near-verbatim:**
+- **Procedural SFX synth engine** (`src/audio/synthVoices.ts`, `src/audio/synth.ts`) —
+  every SFX is now synthesised into Phaser's audio cache at boot instead of played from
+  a sample file, the audio counterpart to `textures.ts`'s baked-glow technique. This is
+  exactly the "generate sounds via code" idea from this session's own round 4 that was
+  investigated and *deliberately deferred* to a dedicated Fable consultation rather than
+  built inline — the other session went ahead and built it well, so there was no need
+  to redo that work.
+- **`SoundManager.ts` reworked** to match — per-weapon-kind/rear-kind/side-kind
+  detune+volume character, new `bossAppear()`/`collision()`/`select()`/`uiClick()`
+  events, `shieldPulse()` throttled (`SHIELD_SOUND_MIN_MS`) so shield recharges don't
+  drone. Preserved this session's own `pauseOnBlur = false` fix in `attach()` — the
+  other branch's version of this file had reverted it, since it forked before that fix
+  landed here.
+- Wired the new sound events into their real call sites: weapon/rear/side fire now pass
+  the actual equipped kind; `Sound.collision()` in `spawnCollisionFeedback`;
+  `Sound.bossAppear()` once per mission (new `bossAppearSounded` flag, reset in
+  `resetPerRunState`); `Sound.select()` on card pick (`CardOverlay.ts`); `Sound.uiClick()`
+  centralized in `widgets.ts`'s `addTextButton` (every button in the game, one call site).
+- **Dev soundboard + gallery** (`soundboard.html`/`dev/soundboard.ts`,
+  `gallery.html`/`dev/gallery.ts`) — standalone Vite pages for auditioning/tuning SFX
+  params live and eyeballing every baked texture in a grid. Dev-only (never in `vite
+  build`'s input), gated behind `import.meta.env.DEV` for their in-game launch buttons
+  (Settings → DEV TOOLS). Needed `tsconfig.json`'s `include` (+`"dev"`), an
+  `eslint.config.js` override for `dev/**`, and `.fallowrc.json`'s `entry` (so the
+  dev-only files count as reachable, not dead code).
+- **`tools/provision-audio.ts`** + `predev`/`prebuild`/`provision-audio` npm scripts —
+  copies the licensed music track from repo-root `sounds/` into the gitignored
+  `public/audio/` on a fresh clone, so it never 404s at boot.
+- **A real, pre-existing legal-compliance gap, found and fixed**: `docs/design/
+  11-visuals-and-audio.md` has always said the CC BY-licensed music track's attribution
+  is "required in Credits screen," but `HubScene.ts`'s `ABOUT_TEXT` never actually had
+  it — the game was shipping the track unattributed in the real UI. Fixed independent of
+  the audio-engine decision above.
+- **Small, clean, additive visual polish**, none of it conflicting with existing work:
+  `flashEnemyHit`/`flashShipHit` (brief tint-flash on hit, alongside the existing hit
+  burst/camera shake), kill-burst particles reworked from flat squares into motion
+  streaks + a white-hot spark (`combatEffects.ts`'s `tickBurstParticles`), damage-number
+  floats now pop in at 1.5x and settle to 1x (`Back.easeOut`) instead of appearing flat,
+  and a new expanding `spawnShockwave` ring on enemy kills and hull collisions (the
+  player-death version of this idea was already superseded by this session's own round-4
+  death-animation rework — not touched).
+- **A shared `src/view/starfield.ts` module** — extracted this session's own round-4
+  starfield tuning (`starTierParams`/`starTint`: tier-coherent alpha/size/speed/twinkle,
+  4-way tint split) into a reusable module, then wired it into `HubScene.ts` (replacing
+  its own much flatter all-white, no-twinkle starfield), `ResultScene.ts`, and
+  `AlphaNoticeScene.ts` (neither had a starfield at all before). `CombatScene.ts` was
+  refactored to import the same two pure helper functions instead of keeping its own
+  duplicate copies (pure extraction, no behavior change) but otherwise keeps its own
+  inline `addStarfield`/`updateStars` tied to its shared `thrusterPhase` clock —
+  deliberately not migrated to the shared module's own tick function, to avoid any risk
+  to this session's own already-verified round-4 combat starfield.
+
+**Deliberately NOT adopted** (would have been regressions, not improvements, against
+work already done in this branch):
+- **Enemy/ship texture "painter" enrichments** — the other branch's fork predates this
+  session's own hand-drawn 13-hull enemy redesign (`docs/plans/enemy-hull-redesign.md`)
+  entirely; its enemy shapes are the old simple diamonds/rects with a few extra strokes,
+  not a replacement for the current complex hulls. Confirmed via the adopted gallery
+  tool itself, screenshotted against the current 102-texture set.
+- **Enemy idle animation (universal spin + scale-pulse)** — would have reintroduced the
+  exact "continuous spin tumbles a directional hull" bug this session's own Fable review
+  already found and fixed (`addEnemyAnimTween`'s per-kind spin/wobble split). Their
+  version spins tank/blocker/striker/etc., which the redesigned hulls can't tolerate.
+- **Enemy bolt rework (3 stacked rectangle layers)** — inferior to this branch's own
+  baked-texture, distinct-shape-per-`weaponKind` bolts (`enemyBoltStinger`/`Battery`/
+  `Lance`), and a direct regression against Tomáš's own round-4 item 8 ask ("do not
+  ever use just plain rectangle as something").
+- **Generator core "richer" rework (bigger pulsing blob + white-hot center)** — still an
+  alpha/radius sine pulse under the hood, which directly contradicts Tomáš's own
+  explicit round-4 ask ("don't use pulsating circle animation, looks cheap — I like the
+  rotating circle one"), already addressed this session by reworking every enemy/player
+  generator core into the rotating-dot technique.
+
+**Verified**: same full suite as round 4 —
+`build:dry`/`lint`/`lint:comments` clean, `pnpm test` 779/779 (untouched — no core
+logic in any of this), `pnpm campaign` 100%/100%, `pnpm balance` all 7 intended
+loadouts at their documented rates (unchanged), `pnpm pacing` clean, `pnpm audit-taps`
+0 failures across 21 states, `pnpm dlx fallow` no new findings (same 4 pre-existing
+baseline items), full `pnpm screenshot` batch (77 shots) 0 failures, plus a standalone
+Playwright check of `/soundboard.html` and `/gallery.html` (no page errors, gallery
+renders all 102 current textures).
+
 ### Round 4 polish pass — landed 2026-07-24, docs/plans/round4-brief.md
 Tomáš's 8-item follow-up round after the visual-language audit: "use fable again and
 let fable write you what to do." Investigated each item against the real code

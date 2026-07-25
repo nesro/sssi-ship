@@ -34,6 +34,16 @@ export default tseslint.config(
     ...tseslint.configs.disableTypeChecked,
   },
   {
+    // dev/** are standalone, dev-only browser tools (soundboard, texture gallery) served
+    // by Vite in dev and never bundled into the shipped game. They're heavy on DOM glue,
+    // so a few type-checked rules that fight that boilerplate are relaxed here only.
+    files: ['dev/**'],
+    rules: {
+      '@typescript-eslint/no-non-null-assertion': 'off',
+      '@typescript-eslint/no-unnecessary-condition': 'off',
+    },
+  },
+  {
     // src/viewmodel/ must stay pure TypeScript — zero Phaser, zero src/view/** except
     // textureKeys.ts (pure icon-key lookups) and palette.ts (pure numeric color
     // constants, verified zero-Phaser) — so it stays testable without Phaser.

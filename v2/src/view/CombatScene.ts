@@ -30,6 +30,7 @@ import { buildGameTextures, enemyBoltTextureForWeaponKind, laserTextureForWeapon
 import { iconTextureForSideWeaponId, motorKindColorFromId, motorLevelFromId, splitWeaponId, textureForShipId } from './textureKeys';
 import { drawGeneratorCore, drawRearWeaponIndicator, drawShieldRings, drawSideWeaponIndicator, renderGunIndicator, renderThrusterAssembly, tickLaserBolts, tickMuzzleFlashes } from './shipRenderers';
 import type { LaserBolt, MuzzleFlash } from './shipRenderers';
+import { starTierParams, starTint } from './starfield';
 import { tickBurstParticles, tickFloatingTexts, tickShieldPulseRings } from './combatEffects';
 import type { BurstParticle, FloatingText, ShieldPulseRing } from './combatEffects';
 import { CombatCheats } from './CombatCheats';
@@ -114,6 +115,8 @@ const ABILITY_SLOT_COOLDOWN_FILL = 0x2a1f0a;
 
 // How fast shield hit-flash decays (full fade in ~550ms, matching v1 ShieldVisual).
 const SHIELD_FLASH_DECAY = 1.8;
+/** Minimum gap (ms) between Sound.shieldPulse() plays — see lastShieldSoundMs's own doc. */
+const SHIELD_SOUND_MIN_MS = 1400;
 /** Gun-mount recoil-kick decay rate (1/s) — a shot snaps recoil to 1, this brings it
  * back to 0 in ~150ms, quick enough to read as a kick rather than a lingering glow. */
 const GUN_RECOIL_DECAY = 6.5;
@@ -290,6 +293,14 @@ export class CombatScene extends Phaser.Scene {
   private floatingTexts: FloatingText[] = [];
   private shieldPulseRings: ShieldPulseRing[] = [];
   private shieldHitFlash = 0;
+  /** Throttles Sound.shieldPulse() — the shield can recharge multiple times in quick
+   * succession, and playing the shimmer every single time turns it into a constant
+   * drone instead of a occasional "topped up" cue. The visual ring pulse is NOT
+   * throttled by this — only the sound. */
+  private lastShieldSoundMs = -9999;
+  /** True once Sound.bossAppear() has fired for the current mission's boss — a one-shot
+   * arrival sting, not replayed every frame the boss is alive. */
+  private bossAppearSounded = false;
   /** "ABILITIES" header — shown after first ability is picked. */
   private cardsHeader!: Phaser.GameObjects.Text;
   /** Ability name + description labels — rebuilt on every new pick. */
@@ -561,6 +572,8 @@ export class CombatScene extends Phaser.Scene {
     this.cardEntries = [];
     this.abilitySlots = [];
     this.shieldHitFlash = 0;
+    this.lastShieldSoundMs = -9999;
+    this.bossAppearSounded = false;
     this.gunToggle = false;
     this.thrusterPhase = 0;
     this.targetMarkerPhase = 0;
@@ -780,7 +793,8 @@ export class CombatScene extends Phaser.Scene {
    * collision shield-burst (caller passes shieldBlue, see detectHits) alike;
    * conveyor.ts's advanceEnemies applies the shield-burst to survivors' `.hp` the same
    * way core/combat.ts's weapon-fire path does, so only the color is caller-supplied,
-   * not the underlying hp-drop detection. */
+   * not the underlying hp-drop detection. Pops in at 1.5x scale and settles to 1x
+   * (Back.easeOut) so it reads as a hit landing, not a number quietly appearing. */
   private spawnDamageFloat(x: number, y: number, amount: number, color: number = PALETTE.enemyRed): void {
     if (amount < 0.5) return;
     const txt = this.add.text(x, y - px(8), `-${amount.toFixed(0)}`, {
@@ -789,8 +803,35 @@ export class CombatScene extends Phaser.Scene {
       color: cssColor(color),
       stroke: cssColor(PALETTE.backgroundNearBlack),
       strokeThickness: px(1.2),
-    }).setDepth(8).setOrigin(0.5);
+    }).setDepth(8).setOrigin(0.5).setScale(1.5);
+    this.tweens.add({ targets: txt, scale: 1, duration: 160, ease: 'Back.easeOut' });
     this.floatingTexts.push({ text: txt, vy: -px(50), life: 700, maxLife: 700 });
+  }
+
+  /** Brief white tint-flash on an enemy sprite when it takes damage — a direct "that
+   * just landed" tell distinct from the HP bar's own (delayed-by-a-frame) redraw. */
+  private flashEnemyHit(sprite: Phaser.GameObjects.Image): void {
+    sprite.setTintFill(0xffffff);
+    this.time.delayedCall(60, () => { if (sprite.active) sprite.clearTint(); });
+  }
+
+  /** Brief red tint-flash on the player ship sprite on hull loss — the ship's own
+   * equivalent of flashEnemyHit. */
+  private flashShipHit(): void {
+    this.shipSprite.setTintFill(0xff4455);
+    this.time.delayedCall(80, () => { if (this.shipSprite.active) this.shipSprite.clearTint(); });
+  }
+
+  /** Expanding, fading additive ring — a "something just happened here" beat behind the
+   * particle bursts on enemy kills and hull collisions. A scoped one-shot Graphics
+   * circle per call (not a shared field): cheap, short-lived, and self-destroys. */
+  private spawnShockwave(x: number, y: number, color: number, endScale = 4): void {
+    const ring = this.add.circle(x, y, px(6), 0x000000, 0)
+      .setStrokeStyle(px(2), color, 0.9).setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
+    this.tweens.add({
+      targets: ring, scale: endScale, alpha: 0, duration: 340 + endScale * 20, ease: 'Cubic.easeOut',
+      onComplete: () => { ring.destroy(); },
+    });
   }
 
   private updateBurstParticles(deltaMs: number): void {
@@ -919,12 +960,13 @@ export class CombatScene extends Phaser.Scene {
     const playerBoltKind = this.resolvePlayerBoltKind();
     for (let i = 0; i < shotsFired; i++) this.spawnLaserBolt(playerBoltKind);
     for (let i = 0; i < rearShotsFired; i++) this.spawnRearBolt();
-    if (shotsFired > 0) { Sound.fire(); this.gunRecoil = 1; }
-    if (rearShotsFired > 0) { Sound.rearFire(); this.rearGunRecoil = 1; }
+    if (shotsFired > 0) { Sound.fire(this.core.loadout.weapon?.kind); this.gunRecoil = 1; }
+    if (rearShotsFired > 0) { Sound.rearFire(this.core.loadout.rearWeapon?.kind); this.rearGunRecoil = 1; }
     if (this.core.stats.kills > before.kills) Sound.kill();
 
     if (this.core.ship.hull < before.hull - 0.5) {
       this.cameras.main.shake(120, 0.005);
+      this.flashShipHit();
       // Below the ship, shield's float above (a single collision can drain both in one
       // frame once shield is thin — damageShip routes shield-first then overflows to
       // hull, core/combat.ts) — offset apart so the two numbers never overlap.
@@ -936,8 +978,16 @@ export class CombatScene extends Phaser.Scene {
     }
     if (this.core.stats.collisions > before.collisions) this.spawnCollisionFeedback();
     if (this.core.ship.shield > before.shield + 0.5) {
-      Sound.shieldPulse();
+      if (this.time.now - this.lastShieldSoundMs > SHIELD_SOUND_MIN_MS) {
+        Sound.shieldPulse();
+        this.lastShieldSoundMs = this.time.now;
+      }
       this.shieldPulseRings.push({ radius: px(28), alpha: 0.75 });
+    }
+    const boss = this.core.enemies.find((e) => e.isBoss);
+    if (boss !== undefined && !this.bossAppearSounded) {
+      this.bossAppearSounded = true;
+      Sound.bossAppear();
     }
 
     this.detectEnemyFrontShots(before);
@@ -1270,7 +1320,7 @@ export class CombatScene extends Phaser.Scene {
     // state.enemies before this function regains control.
     const targets = [...this.core.enemies].sort((a, b) => a.distance - b.distance).slice(0, sideWeapon.maxTargets);
     fireSideWeapon(this.core);
-    Sound.sideWeaponFire();
+    Sound.sideWeaponFire(sideWeapon.kind);
     this.sideGunRecoil = 1;
     this.spawnSideWeaponBurst(sideWeaponKindColor(sideWeapon.kind, sideWeapon.id));
     this.spawnSideWeaponBolts(sideWeapon, targets);
@@ -1442,6 +1492,8 @@ export class CombatScene extends Phaser.Scene {
     const cx = px(SHIP_CENTER_X) + this.driftX();
     const cy = px(SHIP_Y - 6) + this.bobY();
     this.cameras.main.shake(180, 0.008);
+    Sound.collision();
+    this.spawnShockwave(cx, cy, 0xff5522, 6);
     this.spawnBurst(cx, cy, 0xff3300, 24);
     for (const sprite of this.enemySprites.values()) {
       this.spawnBurst(sprite.x, sprite.y, 0xff6633, 8);
@@ -1686,6 +1738,7 @@ export class CombatScene extends Phaser.Scene {
       const sprite = this.enemySprites.get(enemy.id);
       if (sprite === undefined) continue;
       if (enemy.hp < hpBefore - 0.5) {
+        this.flashEnemyHit(sprite);
         this.spawnHitBurst(sprite.x, sprite.y);
         // Shield-burst chip damage (conveyor.ts's advanceEnemies, t1's own mechanic)
         // renders shieldBlue instead of the default enemyRed — the only other source of
@@ -2242,6 +2295,7 @@ export class CombatScene extends Phaser.Scene {
   private onEnemyDeath(x: number, y: number, enemyId: number): void {
     const coinReward = this.enemyCoinRewards.get(enemyId) ?? 0;
     this.enemyCoinRewards.delete(enemyId);
+    this.spawnShockwave(x, y, 0xffaa44);
     this.spawnBurst(x, y, 0xff6600, 14);
     this.spawnBurst(x, y, 0xffaa22, 6);
     if (coinReward > 0) this.spawnCoinFloat(x, y, coinReward);
@@ -2562,27 +2616,6 @@ export class CombatScene extends Phaser.Scene {
 
 function randomSeed(): number {
   return crypto.getRandomValues(new Uint32Array(1))[0] ?? 1;
-}
-
-/** Per-tier starfield visuals, keyed by depth tier (not three independent per-attribute
- * coin flips) — a bright star is also bigger, faster, and twinkling, a coherent
- * "distance" read. Near/mid twinkle; only far stays static. */
-function starTierParams(rz: number, rw: number): { baseAlpha: number; size: number; speed: number; twinkles: boolean } {
-  const tier = rz % 10; // 0-1 near, 2-4 mid, 5-9 far
-  if (tier < 2) return { baseAlpha: 0.9, size: 2.5, speed: 70 + (rw % 35), twinkles: true };
-  if (tier < 5) return { baseAlpha: 0.55, size: 1.5, speed: 42 + (rw % 28), twinkles: true };
-  return { baseAlpha: 0.28, size: 1, speed: 20 + (rw % 18), twinkles: false };
-}
-
-/** 4-way starfield tint split (cyan/amber/magenta-violet/white) — white stays the
- * majority so the field doesn't read as a color wash, but three tinted minorities give
- * it real variety rather than two token accents. */
-function starTint(rx: number): number {
-  const roll = rx % 6;
-  if (roll === 0) return 0x99e6ff;
-  if (roll === 1) return 0xffcc88;
-  if (roll === 2) return 0xcc99ff;
-  return 0xffffff;
 }
 
 /** Glow/size multiplier for a laser bolt: level 1 = 0.85×, level 5 = 1.13×. */

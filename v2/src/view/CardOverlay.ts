@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { Sound } from '../audio/SoundManager';
 import { CARD_ACTION_REROLL, CARD_ACTION_SKIP } from '../core/constants';
 import type { AbilityOffer, CoreState } from '../core/types';
 import { computeCardOverlayViewModel } from '../viewmodel/combat';
@@ -80,7 +81,7 @@ export class CardOverlay {
       .setStrokeStyle(px(2), color)
       .setDepth(DEPTH + 1)
       .setInteractive({ useHandCursor: true });
-    panel.on('pointerdown', () => { this.onAction(index); });
+    panel.on('pointerdown', () => { Sound.select(); this.onAction(index); });
     panel.on('pointerover', () => panel.setFillStyle(0x16162c, 0.95));
     panel.on('pointerout', () => panel.setFillStyle(0x0a0a18, 0.95));
 

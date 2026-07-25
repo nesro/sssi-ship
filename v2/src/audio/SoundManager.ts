@@ -5,24 +5,37 @@ import Phaser from 'phaser';
  *
  * Phaser's `scene.sound` is shared across every scene, so a single module-level
  * instance is the right model: SFX are fire-and-forget; the music track is created
- * once and keeps playing across scene transitions. All assets are preloaded by
- * BootScene before AlphaNoticeScene/HubScene start, so `play()` here never blocks on a
- * load.
+ * once and keeps playing across scene transitions. SFX buffers are synthesised into the
+ * audio cache by `buildGameSounds` (src/audio/synth.ts) at boot — nothing is fetched for
+ * them. Music is the one licensed asset: `preloadMusic` loads the track from a file in
+ * BootScene.preload, so `startMusic` here plays a ready cache entry.
  *
  * Browser autoplay policy: audio stays locked until the first user gesture. Phaser
  * unlocks automatically on the first pointer/key event, after which queued music
  * begins. We never force playback before that.
  */
 
-/** Asset keys — must match the keys registered in preloadAudio(). */
+/** SFX keys the synthesiser fills (src/audio/synthVoices.ts) + the file-loaded music key. */
 const AUDIO = {
   laser1: 'laser1',
   laser2: 'laser2',
   laser3: 'laser3',
+  uiClick: 'ui-click',
   ding: 'ding',
+  explosion: 'explosion',
+  impact: 'impact',
+  victory: 'victory',
+  shimmer: 'shimmer',
+  bossAlarm: 'boss-alarm',
   rocket: 'rocket',
   music: 'music-main',
 } as const;
+
+/** Loads the licensed music track. Call from BootScene.preload(). SFX are generated at
+ * boot instead (buildGameSounds), so music is the only audio file the game fetches. */
+export function preloadMusic(scene: Phaser.Scene): void {
+  scene.load.audio(AUDIO.music, ['audio/music-main.mp3', 'audio/music-main.ogg']);
+}
 
 const MUSIC_MUTE_KEY = 'nesro-nova-v2-music-muted';
 const SFX_MUTE_KEY = 'nesro-nova-v2-sfx-muted';
@@ -30,15 +43,34 @@ const MUSIC_VOLUME = 0.35;
 const SFX_VOLUME = 0.5;
 const LASER_KEYS = [AUDIO.laser1, AUDIO.laser2, AUDIO.laser3];
 
-/** Registers every audio file on a scene's loader. Call from BootScene.preload(). */
-export function preloadAudio(scene: Phaser.Scene): void {
-  scene.load.audio(AUDIO.laser1, ['audio/LaserShot1.ogg', 'audio/LaserShot1.mp3']);
-  scene.load.audio(AUDIO.laser2, ['audio/LaserShot2.ogg', 'audio/LaserShot2.mp3']);
-  scene.load.audio(AUDIO.laser3, ['audio/LaserShot3.ogg', 'audio/LaserShot3.mp3']);
-  scene.load.audio(AUDIO.ding, ['audio/Ding.ogg', 'audio/Ding.mp3']);
-  scene.load.audio(AUDIO.rocket, ['audio/Rocket.ogg', 'audio/Rocket.mp3']);
-  scene.load.audio(AUDIO.music, ['audio/music-main.mp3']);
-}
+/** Per-weapon-kind fire character (detune in cents, volume scale) so each weapon sounds
+ * distinct while sharing the three base laser samples — ion deep, scatter quick/light,
+ * nova a heavy boom, y2010 a thin retro zap. */
+const WEAPON_SFX: Record<string, { detune: number; vol: number }> = {
+  pulse:   { detune: 0, vol: 1 },
+  ion:     { detune: -350, vol: 1.1 },
+  scatter: { detune: 250, vol: 0.8 },
+  nova:    { detune: -550, vol: 1.15 },
+  y2010:   { detune: 450, vol: 0.9 },
+};
+
+/** Per-rear-weapon-kind character — all pitched below the front weapon so the aft gun
+ * reads as heavier/lower, with each kind still distinct. */
+const REAR_SFX: Record<string, { detune: number; vol: number }> = {
+  grenade: { detune: -700, vol: 0.8 },
+  flak:    { detune: -200, vol: 0.6 },
+  plasma:  { detune: -500, vol: 0.75 },
+  arc:     { detune: -100, vol: 0.6 },
+  cluster: { detune: -400, vol: 0.7 },
+};
+
+/** Per-side-weapon-kind character for the manual charged shot. */
+const SIDE_SFX: Record<string, { detune: number; vol: number }> = {
+  focus:     { detune: 300, vol: 0.9 },
+  flechette: { detune: 150, vol: 0.7 },
+  railgun:   { detune: -200, vol: 1.0 },
+  orbital:   { detune: -400, vol: 0.9 },
+};
 
 class SoundManager {
   private sound: Phaser.Sound.BaseSoundManager | null = null;
@@ -100,35 +132,64 @@ class SoundManager {
     this.sound.play(key, { volume, detune });
   }
 
-  /** Player weapon fired — rotates through the three laser samples so it doesn't drone. */
-  fire(): void {
+  /** Player weapon fired — rotates through the three laser samples so it doesn't drone,
+   * pitched/leveled per weapon kind so weapons are audibly distinct. */
+  fire(weaponKind = 'pulse'): void {
     const key = LASER_KEYS[this.laserIndex % LASER_KEYS.length] ?? AUDIO.laser1;
     this.laserIndex += 1;
-    this.sfx(key, SFX_VOLUME * 0.7);
+    const c = WEAPON_SFX[weaponKind] ?? WEAPON_SFX.pulse;
+    this.sfx(key, SFX_VOLUME * 0.7 * (c?.vol ?? 1), c?.detune ?? 0);
   }
 
-  /** Rear weapon fired — same laser rotation as the front weapon, pitched down so the two
-   * weapon slots are audibly distinct instead of the rear weapon firing silently. */
-  rearFire(): void {
+  /** Rear weapon fired — same laser rotation as the front weapon, but pitched per rear-kind
+   * (all below the front weapon) so the aft gun is audibly its own, heavier slot. */
+  rearFire(rearKind = 'grenade'): void {
     const key = LASER_KEYS[this.laserIndex % LASER_KEYS.length] ?? AUDIO.laser1;
     this.laserIndex += 1;
-    this.sfx(key, SFX_VOLUME * 0.6, -350);
+    const c = REAR_SFX[rearKind] ?? REAR_SFX.grenade;
+    this.sfx(key, SFX_VOLUME * (c?.vol ?? 0.7), c?.detune ?? -350);
   }
 
   /** Side weapon manually fired — distinct from both autofire weapons and reserve-supply
-   * boosts (which reuse `rocket`) so a manual charged shot reads as its own action. */
-  sideWeaponFire(): void {
-    this.sfx(AUDIO.laser3, SFX_VOLUME * 0.9, 200);
+   * boosts (which reuse `rocket`) so a manual charged shot reads as its own action, with
+   * per-kind character (focus bright, railgun a heavy crack, orbital deep). */
+  sideWeaponFire(sideKind = 'focus'): void {
+    const c = SIDE_SFX[sideKind] ?? SIDE_SFX.focus;
+    this.sfx(AUDIO.laser3, SFX_VOLUME * (c?.vol ?? 0.9), c?.detune ?? 200);
   }
 
-  /** An enemy was destroyed by weapon fire. */
+  /** An enemy was destroyed by weapon fire — a loud, octave-down deep boom (tuned in the
+   * soundboard: gain 1.1, detune -1200). */
   kill(): void {
-    this.sfx(AUDIO.ding, SFX_VOLUME * 0.6);
+    this.sfx(AUDIO.explosion, SFX_VOLUME * 1.1, -1200);
   }
 
-  /** Generator fired a shield pulse (shield jumped up). Detuned ding for a softer "charge" feel. */
+  /** Generator fired a shield pulse (shield jumped up) — a soft, airy surge. Kept quiet
+   * because the shield recharges often; the caller also throttles how frequently this
+   * fires so it never machine-guns. */
   shieldPulse(): void {
-    this.sfx(AUDIO.ding, SFX_VOLUME * 0.35, -600);
+    this.sfx(AUDIO.shimmer, SFX_VOLUME * 0.22);
+  }
+
+  /** A boss just entered the field — a throbbing low alarm sting. */
+  bossAppear(): void {
+    this.sfx(AUDIO.bossAlarm, SFX_VOLUME * 0.7);
+  }
+
+  /** An enemy collided with the player's hull — a heavy body-blow thud. */
+  collision(): void {
+    this.sfx(AUDIO.impact, SFX_VOLUME * 0.85);
+  }
+
+  /** A support-call card was picked — a soft confirmation chime. */
+  select(): void {
+    this.sfx(AUDIO.ding, SFX_VOLUME * 0.5);
+  }
+
+  /** A UI button was tapped — a deliberately quiet, airy tick (menus fire this on every
+   * press, so it must stay subtle, not a musical chime). */
+  uiClick(): void {
+    this.sfx(AUDIO.uiClick, SFX_VOLUME * 0.18);
   }
 
   /** A reserve supply boost was activated. */
@@ -138,14 +199,20 @@ class SoundManager {
 
   /** Mission cleared. */
   victory(): void {
-    this.sfx(AUDIO.ding, SFX_VOLUME);
+    this.sfx(AUDIO.victory, SFX_VOLUME);
   }
 
-  /** Starts the looping background track if it isn't already playing. */
+  /** Starts the looping background track if it isn't already playing. No-ops (never throws)
+   * if the music file failed to load — a missing asset must never take down the scene the
+   * way it once did (`Audio key "music-main" not found in cache` crashing HubScene). */
   startMusic(): void {
     if (this.sound === null || this.musicMuted) return;
     if (this.music !== null && this.music.isPlaying) return;
     if (this.music === null) {
+      if (!this.sound.game.cache.audio.exists(AUDIO.music)) {
+        console.warn(`Music track "${AUDIO.music}" not loaded — running without music.`);
+        return;
+      }
       this.music = this.sound.add(AUDIO.music, { loop: true, volume: MUSIC_VOLUME });
     }
     this.music.play();

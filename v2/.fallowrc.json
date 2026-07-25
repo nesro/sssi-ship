@@ -1,6 +1,7 @@
 {
   "$schema": "https://fallow.tools/schemas/config.json",
   "ignoreDependencies": ["@capacitor/android"],
+  "entry": ["soundboard.html", "gallery.html"],
   "duplicates": {
     "minOccurrences": 3
   },

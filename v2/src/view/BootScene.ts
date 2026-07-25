@@ -1,13 +1,15 @@
 import Phaser from 'phaser';
-import { preloadAudio, Sound } from '../audio/SoundManager';
+import { buildGameSounds } from '../audio/synth';
+import { preloadMusic, Sound } from '../audio/SoundManager';
 import { loadSave } from '../save/SaveManager';
 import { cssColor, PALETTE } from './palette';
 import { fontPx, px, SCREEN_HEIGHT, SCREEN_WIDTH } from './layout';
 import { UI_FONT } from './widgets';
 
 /**
- * First scene: loads all audio assets (the only files Phaser must fetch — textures are
- * generated at runtime), then hands off to `AlphaNoticeScene` — every save, fresh or
+ * First scene: loads the one licensed audio file (the music track — the only file
+ * Phaser must fetch; textures and SFX are both generated at runtime), then hands off
+ * to `AlphaNoticeScene` — every save, fresh or
  * returning, every launch (that screen has no save-flag gate of its own; it's a
  * standing dev/alpha reminder, not a first-run-only prompt). There is no separate
  * tutorials-or-skip prompt scene: the choice lives on the galaxy map itself (HubScene's
@@ -40,11 +42,12 @@ export class BootScene extends Phaser.Scene {
         color: cssColor(0x6666aa),
       })
       .setOrigin(0.5);
-    preloadAudio(this);
+    preloadMusic(this);
   }
 
   // fallow-ignore-next-line unused-class-member
   create(): void {
+    buildGameSounds(this);
     Sound.attach(this.sound);
     // `onboardingSeen` is persisted by AlphaNoticeScene itself, only once the player
     // actually reaches HubScene via CONTINUE — not here. Persisting it this early would

@@ -18,7 +18,10 @@ export interface FloatingText { text: Phaser.GameObjects.Text; vy: number; life:
 
 export interface ShieldPulseRing { radius: number; alpha: number }
 
-/** Advances and redraws kill-burst particles; returns the surviving entries. Clears `g` before drawing. */
+/** Advances and redraws kill-burst particles as motion streaks (a short trail toward
+ * where the particle just was, plus a small white-hot spark at its head) rather than a
+ * flat square — reads as debris in motion instead of a static dot fading out. Returns
+ * the surviving entries. Clears `g` before drawing. */
 export function tickBurstParticles(g: Phaser.GameObjects.Graphics, particles: BurstParticle[], deltaMs: number): BurstParticle[] {
   g.clear();
   return particles.filter((p) => {
@@ -27,8 +30,12 @@ export function tickBurstParticles(g: Phaser.GameObjects.Graphics, particles: Bu
     p.life -= deltaMs;
     if (p.life <= 0) return false;
     const t = p.life / p.maxLife;
-    g.fillStyle(p.color, t * 0.9);
-    g.fillRect(p.x - px(1.5), p.y - px(1.5), px(3), px(3));
+    const tailX = p.x - p.vx * 0.02;
+    const tailY = p.y - p.vy * 0.02;
+    g.lineStyle(px(0.4 + 1.4 * t), p.color, t * 0.9);
+    g.lineBetween(tailX, tailY, p.x, p.y);
+    g.fillStyle(0xffffff, t * 0.85);
+    g.fillCircle(p.x, p.y, px(0.6 + 1.1 * t));
     return true;
   });
 }

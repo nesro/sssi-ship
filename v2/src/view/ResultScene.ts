@@ -4,7 +4,9 @@ import type { SaveData } from '../save/SaveManager';
 import { computeResultViewModel } from '../viewmodel/result';
 import type { ResultViewModel, StarResultViewModel } from '../viewmodel/result';
 import { cssColor, PALETTE } from './palette';
-import { fontPx, px, SCREEN_WIDTH } from './layout';
+import { fontPx, LOGICAL_HEIGHT, LOGICAL_WIDTH, px, SCREEN_WIDTH } from './layout';
+import { buildStarfield, tickStarfield } from './starfield';
+import type { Star } from './starfield';
 import { addLabel, addTextButton, drawDevBorder, UI_FONT } from './widgets';
 
 export interface ResultSceneData {
@@ -30,12 +32,17 @@ const TITLE_COLOR_BY_OUTCOME: Record<ResultViewModel['outcome'], number> = {
 
 /** Post-mission summary: stars (new vs repeat), coins, and the next move. */
 export class ResultScene extends Phaser.Scene {
+  private stars: Star[] = [];
+
   constructor() {
     super('ResultScene');
   }
 
   // fallow-ignore-next-line unused-class-member
   create(data: ResultSceneData): void {
+    this.stars = buildStarfield(this, {
+      count: 45, xMin: 0, xSpan: LOGICAL_WIDTH, yMin: 0, ySpan: LOGICAL_HEIGHT, depth: -1,
+    });
     drawDevBorder(this, data.save);
     const { result, newStarIds, dailyBonus, wasAbandoned } = data;
     const vm = computeResultViewModel(result, newStarIds, dailyBonus, wasAbandoned);
@@ -113,6 +120,11 @@ export class ResultScene extends Phaser.Scene {
     buttons.forEach((b, i) => {
       addTextButton(this, { x: startX + i * gap, y: buttonY, label: b.label, color: b.color, onClick: b.onClick });
     });
+  }
+
+  // fallow-ignore-next-line unused-class-member
+  override update(_time: number, deltaMs: number): void {
+    tickStarfield(this.stars, deltaMs, -2, LOGICAL_HEIGHT + 2);
   }
 }
 
