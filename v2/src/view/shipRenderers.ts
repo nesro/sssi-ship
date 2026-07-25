@@ -11,7 +11,7 @@ export const SIDE_WEAPON_MOUNT_X_OFFSET = 24;
 const PALETTE_AMBER = 0xffaa22;
 const PALETTE_CYAN = 0x00eeff;
 
-export interface MuzzleFlash { x: number; y: number; life: number }
+export interface MuzzleFlash { x: number; y: number; life: number; color?: number }
 
 export interface LaserBolt {
   sprite: Phaser.GameObjects.Image;
@@ -202,10 +202,17 @@ export function drawGeneratorCore(
   g.clear();
   if (energyFrac <= 0) return;
   const alpha = 0.12 + energyFrac * 0.32;
+  // Layered core: wide outer glow, amber body, white-hot centre, and two containment rings.
+  g.fillStyle(0xffaa22, alpha * 0.5);
+  g.fillCircle(cx, cy, px(7 + energyFrac * 3));
   g.fillStyle(0xffaa22, alpha);
   g.fillCircle(cx, cy, px(4 + energyFrac * 2));
+  g.fillStyle(0xffee88, Math.min(1, alpha * 1.4));
+  g.fillCircle(cx, cy, px(1.5 + energyFrac));
   g.lineStyle(px(1), 0xffcc44, alpha * 1.2);
   g.strokeCircle(cx, cy, px(5));
+  g.lineStyle(px(0.6), 0xffcc44, alpha * 0.7);
+  g.strokeCircle(cx, cy, px(7.5));
 }
 
 const REAR_WEAPON_KIND_COLORS: Readonly<Record<string, number>> = {
@@ -334,8 +341,15 @@ export function tickMuzzleFlashes(
     f.life -= deltaMs;
     if (f.life <= 0) return false;
     const t = f.life / flashMs;
-    g.fillStyle(PALETTE_CYAN, t * 0.85);
-    g.fillCircle(f.x, f.y, px(5) * t);
+    const color = f.color ?? PALETTE_CYAN;
+    // Soft halo → white-hot core → a vertical fire-direction streak and a cross spark.
+    g.fillStyle(color, t * 0.35);
+    g.fillCircle(f.x, f.y, px(8) * t);
+    g.fillStyle(0xffffff, t * 0.9);
+    g.fillCircle(f.x, f.y, px(2.5) * t);
+    g.lineStyle(px(1.2) * t, color, t * 0.75);
+    g.lineBetween(f.x, f.y - px(9) * t, f.x, f.y + px(3) * t);
+    g.lineBetween(f.x - px(5) * t, f.y, f.x + px(5) * t, f.y);
     return true;
   });
 }

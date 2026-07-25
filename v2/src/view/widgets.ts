@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { Sound } from '../audio/SoundManager';
 import { cssColor } from './palette';
 import { fontPx, px, SCREEN_WIDTH, SCREEN_HEIGHT } from './layout';
 import type { SaveData } from '../save/SaveManager';
@@ -83,7 +84,9 @@ export function addTextButton(
     })
     .setOrigin(originX, originY);
   ensureMinTapTarget(text);
-  text.on('pointerdown', options.onClick);
+  // Central UI tap feedback: every text button plays a subtle tick, so menus/shop feel
+  // responsive without wiring a sound at each call site.
+  text.on('pointerdown', () => { Sound.uiClick(); options.onClick(); });
   text.on('pointerover', () => text.setAlpha(0.8));
   text.on('pointerout', () => text.setAlpha(1));
   return text;

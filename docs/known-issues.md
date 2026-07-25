@@ -15,6 +15,25 @@ Move resolved items to the bottom with the date and what fixed them, instead of 
 
 ## Open
 
+### `combat-m6-boss` screenshot intermittently fails (`advanceUntil: mission ended before predicate` / status=defeat) — the shot runs on a fresh random seed each time
+Found 2026-07-24 while re-running `pnpm screenshot` batches during the generated-audio /
+richer-sprites view work (`docs/plans/generated-audio-and-richer-sprites.md`) — confirmed
+pre-existing and orthogonal to that work (it touches only `src/view/textures.ts` and
+`src/audio/`, never the deterministic core, so it cannot change a mission's outcome for a
+given seed). `tools/screenshot.ts`'s `combat-m6-boss` setup equips `pulse-4` +
+`shield-wall-3` then `advanceUntil(hasKind 'boss', maxTicks 5000)`, but `startMission`
+seeds core RNG from a fresh `randomSeed()` (crypto) every run, so on an unlucky seed the
+tuned loadout dies to m6's swarm/striker/turret waves before the boss spawns (~timeline
+tick 2540). Observed failing on roughly half of full-batch runs; a bare re-run of just
+that shot then passes. Since the `advanceUntil`-fails-loudly fix (see Resolved below),
+this now surfaces as a hard batch failure rather than a silently-wrong capture — correct
+behaviour, but it makes the full batch flaky. **Not fixed here** (out of scope for the
+view/audio work that surfaced it): the real fix is determinism — thread a fixed seed into
+this shot (and any other combat shot whose reachability depends on surviving to a late
+spawn) so the capture is reproducible, rather than nudging the loadout/`maxTicks` again
+and leaving it seed-dependent. Balance drift since the loadout was last tuned (the m2/m3/m4
+tension waves, shield-burst-tiers) may also have eaten the survival margin it once had.
+
 ### Shield kind is a campaign-wide balance variable that's never actually been validated — every m1-m6 mission trivializes on Reflex/Flux/Bulwark
 Found 2026-07-23 verifying the shield-burst-tiers change (`docs/plans/shield-burst-tiers.md`)
 — confirmed pre-existing, not caused by that change. `tools/loadoutPresets.ts`'s

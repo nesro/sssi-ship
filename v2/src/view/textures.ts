@@ -126,65 +126,97 @@ function shipLevelColor(base: number, lv: number): number {
 
 type KindPainter = (color: number) => ShapePainter;
 
-function buildShipTextures(scene: Phaser.Scene): void {
-  const interceptor: KindPainter = (c) => (g, w, a) => {
-    g.lineStyle(w, c, a);
-    g.strokeTriangle(px(24), px(4), px(8), px(48), px(40), px(48));
-    g.lineBetween(px(8), px(32), px(1), px(48));
-    g.lineBetween(px(40), px(32), px(47), px(48));
-    drawStandardGunBarrels(g);
-    g.strokeCircle(px(24), px(22), px(4));
-    g.lineBetween(px(18), px(30), px(16), px(48));
-    g.lineBetween(px(30), px(30), px(32), px(48));
-  };
-  const tanker: KindPainter = (c) => (g, w, a) => {
-    g.lineStyle(w, c, a);
-    g.strokeTriangle(px(24), px(6), px(10), px(28), px(38), px(28));
-    g.strokeRect(px(4), px(28), px(40), px(18));
-    g.lineBetween(px(0), px(28), px(0), px(48));
-    g.lineBetween(px(48), px(28), px(48), px(48));
-    g.lineBetween(px(0), px(48), px(4), px(46));
-    g.lineBetween(px(48), px(48), px(44), px(46));
-    drawStandardGunBarrels(g);
-    g.lineBetween(px(14), px(28), px(14), px(46));
-    g.lineBetween(px(34), px(28), px(34), px(46));
-  };
-  const salvager: KindPainter = (c) => (g, w, a) => {
-    g.lineStyle(w, c, a);
-    g.strokeTriangle(px(24), px(4), px(14), px(48), px(36), px(48));
-    drawStandardGunBarrels(g);
-    g.lineBetween(px(14), px(30), px(2), px(20));
-    g.lineBetween(px(2), px(20), px(0), px(12));
-    g.lineBetween(px(2), px(20), px(6), px(14));
-    g.strokeRect(px(36), px(30), px(10), px(14));
-    g.lineBetween(px(36), px(37), px(46), px(37));
-  };
-  const reactor: KindPainter = (c) => (g, w, a) => {
-    g.lineStyle(w, c, a);
-    g.strokeTriangle(px(24), px(4), px(16), px(48), px(32), px(48));
-    g.strokeCircle(px(24), px(28), px(10));
-    g.strokeCircle(px(24), px(28), px(4));
-    drawStandardGunBarrels(g);
-    g.lineBetween(px(14), px(28), px(8), px(28));
-    g.lineBetween(px(34), px(28), px(40), px(28));
-  };
-  const warship: KindPainter = (c) => (g, w, a) => {
-    g.lineStyle(w, c, a);
-    g.strokeTriangle(px(24), px(4), px(20), px(48), px(28), px(48));
-    g.lineBetween(px(20), px(32), px(2), px(44));
-    g.lineBetween(px(2), px(44), px(4), px(48));
-    g.lineBetween(px(4), px(48), px(20), px(40));
-    g.lineBetween(px(28), px(32), px(46), px(44));
-    g.lineBetween(px(46), px(44), px(44), px(48));
-    g.lineBetween(px(44), px(48), px(28), px(40));
-    g.lineBetween(px(7), px(38), px(7), px(16));
-    g.lineBetween(px(4), px(16), px(10), px(16));
-    g.lineBetween(px(41), px(38), px(41), px(16));
-    g.lineBetween(px(38), px(16), px(44), px(16));
-    g.strokeRect(px(5), px(32), px(5), px(8));
-    g.strokeRect(px(38), px(32), px(5), px(8));
-  };
+// Ship hulls keep their 48×52 footprint and the shared gun-barrel mounts
+// (drawStandardGunBarrels, x=7/x=41) that SHIP_GUN_*_OFFSET depends on; the extra strokes
+// add cockpit canopies, hull spines, panel lines, and engine/pod detail so each hull reads
+// as a built craft. Runtime overlays (thruster, gun/shield/generator indicators) are drawn
+// separately by shipRenderers and are unaffected.
 
+const interceptor: KindPainter = (c) => (g, w, a) => {
+  g.lineStyle(w, c, a);
+  g.strokeTriangle(px(24), px(4), px(8), px(48), px(40), px(48));
+  g.lineBetween(px(8), px(32), px(1), px(48));
+  g.lineBetween(px(40), px(32), px(47), px(48));
+  drawStandardGunBarrels(g);
+  g.strokeCircle(px(24), px(22), px(4));
+  g.lineBetween(px(18), px(30), px(16), px(48));
+  g.lineBetween(px(30), px(30), px(32), px(48));
+  // Nose spine + canopy tip and swept wing accents.
+  g.lineBetween(px(24), px(8), px(24), px(18));
+  g.lineBetween(px(12), px(40), px(18), px(42));
+  g.lineBetween(px(36), px(40), px(30), px(42));
+  g.fillStyle(c, a);
+  g.fillCircle(px(24), px(22), w * 0.7);
+};
+const tanker: KindPainter = (c) => (g, w, a) => {
+  g.lineStyle(w, c, a);
+  g.strokeTriangle(px(24), px(6), px(10), px(28), px(38), px(28));
+  g.strokeRect(px(4), px(28), px(40), px(18));
+  g.lineBetween(px(0), px(28), px(0), px(48));
+  g.lineBetween(px(48), px(28), px(48), px(48));
+  g.lineBetween(px(0), px(48), px(4), px(46));
+  g.lineBetween(px(48), px(48), px(44), px(46));
+  drawStandardGunBarrels(g);
+  g.lineBetween(px(14), px(28), px(14), px(46));
+  g.lineBetween(px(34), px(28), px(34), px(46));
+  // Cargo ribs + a central hatch and cockpit slit — a hauler read.
+  g.lineBetween(px(4), px(34), px(44), px(34));
+  g.lineBetween(px(4), px(40), px(44), px(40));
+  g.strokeRect(px(20), px(31), px(8), px(10));
+  g.lineBetween(px(24), px(10), px(24), px(20));
+};
+const salvager: KindPainter = (c) => (g, w, a) => {
+  g.lineStyle(w, c, a);
+  g.strokeTriangle(px(24), px(4), px(14), px(48), px(36), px(48));
+  drawStandardGunBarrels(g);
+  g.lineBetween(px(14), px(30), px(2), px(20));
+  g.lineBetween(px(2), px(20), px(0), px(12));
+  g.lineBetween(px(2), px(20), px(6), px(14));
+  g.strokeRect(px(36), px(30), px(10), px(14));
+  g.lineBetween(px(36), px(37), px(46), px(37));
+  // Second grabber prong, container cross-brace, cockpit dome.
+  g.lineBetween(px(2), px(20), px(4), px(24));
+  g.lineBetween(px(41), px(30), px(41), px(44));
+  g.strokeCircle(px(24), px(20), px(3));
+  g.lineBetween(px(24), px(8), px(24), px(17));
+};
+const reactor: KindPainter = (c) => (g, w, a) => {
+  g.lineStyle(w, c, a);
+  g.strokeTriangle(px(24), px(4), px(16), px(48), px(32), px(48));
+  g.strokeCircle(px(24), px(28), px(10));
+  g.strokeCircle(px(24), px(28), px(4));
+  drawStandardGunBarrels(g);
+  g.lineBetween(px(14), px(28), px(8), px(28));
+  g.lineBetween(px(34), px(28), px(40), px(28));
+  // Reactor ring bolts, glowing core, and a cockpit above the housing.
+  radialTicks(g, px(24), px(28), { rOuter: px(10), rInner: px(7), count: 6, start: 0 });
+  g.fillStyle(c, a);
+  g.fillCircle(px(24), px(28), w * 0.9);
+  g.strokeCircle(px(24), px(14), px(3));
+};
+const warship: KindPainter = (c) => (g, w, a) => {
+  g.lineStyle(w, c, a);
+  g.strokeTriangle(px(24), px(4), px(20), px(48), px(28), px(48));
+  g.lineBetween(px(20), px(32), px(2), px(44));
+  g.lineBetween(px(2), px(44), px(4), px(48));
+  g.lineBetween(px(4), px(48), px(20), px(40));
+  g.lineBetween(px(28), px(32), px(46), px(44));
+  g.lineBetween(px(46), px(44), px(44), px(48));
+  g.lineBetween(px(44), px(48), px(28), px(40));
+  g.lineBetween(px(7), px(38), px(7), px(16));
+  g.lineBetween(px(4), px(16), px(10), px(16));
+  g.lineBetween(px(41), px(38), px(41), px(16));
+  g.lineBetween(px(38), px(16), px(44), px(16));
+  g.strokeRect(px(5), px(32), px(5), px(8));
+  g.strokeRect(px(38), px(32), px(5), px(8));
+  // Armoured spine, cockpit, and missile-pod tips on the wing struts.
+  g.lineBetween(px(24), px(8), px(24), px(30));
+  g.lineBetween(px(21), px(20), px(27), px(20));
+  g.lineBetween(px(7), px(40), px(8), px(43));
+  g.lineBetween(px(41), px(40), px(40), px(43));
+};
+
+function buildShipTextures(scene: Phaser.Scene): void {
   // Legacy single-texture keys (full color = Lv4 equivalent)
   bake(scene, TEXTURE_KEYS.ship,          px(48), px(52), interceptor(PALETTE.weaponCyan));
   bake(scene, TEXTURE_KEYS.shipInterceptor, px(48), px(52), interceptor(PALETTE.weaponCyan));
@@ -208,72 +240,136 @@ function buildShipTextures(scene: Phaser.Scene): void {
   }
 }
 
+// Enemy silhouettes are unchanged in size (ENEMY_VISUAL_RADIUS in CombatScene couples the
+// on-screen radius to these baked dimensions) — only the internal detail is richer: each
+// kind now carries a layered structure (nested hull, core, and accent marks) so it reads
+// as a built machine rather than a single outline, while keeping its recognisable shape.
+
+const paintFodder: ShapePainter = (g, w, a) => {
+  g.lineStyle(w, PALETTE.enemyRed, a);
+  strokeDiamond(g, px(24), px(24), px(18));
+  strokeDiamond(g, px(24), px(24), px(9));
+  g.fillStyle(PALETTE.enemyRed, a);
+  g.fillCircle(px(24), px(24), w * 0.8);
+};
+
+const paintStriker: ShapePainter = (g, w, a) => {
+  g.lineStyle(w, PALETTE.enemyOrange, a);
+  traceStar(g, px(26), px(26), px(22), px(9));
+  g.lineStyle(w * 0.7, PALETTE.enemyOrange, a * 0.8);
+  traceStar(g, px(26), px(26), px(11), px(4));
+  g.fillStyle(PALETTE.enemyOrange, a);
+  g.fillCircle(px(26), px(26), w * 0.9);
+};
+
+const paintTank: ShapePainter = (g, w, a) => {
+  g.lineStyle(w, PALETTE.enemyRed, a);
+  g.strokeRect(px(10), px(10), px(36), px(36));
+  g.strokeRect(px(19), px(19), px(18), px(18));
+  g.lineBetween(px(28), px(7), px(28), px(49));
+  g.lineBetween(px(7), px(28), px(49), px(28));
+  // Corner rivets read as bolted armour plating.
+  for (const [cx, cy] of [[14, 14], [42, 14], [14, 42], [42, 42]] as const) {
+    g.strokeCircle(px(cx), px(cy), px(2.5));
+  }
+};
+
+const paintSwarm: ShapePainter = (g, w, a) => {
+  g.lineStyle(w, PALETTE.enemyOrange, a);
+  strokeDiamond(g, px(15), px(15), px(10));
+  g.fillStyle(PALETTE.enemyOrange, a);
+  g.fillCircle(px(15), px(15), w * 0.8);
+};
+
+const paintBlocker: ShapePainter = (g, w, a) => {
+  g.lineStyle(w, PALETTE.enemyOrange, a);
+  g.strokeRect(px(9), px(9), px(46), px(46));
+  strokeDiamond(g, px(32), px(32), px(22));
+  strokeDiamond(g, px(32), px(32), px(11));
+  // Corner brackets — heavy shield emplacement framing.
+  radialTicks(g, px(32), px(32), { rOuter: px(30), rInner: px(26), count: 4, start: Math.PI / 4 });
+  g.fillStyle(PALETTE.enemyOrange, a);
+  g.fillCircle(px(32), px(32), w);
+};
+
+const paintGuardian: ShapePainter = (g, w, a) => {
+  g.lineStyle(w, PALETTE.shieldBlue, a);
+  g.strokeCircle(px(26), px(26), px(20));
+  g.strokeCircle(px(26), px(26), px(13));
+  g.strokeCircle(px(26), px(26), px(6));
+  g.lineBetween(px(26), px(6), px(26), px(46));
+  g.lineBetween(px(6), px(26), px(46), px(26));
+  radialTicks(g, px(26), px(26), { rOuter: px(20), rInner: px(16), count: 8, start: Math.PI / 8 });
+};
+
+const paintTurret: ShapePainter = (g, w, a) => {
+  g.lineStyle(w, 0xcc8800, a);
+  g.strokeRect(px(12), px(24), px(36), px(27));
+  g.strokeRect(px(17), px(29), px(26), px(17));
+  g.lineBetween(px(30), px(3), px(30), px(24));
+  g.lineBetween(px(26), px(12), px(26), px(24));
+  g.lineBetween(px(34), px(12), px(34), px(24));
+  g.lineBetween(px(21), px(12), px(39), px(12));
+  g.strokeCircle(px(30), px(37), px(8));
+  g.strokeCircle(px(30), px(37), px(3));
+};
+
+const paintKamikaze: ShapePainter = (g, w, a) => {
+  g.lineStyle(w, 0xff2255, a);
+  traceStar(g, px(20), px(20), px(17), px(7));
+  g.strokeCircle(px(20), px(20), px(5));
+  g.fillStyle(0xff2255, a);
+  g.fillCircle(px(20), px(20), w * 0.9);
+  // Warning spikes at the cardinal points — a volatile, about-to-detonate read.
+  radialTicks(g, px(20), px(20), { rOuter: px(19), rInner: px(15), count: 4, start: 0 });
+};
+
+// Booster (fable-fun-review-followup.md Item 7): a core ring feeding two forward chevrons
+// — "forward" meaning toward the ship (enemies move top→bottom down the lane, so
+// distance-toward-0 is *down*), matching its mechanic of buffing whichever enemy is
+// nearest-ahead of it (combat.ts's regenerateEnemies).
+const paintBooster: ShapePainter = (g, w, a) => {
+  g.lineStyle(w, PALETTE.generatorAmber, a);
+  g.strokeCircle(px(26), px(16), px(11));
+  g.strokeCircle(px(26), px(16), px(5));
+  g.fillStyle(PALETTE.generatorAmber, a);
+  g.fillCircle(px(26), px(16), w * 0.8);
+  traceChevronDown(g, px(26), px(32), px(11));
+  traceChevronDown(g, px(26), px(42), px(11));
+  // Side emitter nubs feeding the core ring.
+  g.strokeCircle(px(11), px(16), px(3));
+  g.strokeCircle(px(41), px(16), px(3));
+};
+
+const paintBoss: ShapePainter = (g, w, a) => {
+  g.lineStyle(w, PALETTE.enemyRed, a);
+  strokeDiamond(g, px(48), px(48), px(40));
+  strokeDiamond(g, px(48), px(48), px(30));
+  g.strokeCircle(px(48), px(48), px(22));
+  g.strokeCircle(px(48), px(48), px(10));
+  g.lineBetween(px(48), px(27), px(48), px(69));
+  g.lineBetween(px(27), px(48), px(69), px(48));
+  // Radial spokes across the mid ring + four outer antenna stubs at the cardinal points.
+  radialTicks(g, px(48), px(48), { rOuter: px(22), rInner: px(14), count: 8, start: Math.PI / 8 });
+  g.lineBetween(px(48), px(8), px(48), px(3));
+  g.lineBetween(px(48), px(88), px(48), px(93));
+  g.lineBetween(px(8), px(48), px(3), px(48));
+  g.lineBetween(px(88), px(48), px(93), px(48));
+  g.fillStyle(PALETTE.enemyRed, a);
+  g.fillCircle(px(48), px(48), w);
+};
+
 function buildEnemyTextures(scene: Phaser.Scene): void {
-  bake(scene, TEXTURE_KEYS.fodder, px(48), px(48), (g, w, a) => {
-    g.lineStyle(w, PALETTE.enemyRed, a);
-    strokeDiamond(g, px(24), px(24), px(18));
-  });
-  bake(scene, TEXTURE_KEYS.striker, px(52), px(52), (g, w, a) => {
-    g.lineStyle(w, PALETTE.enemyOrange, a);
-    traceStar(g, px(26), px(26), px(22), px(9));
-  });
-  bake(scene, TEXTURE_KEYS.tank, px(56), px(56), (g, w, a) => {
-    g.lineStyle(w, PALETTE.enemyRed, a);
-    g.strokeRect(px(10), px(10), px(36), px(36));
-    g.lineBetween(px(28), px(7), px(28), px(49));
-    g.lineBetween(px(7), px(28), px(49), px(28));
-  });
-  bake(scene, TEXTURE_KEYS.swarm, px(30), px(30), (g, w, a) => {
-    g.lineStyle(w, PALETTE.enemyOrange, a);
-    strokeDiamond(g, px(15), px(15), px(10));
-  });
-  bake(scene, TEXTURE_KEYS.blocker, px(64), px(64), (g, w, a) => {
-    g.lineStyle(w, PALETTE.enemyOrange, a);
-    g.strokeRect(px(9), px(9), px(46), px(46));
-    strokeDiamond(g, px(32), px(32), px(22));
-  });
-  bake(scene, TEXTURE_KEYS.guardian, px(52), px(52), (g, w, a) => {
-    g.lineStyle(w, PALETTE.shieldBlue, a);
-    g.strokeCircle(px(26), px(26), px(20));
-    g.strokeCircle(px(26), px(26), px(9));
-    g.lineBetween(px(26), px(6), px(26), px(46));
-    g.lineBetween(px(6), px(26), px(46), px(26));
-  });
-  bake(scene, TEXTURE_KEYS.turret, px(60), px(60), (g, w, a) => {
-    g.lineStyle(w, 0xcc8800, a);
-    g.strokeRect(px(12), px(24), px(36), px(27));
-    g.lineBetween(px(30), px(3), px(30), px(24));
-    g.lineBetween(px(21), px(12), px(39), px(12));
-    g.strokeCircle(px(30), px(34), px(8));
-  });
-  bake(scene, TEXTURE_KEYS.kamikaze, px(40), px(40), (g, w, a) => {
-    g.lineStyle(w, 0xff2255, a);
-    traceStar(g, px(20), px(20), px(17), px(7));
-    g.strokeCircle(px(20), px(20), px(5));
-  });
-  // Booster (fable-fun-review-followup.md Item 7): a core ring feeding two forward
-  // chevrons — "forward" meaning toward the ship (enemies move top→bottom down the
-  // lane, so distance-toward-0 is *down*), matching its actual mechanic of buffing
-  // whichever enemy is nearest-ahead of it (combat.ts's regenerateEnemies). Previously
-  // had no entry here at all, so it silently fell back to the fodder texture — a
-  // buff-support unit rendering identically to weak filler enemies.
-  bake(scene, TEXTURE_KEYS.booster, px(52), px(52), (g, w, a) => {
-    g.lineStyle(w, PALETTE.generatorAmber, a);
-    g.strokeCircle(px(26), px(16), px(11));
-    traceChevronDown(g, px(26), px(32), px(11));
-    traceChevronDown(g, px(26), px(42), px(11));
-  });
-  bake(scene, TEXTURE_KEYS.boss, px(96), px(96), (g, w, a) => {
-    g.lineStyle(w, PALETTE.enemyRed, a);
-    strokeDiamond(g, px(48), px(48), px(40));
-    g.strokeCircle(px(48), px(48), px(22));
-    g.lineBetween(px(48), px(27), px(48), px(69));
-    g.lineBetween(px(27), px(48), px(69), px(48));
-    g.lineBetween(px(48), px(8), px(48), px(3));
-    g.lineBetween(px(48), px(88), px(48), px(93));
-    g.lineBetween(px(8), px(48), px(3), px(48));
-    g.lineBetween(px(88), px(48), px(93), px(48));
-  });
+  bake(scene, TEXTURE_KEYS.fodder, px(48), px(48), paintFodder);
+  bake(scene, TEXTURE_KEYS.striker, px(52), px(52), paintStriker);
+  bake(scene, TEXTURE_KEYS.tank, px(56), px(56), paintTank);
+  bake(scene, TEXTURE_KEYS.swarm, px(30), px(30), paintSwarm);
+  bake(scene, TEXTURE_KEYS.blocker, px(64), px(64), paintBlocker);
+  bake(scene, TEXTURE_KEYS.guardian, px(52), px(52), paintGuardian);
+  bake(scene, TEXTURE_KEYS.turret, px(60), px(60), paintTurret);
+  bake(scene, TEXTURE_KEYS.kamikaze, px(40), px(40), paintKamikaze);
+  bake(scene, TEXTURE_KEYS.booster, px(52), px(52), paintBooster);
+  bake(scene, TEXTURE_KEYS.boss, px(96), px(96), paintBoss);
 }
 
 function buildProjectileTextures(scene: Phaser.Scene): void {
@@ -284,10 +380,19 @@ function buildProjectileTextures(scene: Phaser.Scene): void {
   bake(scene, TEXTURE_KEYS.laserPulse1, px(8), px(40), (g, w, a) => {
     g.lineStyle(w, WEAPON_PALETTE.pulse1, a);
     g.lineBetween(px(4), px(4), px(4), px(38));
+    // Hot white core + leading-tip glint so the bolt reads as energised, not a flat line.
+    g.lineStyle(w * 0.5, 0xffffff, a);
+    g.lineBetween(px(4), px(6), px(4), px(30));
+    g.fillStyle(0xffffff, a);
+    g.fillCircle(px(4), px(5), w * 0.7);
   });
   bake(scene, TEXTURE_KEYS.laserPulse2, px(10), px(40), (g, w, a) => {
     g.lineStyle(w, WEAPON_PALETTE.pulse2, a);
     g.lineBetween(px(5), px(3), px(5), px(38));
+    g.lineStyle(w * 0.5, 0xffffff, a);
+    g.lineBetween(px(5), px(5), px(5), px(30));
+    g.fillStyle(0xffffff, a);
+    g.fillCircle(px(5), px(4), w * 0.8);
   });
   // v1's iconic laserTex shape, preserved verbatim — the secret 2010 Easter egg weapon's
   // projectile. Deliberately unpolished; that's the joke.
@@ -300,30 +405,44 @@ function buildProjectileTextures(scene: Phaser.Scene): void {
     g.fillCircle(px(7), px(7), px(5));
     g.lineStyle(w, WEAPON_PALETTE.ion, a);
     g.strokeCircle(px(7), px(7), px(5));
+    // A white cross-glint + core turns the orb into a charged plasma ball.
+    g.lineStyle(w * 0.5, 0xffffff, a * 0.9);
+    g.lineBetween(px(7), px(3), px(7), px(11));
+    g.lineBetween(px(3), px(7), px(11), px(7));
+    g.fillStyle(0xffffff, a);
+    g.fillCircle(px(7), px(7), w * 0.7);
   });
   bake(scene, TEXTURE_KEYS.laserScatter1, px(6), px(28), (g, w, a) => {
     g.lineStyle(w, WEAPON_PALETTE.scatter1, a);
     g.lineBetween(px(3), px(2), px(3), px(26));
     g.fillStyle(WEAPON_PALETTE.scatter1, a);
     g.fillCircle(px(3), px(3), w * 0.6);
+    g.fillCircle(px(3), px(13), w * 0.45); // trailing sub-pellet
   });
   bake(scene, TEXTURE_KEYS.laserScatter2, px(6), px(28), (g, w, a) => {
     g.lineStyle(w, WEAPON_PALETTE.scatter2, a);
     g.lineBetween(px(3), px(2), px(3), px(26));
     g.fillStyle(WEAPON_PALETTE.scatter2, a);
     g.fillCircle(px(3), px(3), w * 0.7);
+    g.fillCircle(px(3), px(13), w * 0.5);
+    g.fillCircle(px(3), px(22), w * 0.35);
   });
   bake(scene, TEXTURE_KEYS.laserNova1, px(40), px(40), (g, w, a) => {
     g.lineStyle(w, WEAPON_PALETTE.nova1, a);
     g.strokeCircle(px(20), px(20), px(16));
     g.lineStyle(w * 0.5, WEAPON_PALETTE.nova1, a * 0.4);
     g.strokeCircle(px(20), px(20), px(10));
+    g.fillStyle(WEAPON_PALETTE.nova1, a * 0.7); // bright detonation core
+    g.fillCircle(px(20), px(20), px(3));
   });
   bake(scene, TEXTURE_KEYS.laserNova2, px(52), px(52), (g, w, a) => {
     g.lineStyle(w, WEAPON_PALETTE.nova2, a);
     g.strokeCircle(px(26), px(26), px(22));
     g.lineStyle(w * 0.5, WEAPON_PALETTE.nova2, a * 0.4);
     g.strokeCircle(px(26), px(26), px(14));
+    g.strokeCircle(px(26), px(26), px(7));
+    g.fillStyle(0xffffff, a * 0.8);
+    g.fillCircle(px(26), px(26), px(3));
   });
 }
 
@@ -423,6 +542,9 @@ function buildWeaponIconTextures(scene: Phaser.Scene): void {
     g.lineBetween(px(5), px(6), px(9), px(6));
     g.lineBetween(px(17), px(28), px(17), px(6));
     g.lineBetween(px(15), px(6), px(19), px(6));
+    g.fillStyle(0xffffff, a); // hot muzzle tips
+    g.fillCircle(px(7), px(6), w * 0.7);
+    g.fillCircle(px(17), px(6), w * 0.7);
   });
   bake(scene, TEXTURE_KEYS.iconPulse2, px(24), px(32), (g, w, a) => {
     g.lineStyle(w, WEAPON_PALETTE.pulse2, a);
@@ -430,6 +552,9 @@ function buildWeaponIconTextures(scene: Phaser.Scene): void {
     g.lineBetween(px(4), px(4), px(10), px(4));
     g.lineBetween(px(17), px(28), px(17), px(4));
     g.lineBetween(px(14), px(4), px(20), px(4));
+    g.fillStyle(0xffffff, a);
+    g.fillCircle(px(7), px(4), w * 0.8);
+    g.fillCircle(px(17), px(4), w * 0.8);
   });
   bake(scene, TEXTURE_KEYS.iconIon, px(24), px(32), (g, w, a) => {
     g.lineStyle(w * 1.5, WEAPON_PALETTE.ion, a);
@@ -437,6 +562,8 @@ function buildWeaponIconTextures(scene: Phaser.Scene): void {
     g.lineBetween(px(8), px(4), px(16), px(4));
     g.lineStyle(w, WEAPON_PALETTE.ion, a);
     g.strokeRect(px(9), px(14), px(6), px(10));
+    g.fillStyle(0xffffff, a * 0.9); // charged core in the emitter box
+    g.fillCircle(px(12), px(19), w * 0.9);
   });
   bake(scene, TEXTURE_KEYS.iconScatter1, px(28), px(32), (g, w, a) => {
     g.lineStyle(w, WEAPON_PALETTE.scatter1, a);
@@ -460,12 +587,17 @@ function buildWeaponIconTextures(scene: Phaser.Scene): void {
     g.lineStyle(w, WEAPON_PALETTE.nova1, a);
     g.strokeCircle(px(14), px(20), px(8));
     g.lineBetween(px(14), px(12), px(14), px(4));
+    g.fillStyle(WEAPON_PALETTE.nova1, a * 0.8); // pulse core
+    g.fillCircle(px(14), px(20), w * 1.1);
   });
   bake(scene, TEXTURE_KEYS.iconNova2, px(28), px(32), (g, w, a) => {
     g.lineStyle(w, WEAPON_PALETTE.nova2, a);
     g.strokeCircle(px(14), px(20), px(10));
+    g.strokeCircle(px(14), px(20), px(5));
     g.lineBetween(px(14), px(10), px(14), px(2));
     g.lineBetween(px(6), px(14), px(22), px(14));
+    g.fillStyle(0xffffff, a * 0.9);
+    g.fillCircle(px(14), px(20), w);
   });
   // The old zigzag, shrunk to icon size — the shop row's own little nostalgia wink.
   bake(scene, TEXTURE_KEYS.iconY2010, px(24), px(32), (g, w, a) => {
@@ -678,23 +810,27 @@ function buildEquipmentIconTextures(scene: Phaser.Scene): void {
     g.lineBetween(px(3), px(7),  px(21), px(7));
     g.lineBetween(px(3), px(12), px(21), px(12));
     g.lineBetween(px(6), px(17), px(18), px(17));
+    g.fillStyle(0xffffff, a); g.fillCircle(px(12), px(12), w * 0.6);
   });
   // Reflex: chevron pointing right (reflects)
   bake(scene, TEXTURE_KEYS.iconShieldReflex, px(24), px(24), (g, w, a) => {
     g.lineStyle(w, sb, a);
     g.lineBetween(px(5), px(5),  px(19), px(12));
     g.lineBetween(px(19), px(12), px(5), px(19));
+    g.fillStyle(0xffffff, a); g.fillCircle(px(19), px(12), w * 0.7);
   });
   // Bulwark: hexagon (solid fortress)
   bake(scene, TEXTURE_KEYS.iconShieldBulwark, px(24), px(24), (g, w, a) => {
     g.lineStyle(w, sb, a);
     traceZigzag(g, [[12,2],[20,7],[20,17],[12,22],[4,17],[4,7],[12,2]]);
+    g.fillStyle(sb, a); g.fillCircle(px(12), px(12), w * 0.9);
   });
   // Flux: wavy energy line
   bake(scene, TEXTURE_KEYS.iconShieldFlux, px(24), px(24), (g, w, a) => {
     g.lineStyle(w, sb, a);
     traceZigzag(g, [[3,12],[7,6],[11,18],[15,6],[21,12]]);
     g.strokeCircle(px(12), px(12), px(3));
+    g.fillStyle(0xffffff, a); g.fillCircle(px(12), px(12), w * 0.6);
   });
 
   // ── Generator icons (24×28) ──────────────────────────────────────────────
@@ -704,6 +840,7 @@ function buildEquipmentIconTextures(scene: Phaser.Scene): void {
     g.lineBetween(px(7),  px(4), px(7),  px(24));
     g.lineBetween(px(12), px(4), px(12), px(24));
     g.lineBetween(px(17), px(4), px(17), px(24));
+    g.fillStyle(ga, a); g.fillCircle(px(7), px(24), w * 0.7); g.fillCircle(px(12), px(24), w * 0.7); g.fillCircle(px(17), px(24), w * 0.7);
   });
   // Reserve: battery shape (large capacity)
   bake(scene, TEXTURE_KEYS.iconGeneratorReserve, px(24), px(28), (g, w, a) => {
@@ -713,11 +850,13 @@ function buildEquipmentIconTextures(scene: Phaser.Scene): void {
     g.lineBetween(px(9), px(7), px(9),  px(14));
     g.lineBetween(px(15), px(7), px(15), px(14));
     g.lineBetween(px(9), px(14), px(15), px(14));
+    g.fillStyle(ga, a * 0.8); g.fillRect(px(9), px(16), px(6), px(3)); g.fillRect(px(9), px(20), px(6), px(3));
   });
   // Surge: lightning bolt
   bake(scene, TEXTURE_KEYS.iconGeneratorSurge, px(24), px(28), (g, w, a) => {
     g.lineStyle(w, ga, a);
     traceZigzag(g, [[15,3],[9,14],[14,14],[8,25]]);
+    g.fillStyle(0xffffff, a); g.fillCircle(px(8), px(25), w * 0.7);
   });
   // Steady: flat line with pulse circle
   bake(scene, TEXTURE_KEYS.iconGeneratorSteady, px(24), px(28), (g, w, a) => {
@@ -726,6 +865,7 @@ function buildEquipmentIconTextures(scene: Phaser.Scene): void {
     g.strokeCircle(px(12), px(14), px(5));
     g.lineBetween(px(12), px(9),  px(12), px(4));
     g.lineBetween(px(12), px(19), px(12), px(24));
+    g.fillStyle(0xffffff, a); g.fillCircle(px(12), px(14), w * 0.7);
   });
 
   // ── Motor icons (24×24) ──────────────────────────────────────────────────
@@ -734,6 +874,7 @@ function buildEquipmentIconTextures(scene: Phaser.Scene): void {
     g.lineStyle(w, mm, a);
     traceZigzag(g, [[4,5],[12,12],[4,19]]);
     traceZigzag(g, [[12,5],[20,12],[12,19]]);
+    g.fillStyle(0xffffff, a); g.fillCircle(px(20), px(12), w * 0.7);
   });
   // Tactical: square crosshair (precision)
   bake(scene, TEXTURE_KEYS.iconMotorTactical, px(24), px(24), (g, w, a) => {
@@ -743,12 +884,14 @@ function buildEquipmentIconTextures(scene: Phaser.Scene): void {
     g.lineBetween(px(12), px(16), px(12), px(21));
     g.lineBetween(px(3),  px(12), px(8),  px(12));
     g.lineBetween(px(16), px(12), px(21), px(12));
+    g.fillStyle(0xffffff, a); g.fillCircle(px(12), px(12), w * 0.6);
   });
   // Sentinel: circle with inner diamond (watchful)
   bake(scene, TEXTURE_KEYS.iconMotorSentinel, px(24), px(24), (g, w, a) => {
     g.lineStyle(w, mm, a);
     g.strokeCircle(px(12), px(12), px(9));
     strokeDiamond(g, px(12), px(12), px(4));
+    g.fillStyle(mm, a); g.fillCircle(px(12), px(12), w * 0.8);
   });
   // Overdrive: three right-pointing chevrons (max thrust)
   bake(scene, TEXTURE_KEYS.iconMotorOverdrive, px(24), px(24), (g, w, a) => {
@@ -756,6 +899,7 @@ function buildEquipmentIconTextures(scene: Phaser.Scene): void {
     traceZigzag(g, [[2,5],[8,12],[2,19]]);
     traceZigzag(g, [[9,5],[15,12],[9,19]]);
     traceZigzag(g, [[16,5],[22,12],[16,19]]);
+    g.fillStyle(0xffffff, a); g.fillCircle(px(22), px(12), w * 0.7);
   });
 }
 
@@ -804,6 +948,20 @@ function traceChevronDown(
   g.lineTo(cx, cy + halfWidth * 0.6);
   g.lineTo(cx + halfWidth, cy - halfWidth * 0.6);
   g.strokePath();
+}
+
+interface TickSpec { rOuter: number; rInner: number; count: number; start: number; }
+
+/** Strokes `count` short radial ticks between radius `rInner` and `rOuter` around a
+ * center, evenly spaced starting at `start` — used for shield-ring notches, warning
+ * spikes, boss spokes, and armour brackets. Args already in baked-canvas pixel space. */
+function radialTicks(g: Phaser.GameObjects.Graphics, cx: number, cy: number, spec: TickSpec): void {
+  for (let i = 0; i < spec.count; i++) {
+    const ang = spec.start + (i / spec.count) * Math.PI * 2;
+    const cos = Math.cos(ang);
+    const sin = Math.sin(ang);
+    g.lineBetween(cx + cos * spec.rInner, cy + sin * spec.rInner, cx + cos * spec.rOuter, cy + sin * spec.rOuter);
+  }
 }
 
 /** Strokes a zigzag polyline through logical-pixel coordinate pairs. */

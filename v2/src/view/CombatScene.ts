@@ -21,10 +21,12 @@ import { Sound } from '../audio/SoundManager';
 import { CardOverlay } from './CardOverlay';
 import { CombatHud, HUD_ROW_ENRG, HUD_ROW_SHLD, hudRowScreenBounds } from './CombatHud';
 import { NarratorBar } from './NarratorBar';
+import { buildStarfield, tickStarfield } from './starfield';
+import type { Star } from './starfield';
 import { SupplyButtons } from './SupplyButtons';
 import { cssColor, PALETTE } from './palette';
 import { BTN_PANEL_W, BTN_X, DPR, fontPx, GAME_WIDTH, GAME_X, INFO_PANEL_W, LOGICAL_HEIGHT, LOGICAL_WIDTH, px, SHIP_GUN_X_OFFSET, SHIP_GUN_Y_OFFSET } from './layout';
-import { buildGameTextures, laserTextureForWeaponId, rearBoltTextureKey, sideBoltTextureKey, sideWeaponKindColor, textureForEnemyKind } from './textures';
+import { buildGameTextures, laserTextureForWeaponId, rearBoltTextureKey, sideBoltTextureKey, sideWeaponKindColor, textureForEnemyKind, weaponKindColor } from './textures';
 import { iconTextureForSideWeaponId, motorKindColorFromId, motorLevelFromId, splitWeaponId, textureForShipId } from './textureKeys';
 import { drawGeneratorCore, drawRearWeaponIndicator, drawShieldRings, drawSideWeaponIndicator, renderGunIndicator, renderThrusterAssembly, tickLaserBolts, tickMuzzleFlashes } from './shipRenderers';
 import type { LaserBolt, MuzzleFlash } from './shipRenderers';
@@ -69,6 +71,9 @@ const SIDE_BOLT_MIN_TRAVEL = 180;
 // Side-weapon bolts are a manual charged shot — bigger and brighter than autofire lasers.
 const SIDE_BOLT_SCALE = 1.7;
 const MUZZLE_FLASH_MS = 100;
+/** Minimum gap between shield-recharge SFX — the shield ticks up many times a second, so
+ * the sound is throttled to an occasional soft surge (the ring visual isn't throttled). */
+const SHIELD_SOUND_MIN_MS = 1400;
 // Cap per-frame catch-up: if the tab is backgrounded on mobile, deltaMs can spike to many
 // seconds. Without this the accumulator would fast-forward dozens of ticks in one frame and
 // the mission could resolve the instant the player returns. 250 ms = at most ~3 ticks/frame.
@@ -167,6 +172,22 @@ export interface CombatSceneData {
   missionId: string;
 }
 
+/** Idle-animation parameters per enemy kind. `spinMs` null = oscillate-only (turret);
+ * `pulse`/`pulseMs` drive the always-on "breathe" scale tween. Purely cosmetic — the tween
+ * touches display scale, never core state or collision distance. */
+function enemyAnimSpec(enemy: EnemyState): { spinMs: number | null; pulse: number; pulseMs: number } {
+  if (enemy.isBoss) return { spinMs: 4000, pulse: 1.18, pulseMs: 1400 };
+  switch (enemy.kind) {
+    case 'swarm':    return { spinMs: 800, pulse: 1.09, pulseMs: 480 };
+    case 'striker':  return { spinMs: 1800, pulse: 1.06, pulseMs: 700 };
+    case 'blocker':  return { spinMs: 5000, pulse: 1.05, pulseMs: 1600 };
+    case 'tank':     return { spinMs: 3200, pulse: 1.04, pulseMs: 1200 };
+    case 'turret':   return { spinMs: null, pulse: 1.08, pulseMs: 600 };
+    case 'kamikaze': return { spinMs: 600, pulse: 1.13, pulseMs: 260 };
+    default:         return { spinMs: 2400, pulse: 1.06, pulseMs: 900 };
+  }
+}
+
 /**
  * View layer only (V2_HANDOFF.md §2.1): advances the pure core on a fixed 100 ms
  * accumulator and interpolates entity positions between ticks. While a support call
@@ -197,8 +218,8 @@ export class CombatScene extends Phaser.Scene {
   private boosterBuffGfx!: Phaser.GameObjects.Graphics;
   private previousDistances = new Map<number, number>();
   private laserBolts: LaserBolt[] = [];
-  private enemyBolts: { rect: Phaser.GameObjects.Rectangle; glow: Phaser.GameObjects.Rectangle; vy: number; targetY: number }[] = [];
-  private stars: { rect: Phaser.GameObjects.Rectangle; speed: number }[] = [];
+  private enemyBolts: { layers: Phaser.GameObjects.Rectangle[]; vy: number; targetY: number }[] = [];
+  private stars: Star[] = [];
   private muzzleFlashes: MuzzleFlash[] = [];
   private muzzleFlashGfx!: Phaser.GameObjects.Graphics;
   private gunGfx!: Phaser.GameObjects.Graphics;
@@ -242,6 +263,7 @@ export class CombatScene extends Phaser.Scene {
   private floatingTexts: FloatingText[] = [];
   private shieldPulseRings: ShieldPulseRing[] = [];
   private shieldHitFlash = 0;
+  private lastShieldSoundMs = -9999;
   /** "ABILITIES" header — shown after first ability is picked. */
   private cardsHeader!: Phaser.GameObjects.Text;
   /** Ability name + description labels — rebuilt on every new pick. */
@@ -509,20 +531,14 @@ export class CombatScene extends Phaser.Scene {
   }
 
   private addStarfield(): void {
-    const COUNT = 65;
-    const buf = crypto.getRandomValues(new Uint32Array(COUNT * 3));
-    for (let i = 0; i < COUNT; i++) {
-      const rx = buf[i * 3] ?? 0;
-      const ry = buf[i * 3 + 1] ?? 0;
-      const rz = buf[i * 3 + 2] ?? 0;
-      const x = GAME_X + (rx % GAME_WIDTH);
-      const y = GAME_TOP_Y + (ry % (LOGICAL_HEIGHT - GAME_TOP_Y));
-      const alpha = rx % 3 === 0 ? 0.6 : 0.22;
-      const size = rx % 7 === 0 ? 2 : 1;
-      const speed = 18 + (rz % 50); // logical units / second; parallax spread (scrolls left)
-      const rect = this.add.rectangle(px(x), px(y), px(size), px(size), 0xffffff, alpha).setDepth(0);
-      this.stars.push({ rect, speed });
-    }
+    this.stars = buildStarfield(this, {
+      count: 65,
+      xMin: GAME_X,
+      xSpan: GAME_WIDTH,
+      yMin: GAME_TOP_Y,
+      ySpan: LOGICAL_HEIGHT - GAME_TOP_Y,
+      depth: 0,
+    });
   }
 
   /** Slow sinusoidal x drift — keeps the ship alive without distracting from combat. */
@@ -536,10 +552,7 @@ export class CombatScene extends Phaser.Scene {
   }
 
   private updateStars(deltaMs: number): void {
-    for (const star of this.stars) {
-      star.rect.y += px(star.speed) * deltaMs / 1000;
-      if (star.rect.y > px(LOGICAL_HEIGHT + 2)) star.rect.y = px(GAME_TOP_Y - 2);
-    }
+    tickStarfield(this.stars, deltaMs, GAME_TOP_Y - 2, LOGICAL_HEIGHT + 2);
   }
 
 
@@ -630,12 +643,13 @@ export class CombatScene extends Phaser.Scene {
     for (let i = 0; i < count; i++) {
       const angle = (i / count) * Math.PI * 2 + (i % 4) * 0.15;
       const dist = px(20 + (i % 6) * 10); // 20–70 logical px, deterministic
-      const dot = this.add.rectangle(x, y, px(3), px(3), color).setDepth(5);
+      const dot = this.add.circle(x, y, px(1.6 + (i % 3) * 0.6), color)
+        .setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
       this.tweens.add({
         targets: dot,
         x: x + Math.cos(angle) * dist,
         y: y + Math.sin(angle) * dist,
-        alpha: 0, duration: 380, ease: 'Power2',
+        alpha: 0, scale: 0.3, duration: 380, ease: 'Power2',
         onComplete: () => { dot.destroy(); },
       });
     }
@@ -675,7 +689,9 @@ export class CombatScene extends Phaser.Scene {
       color: cssColor(color),
       stroke: cssColor(PALETTE.backgroundNearBlack),
       strokeThickness: px(1.2),
-    }).setDepth(8).setOrigin(0.5);
+    }).setDepth(8).setOrigin(0.5).setScale(1.5);
+    // Quick overshoot pop on spawn — settles to full size well before the 700ms fade.
+    this.tweens.add({ targets: txt, scale: 1, duration: 160, ease: 'Back.easeOut' });
     this.floatingTexts.push({ text: txt, vy: -px(50), life: 700, maxLife: 700 });
   }
 
@@ -794,12 +810,13 @@ export class CombatScene extends Phaser.Scene {
     const playerBoltKind = this.resolvePlayerBoltKind();
     for (let i = 0; i < shotsFired; i++) this.spawnLaserBolt(playerBoltKind);
     for (let i = 0; i < rearShotsFired; i++) this.spawnRearBolt();
-    if (shotsFired > 0) Sound.fire();
-    if (rearShotsFired > 0) Sound.rearFire();
+    if (shotsFired > 0) Sound.fire(this.core.loadout.weapon?.kind);
+    if (rearShotsFired > 0) Sound.rearFire(this.core.loadout.rearWeapon?.kind);
     if (this.core.stats.kills > before.kills) Sound.kill();
 
     if (this.core.ship.hull < before.hull - 0.5) {
       this.cameras.main.shake(120, 0.005);
+      this.flashShipHit();
       // Below the ship, shield's float above (a single collision can drain both in one
       // frame once shield is thin — damageShip routes shield-first then overflows to
       // hull, core/combat.ts) — offset apart so the two numbers never overlap.
@@ -811,7 +828,12 @@ export class CombatScene extends Phaser.Scene {
     }
     if (this.core.stats.collisions > before.collisions) this.spawnCollisionFeedback();
     if (this.core.ship.shield > before.shield + 0.5) {
-      Sound.shieldPulse();
+      // Shield recharges in small steps many times a second — throttle the sound so it's an
+      // occasional soft surge, not a constant shimmer (the ring visual can still pulse each time).
+      if (this.time.now - this.lastShieldSoundMs > SHIELD_SOUND_MIN_MS) {
+        Sound.shieldPulse();
+        this.lastShieldSoundMs = this.time.now;
+      }
       this.shieldPulseRings.push({ radius: px(28), alpha: 0.75 });
     }
 
@@ -840,6 +862,7 @@ export class CombatScene extends Phaser.Scene {
     resolveAbilityAction(this.core, action);
     if (this.core.pickedAbilityIds.length > prevCount) {
       if (prevCount === 0) this.cardsHeader.setText('ABILITIES');
+      Sound.select();
       this.rebuildCardDisplay();
     }
     if (this.core.pendingOffer === null) this.cardOverlay.hide();
@@ -1110,7 +1133,7 @@ export class CombatScene extends Phaser.Scene {
     // state.enemies before this function regains control.
     const targets = [...this.core.enemies].sort((a, b) => a.distance - b.distance).slice(0, sideWeapon.maxTargets);
     fireSideWeapon(this.core);
-    Sound.sideWeaponFire();
+    Sound.sideWeaponFire(sideWeapon.kind);
     this.spawnSideWeaponBurst(sideWeaponKindColor(sideWeapon.kind, sideWeapon.id));
     this.spawnSideWeaponBolts(sideWeapon, targets);
   }
@@ -1204,6 +1227,7 @@ export class CombatScene extends Phaser.Scene {
     }
     if (!this.narratorBossShown && this.core.enemies.some((e) => e.isBoss)) {
       this.narratorBossShown = true;
+      Sound.bossAppear();
       const line = getStoryLine(missionId, 'boss-appear');
       if (line !== undefined) this.narrator.show(line);
     }
@@ -1250,7 +1274,7 @@ export class CombatScene extends Phaser.Scene {
     if (boltKind === 'crit') sprite.setTint(0xffffff);
     else if (boltKind === 'miss') { sprite.setTint(0x445566); sprite.setAlpha(0.35); }
     this.laserBolts.push({ sprite, vy: (targetY - gy) / LASER_TRAVEL_MS, targetY });
-    this.muzzleFlashes.push({ x: gx, y: gy, life: MUZZLE_FLASH_MS });
+    this.muzzleFlashes.push({ x: gx, y: gy, life: MUZZLE_FLASH_MS, color: weaponKindColor(weapon.kind, weapon.id) });
   }
 
   private resolvePlayerBoltKind(): 'normal' | 'crit' | 'miss' {
@@ -1286,7 +1310,9 @@ export class CombatScene extends Phaser.Scene {
   private spawnCollisionFeedback(): void {
     const cx = px(SHIP_CENTER_X) + this.driftX();
     const cy = px(SHIP_Y - 6) + this.bobY();
+    Sound.collision();
     this.cameras.main.shake(180, 0.008);
+    this.spawnShockwave(cx, cy, 0xff5522, 6);
     this.spawnBurst(cx, cy, 0xff3300, 24);
     for (const sprite of this.enemySprites.values()) {
       this.spawnBurst(sprite.x, sprite.y, 0xff6633, 8);
@@ -1384,7 +1410,7 @@ export class CombatScene extends Phaser.Scene {
         .setBlendMode(Phaser.BlendModes.ADD)
         .setDepth(5);
       this.rearLaserBolts.push({ sprite, vy: (targetY - gy) / LASER_TRAVEL_MS, targetY });
-      this.muzzleFlashes.push({ x: gx, y: gy, life: MUZZLE_FLASH_MS });
+      this.muzzleFlashes.push({ x: gx, y: gy, life: MUZZLE_FLASH_MS, color: 0xffaa66 });
     }
   }
 
@@ -1392,34 +1418,48 @@ export class CombatScene extends Phaser.Scene {
     const startY = this.laneToY(enemy.distance, enemy.kind) + px(12);
     const targetY = px(SHIP_Y - 20);
     if (startY >= targetY) return;
-    const color = outcome === 'crit' ? 0xff9900 : outcome === 'miss' ? 0x334455 : 0xff6600;
-    const alpha = outcome === 'miss' ? 0.35 : 0.9;
-    // Bigger and with a soft trailing glow behind the core bolt — the old bare 3x8px
-    // rect read as barely-there next to the player's own textured, scaled laser bolts.
-    const glow = this.add
-      .rectangle(px(SHIP_CENTER_X), startY, px(9), px(22), color, alpha * 0.35)
-      .setDepth(4)
-      .setBlendMode(Phaser.BlendModes.ADD);
-    const rect = this.add
-      .rectangle(px(SHIP_CENTER_X), startY, px(5), px(13), color, alpha)
-      .setDepth(5)
-      .setBlendMode(Phaser.BlendModes.ADD);
-    const travelMs = 320;
+    const x = px(SHIP_CENTER_X);
+    const color = outcome === 'crit' ? 0xffbb33 : outcome === 'miss' ? 0x445566 : 0xff5522;
+    const dim = outcome === 'miss';
+    // Three additive layers — wide soft glow, a bright coloured body, and a white-hot core
+    // — so an incoming shot reads clearly against the starfield instead of a thin streak.
+    const layer = (w: number, h: number, c: number, a: number, depth: number): Phaser.GameObjects.Rectangle =>
+      this.add.rectangle(x, startY, px(w), px(h), c, a).setDepth(depth).setBlendMode(Phaser.BlendModes.ADD);
+    const layers = dim
+      ? [layer(10, 24, color, 0.3, 4), layer(5, 14, color, 0.4, 5)]
+      : [
+          layer(18, 40, color, 0.32, 4),
+          layer(10, 26, color, 0.95, 5),
+          layer(4, 14, 0xffffff, 0.95, 6),
+        ];
+    const travelMs = 360;
     const vy = (targetY - startY) / travelMs;
-    this.enemyBolts.push({ rect, glow, vy, targetY });
+    this.enemyBolts.push({ layers, vy, targetY });
   }
 
   private updateEnemyBolts(deltaMs: number): void {
     this.enemyBolts = this.enemyBolts.filter((bolt) => {
-      bolt.rect.setY(bolt.rect.y + bolt.vy * deltaMs);
-      bolt.glow.setY(bolt.rect.y);
-      if (bolt.rect.y >= bolt.targetY) {
-        bolt.rect.destroy();
-        bolt.glow.destroy();
+      const y = (bolt.layers[0]?.y ?? bolt.targetY) + bolt.vy * deltaMs;
+      for (const l of bolt.layers) l.setY(y);
+      if (y >= bolt.targetY) {
+        for (const l of bolt.layers) l.destroy();
         return false;
       }
       return true;
     });
+  }
+
+  /** Brief solid-white impact flash when an enemy takes damage — the tint clears itself,
+   * guarded in case the sprite was destroyed (enemy killed) within the flash window. */
+  private flashEnemyHit(sprite: Phaser.GameObjects.Image): void {
+    sprite.setTintFill(0xffffff);
+    this.time.delayedCall(60, () => { if (sprite.active) sprite.clearTint(); });
+  }
+
+  /** Red hull-hit flash on the player ship, mirroring the enemy impact flash. */
+  private flashShipHit(): void {
+    this.shipSprite.setTintFill(0xff4455);
+    this.time.delayedCall(80, () => { if (this.shipSprite.active) this.shipSprite.clearTint(); });
   }
 
   private snapshotDistances(): void {
@@ -1451,6 +1491,7 @@ export class CombatScene extends Phaser.Scene {
       const sprite = this.enemySprites.get(enemy.id);
       if (sprite === undefined) continue;
       if (enemy.hp < hpBefore - 0.5) {
+        this.flashEnemyHit(sprite);
         this.spawnHitBurst(sprite.x, sprite.y);
         // Shield-burst chip damage (conveyor.ts's advanceEnemies, t1's own mechanic)
         // renders shieldBlue instead of the default enemyRed — the only other source of
@@ -1748,32 +1789,35 @@ export class CombatScene extends Phaser.Scene {
   private onEnemyDeath(x: number, y: number, enemyId: number): void {
     const coinReward = this.enemyCoinRewards.get(enemyId) ?? 0;
     this.enemyCoinRewards.delete(enemyId);
+    this.spawnShockwave(x, y, 0xffaa44);
     this.spawnBurst(x, y, 0xff6600, 14);
     this.spawnBurst(x, y, 0xffaa22, 6);
     if (coinReward > 0) this.spawnCoinFloat(x, y, coinReward);
   }
 
+  /** A quick expanding ring at a kill site — reads as the shell's blast front. Tween-driven
+   * (like spawnTweenBurst) so it still animates during the post-finish exit hold. */
+  private spawnShockwave(x: number, y: number, color: number, endScale = 4): void {
+    const ring = this.add.circle(x, y, px(6), 0x000000, 0)
+      .setStrokeStyle(px(2), color, 0.9).setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
+    this.tweens.add({
+      targets: ring, scale: endScale, alpha: 0, duration: 340 + endScale * 20, ease: 'Cubic.easeOut',
+      onComplete: () => { ring.destroy(); },
+    });
+  }
+
   private addEnemyAnimTween(sprite: Phaser.GameObjects.Image, enemy: EnemyState): void {
     const delay = (enemy.id % 8) * 125;
-    if (enemy.isBoss) {
-      this.tweens.add({ targets: sprite, scaleX: 1.18, scaleY: 1.18, duration: 1400, yoyo: true, repeat: -1, ease: 'Sine.easeInOut', delay });
-      this.tweens.add({ targets: sprite, angle: 360, duration: 4000, repeat: -1, ease: 'Linear', delay });
-    } else if (enemy.kind === 'swarm') {
-      this.tweens.add({ targets: sprite, angle: 360, duration: 800, repeat: -1, ease: 'Linear', delay });
-    } else if (enemy.kind === 'striker') {
-      this.tweens.add({ targets: sprite, angle: 360, duration: 1800, repeat: -1, ease: 'Linear', delay });
-    } else if (enemy.kind === 'blocker') {
-      this.tweens.add({ targets: sprite, angle: 360, duration: 5000, repeat: -1, ease: 'Linear', delay });
-    } else if (enemy.kind === 'tank') {
-      this.tweens.add({ targets: sprite, angle: 360, duration: 3200, repeat: -1, ease: 'Linear', delay });
-    } else if (enemy.kind === 'turret') {
-      // Turret oscillates but never rotates fully — it's a stationary emplacement.
-      this.tweens.add({ targets: sprite, scaleX: 1.08, scaleY: 1.08, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut', delay });
-    } else if (enemy.kind === 'kamikaze') {
-      this.tweens.add({ targets: sprite, angle: 360, duration: 600, repeat: -1, ease: 'Linear', delay });
-    } else {
-      this.tweens.add({ targets: sprite, angle: 360, duration: 2400, repeat: -1, ease: 'Linear', delay });
+    const spec = enemyAnimSpec(enemy);
+    // spinMs null = a stationary emplacement (turret) that only oscillates, never spins.
+    if (spec.spinMs !== null) {
+      this.tweens.add({ targets: sprite, angle: 360, duration: spec.spinMs, repeat: -1, ease: 'Linear', delay });
     }
+    // Every enemy also "breathes" — a subtle scale pulse so nothing sits perfectly static.
+    this.tweens.add({
+      targets: sprite, scaleX: spec.pulse, scaleY: spec.pulse,
+      duration: spec.pulseMs, yoyo: true, repeat: -1, ease: 'Sine.easeInOut', delay,
+    });
   }
 
   /**
@@ -1926,6 +1970,7 @@ export class CombatScene extends Phaser.Scene {
     const cy = px(SHIP_Y) + this.bobY();
     for (let ring = 0; ring < 3; ring++) {
       this.time.delayedCall(ring * 160, () => {
+        this.spawnShockwave(cx, cy, 0xff6622, 9 - ring * 2);
         this.spawnTweenBurst(cx, cy, 0xff4400, 18);
         this.spawnTweenBurst(cx, cy, 0xffcc00, 6);
       });

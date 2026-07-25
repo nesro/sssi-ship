@@ -12,6 +12,8 @@ import { subscriptionById } from '../data/subscriptions';
 import { DISCORD_LABEL, DISCORD_URL, openExternalLink } from './externalLinks';
 import { cssColor, PALETTE } from './palette';
 import { fontPx, HUB_LEFT_W, LOGICAL_HEIGHT, LOGICAL_WIDTH, px } from './layout';
+import { buildStarfield, tickStarfield } from './starfield';
+import type { Star } from './starfield';
 import { ShopPreviewPanel } from './ShopPreviewPanel';
 import type { PreviewLayout } from './ShopPreviewPanel';
 import { buildGameTextures } from './textures';
@@ -202,6 +204,10 @@ const ABOUT_TEXT = [
   'level design, balancing, visuals or music',
   '— please reach out.',
   'I would love to hear from you.',
+  '',
+  'Music: "Swim below as Leviathans"',
+  'by Fireproof Babies (CC BY).',
+  'Sound effects are generated in-engine.',
 ].join('\n');
 
 /** Equip/unequip mutation handlers per shop system — the "scene dispatch table" (not viewmodel concern). */
@@ -225,7 +231,7 @@ const UNEQUIP_HANDLERS: Partial<Record<ShopTab, (save: SaveData) => SaveData>> =
 /** Merged hub: mission list on the left, always-on ship preview on the right. */
 export class HubScene extends Phaser.Scene {
   private save!: SaveData;
-  private scrollingStars: { rect: Phaser.GameObjects.Rectangle; speed: number }[] = [];
+  private scrollingStars: Star[] = [];
   private contentObjects = new ManagedObjectGroup();
   private preview!: ShopPreviewPanel;
   private uiState: HubUIState = DEFAULT_HUB_UI_STATE;
@@ -368,10 +374,7 @@ export class HubScene extends Phaser.Scene {
 
   // fallow-ignore-next-line unused-class-member
   override update(_time: number, deltaMs: number): void {
-    for (const star of this.scrollingStars) {
-      star.rect.y += px(star.speed) * deltaMs / 1000;
-      if (star.rect.y > px(LOGICAL_HEIGHT + 2)) star.rect.y = -px(2);
-    }
+    tickStarfield(this.scrollingStars, deltaMs, -2, LOGICAL_HEIGHT + 2);
     this.preview.update(deltaMs);
   }
 
@@ -552,20 +555,14 @@ export class HubScene extends Phaser.Scene {
   }
 
   private addStarfield(): void {
-    const COUNT = 55;
-    const buf = crypto.getRandomValues(new Uint32Array(COUNT * 3));
-    for (let i = 0; i < COUNT; i++) {
-      const rx = buf[i * 3] ?? 0;
-      const ry = buf[i * 3 + 1] ?? 0;
-      const rz = buf[i * 3 + 2] ?? 0;
-      const x = rx % LOGICAL_WIDTH;
-      const y = ry % LOGICAL_HEIGHT;
-      const alpha = rx % 3 === 0 ? 0.55 : 0.2;
-      const size = rx % 7 === 0 ? 2 : 1;
-      const speed = 10 + (rz % 28);
-      const rect = this.add.rectangle(px(x), px(y), px(size), px(size), 0xffffff, alpha).setDepth(0);
-      this.scrollingStars.push({ rect, speed });
-    }
+    this.scrollingStars = buildStarfield(this, {
+      count: 55,
+      xMin: 0,
+      xSpan: LOGICAL_WIDTH,
+      yMin: 0,
+      ySpan: LOGICAL_HEIGHT,
+      depth: 0,
+    });
   }
 
   // ─── Missions (galaxy view) ──────────────────────────────────────────────────
@@ -1413,10 +1410,13 @@ export class HubScene extends Phaser.Scene {
     });
     this.addC(howToPlayBtn);
 
-    // devOff: one row-pitch below HOW TO PLAY. devOn: two row-pitches below the dev
-    // tools section's first button (coins, stars, then reset) — both must stay derived
-    // from SETTINGS_ROW_PITCH, never hand-copied as their own literal.
-    const resetY = devOn ? CONTENT_TOP + DEV_TOOLS_START_Y + 2 * SETTINGS_ROW_PITCH : CONTENT_TOP + SETTINGS_HOW_TO_PLAY_Y + SETTINGS_ROW_PITCH;
+    // devOff: one row-pitch below HOW TO PLAY. devOn: below the dev tools section's
+    // buttons — coins, stars, then (dev builds only) the soundboard/gallery links row,
+    // then reset. All derived from SETTINGS_ROW_PITCH, never hand-copied literals. The
+    // dev-page links only exist in a dev build (their pages 404 in a shipped build), so
+    // reset sits one row lower there and at the usual spot in a production devMode save.
+    const devToolRows = import.meta.env.DEV ? 3 : 2;
+    const resetY = devOn ? CONTENT_TOP + DEV_TOOLS_START_Y + devToolRows * SETTINGS_ROW_PITCH : CONTENT_TOP + SETTINGS_HOW_TO_PLAY_Y + SETTINGS_ROW_PITCH;
     let resetPending = false;
     const resetLabel = (): string => resetPending ? '▸ CONFIRM RESET' : 'RESET PROGRESS';
     const resetColor = (): number => resetPending ? 0xff4444 : 0x664444;
@@ -1496,6 +1496,23 @@ export class HubScene extends Phaser.Scene {
       },
     });
     this.addC(starsBtn);
+
+    // Dev-only links to the standalone tuning tools (soundboard, texture gallery). Guarded
+    // to dev builds — the pages are served by Vite in dev and never bundled, so they'd 404
+    // in a shipped build even with devMode on.
+    if (import.meta.env.DEV) {
+      const linkY = px(CONTENT_TOP + DEV_TOOLS_START_Y + 2 * SETTINGS_ROW_PITCH);
+      this.addC(addTextButton(this, {
+        x: baseX, y: linkY, originX: 0, originY: 0.5, label: '♪ SOUNDBOARD',
+        color: PALETTE.shieldBlue, size: 14,
+        onClick: () => { openExternalLink('soundboard.html'); },
+      }));
+      this.addC(addTextButton(this, {
+        x: baseX + px(150), y: linkY, originX: 0, originY: 0.5, label: '▦ GALLERY',
+        color: PALETTE.weaponCyan, size: 14,
+        onClick: () => { openExternalLink('gallery.html'); },
+      }));
+    }
   }
 
 }

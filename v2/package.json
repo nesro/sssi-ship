@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "provision-audio": "tsx tools/provision-audio.ts",
+    "predev": "tsx tools/provision-audio.ts",
     "dev": "vite",
+    "prebuild": "tsx tools/provision-audio.ts",
     "build": "tsc --noEmit && vite build",
     "build:dry": "tsc --noEmit",
     "preview": "vite preview",

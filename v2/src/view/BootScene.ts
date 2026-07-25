@@ -1,13 +1,14 @@
 import Phaser from 'phaser';
-import { preloadAudio, Sound } from '../audio/SoundManager';
+import { preloadMusic, Sound } from '../audio/SoundManager';
+import { buildGameSounds } from '../audio/synth';
 import { loadSave } from '../save/SaveManager';
 import { cssColor, PALETTE } from './palette';
-import { fontPx, px, SCREEN_HEIGHT, SCREEN_WIDTH } from './layout';
+import { fontPx, SCREEN_HEIGHT, SCREEN_WIDTH } from './layout';
 import { UI_FONT } from './widgets';
 
 /**
- * First scene: loads all audio assets (the only files Phaser must fetch — textures are
- * generated at runtime), then hands off to `AlphaNoticeScene` — every save, fresh or
+ * First scene: loads the licensed music track (the only audio file — SFX are synthesised
+ * at runtime like the textures), then hands off to `AlphaNoticeScene` — every save, fresh or
  * returning, every launch (that screen has no save-flag gate of its own; it's a
  * standing dev/alpha reminder, not a first-run-only prompt). There is no separate
  * tutorials-or-skip prompt scene: the choice lives on the galaxy map itself (HubScene's
@@ -16,8 +17,7 @@ import { UI_FONT } from './widgets';
  * dim map). A fresh save (`!onboardingSeen`) gets `{ showTour: true }`, forwarded
  * unchanged through `AlphaNoticeScene` to `HubScene`, so the hub button coach-mark tour
  * still plays once on a genuinely new save — that question is orthogonal to both the
- * tutorial choice and the alpha notice, not gated behind either. A tiny loading label
- * covers the brief fetch of the ~9 MB music track on first launch.
+ * tutorial choice and the alpha notice, not gated behind either.
  */
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -33,18 +33,12 @@ export class BootScene extends Phaser.Scene {
         color: cssColor(PALETTE.weaponCyan),
       })
       .setOrigin(0.5);
-    this.add
-      .text(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + px(40), 'loading…', {
-        fontFamily: UI_FONT,
-        fontSize: `${String(fontPx(13))}px`,
-        color: cssColor(0x6666aa),
-      })
-      .setOrigin(0.5);
-    preloadAudio(this);
+    preloadMusic(this);
   }
 
   // fallow-ignore-next-line unused-class-member
   create(): void {
+    buildGameSounds(this);
     Sound.attach(this.sound);
     // `onboardingSeen` is persisted by AlphaNoticeScene itself, only once the player
     // actually reaches HubScene via CONTINUE — not here. Persisting it this early would

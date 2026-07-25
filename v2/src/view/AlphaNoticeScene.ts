@@ -3,6 +3,8 @@ import { acceptOnboarding, loadSave, persistSave, resetSave, resolveDevMode } fr
 import { DISCORD_LABEL, DISCORD_URL, openExternalLink } from './externalLinks';
 import { cssColor, PALETTE } from './palette';
 import { fontPx, LOGICAL_HEIGHT, LOGICAL_WIDTH, px } from './layout';
+import { buildStarfield, tickStarfield } from './starfield';
+import type { Star } from './starfield';
 import { addTextButton, UI_FONT } from './widgets';
 import { playTutorialAutopilot } from './tutorialAutopilot';
 
@@ -22,6 +24,7 @@ export class AlphaNoticeScene extends Phaser.Scene {
   private forwardData: { showTour?: boolean } = {};
   private termsAccepted = false;
   private termsHint!: Phaser.GameObjects.Text;
+  private stars: Star[] = [];
 
   constructor() { super('AlphaNoticeScene'); }
 
@@ -29,6 +32,9 @@ export class AlphaNoticeScene extends Phaser.Scene {
   create(data: { showTour?: boolean }): void {
     this.forwardData = { ...data };
     this.termsAccepted = loadSave().termsAccepted === true;
+    this.stars = buildStarfield(this, {
+      count: 45, xMin: 0, xSpan: LOGICAL_WIDTH, yMin: 0, ySpan: LOGICAL_HEIGHT, depth: -1,
+    });
 
     this.add.text(px(LOGICAL_WIDTH / 2), px(100), '⚠  EARLY DEV / ALPHA BUILD', {
       fontFamily: UI_FONT, fontSize: `${String(fontPx(20))}px`, color: cssColor(PALETTE.generatorAmber),
@@ -173,5 +179,10 @@ export class AlphaNoticeScene extends Phaser.Scene {
       persistSave({ ...loadSave(), termsAccepted: true });
     }
     this.continueToHub();
+  }
+
+  // fallow-ignore-next-line unused-class-member
+  override update(_time: number, deltaMs: number): void {
+    tickStarfield(this.stars, deltaMs, -2, LOGICAL_HEIGHT + 2);
   }
 }

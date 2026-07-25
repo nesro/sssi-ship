@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nesro Nova — Soundboard (dev)</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0; padding: 20px;
+        background: #04040a; color: #cfe0ff;
+        font: 13px/1.5 ui-monospace, monospace;
+      }
+      h1 { font-size: 18px; color: #00ffee; margin: 0 0 4px; }
+      p.sub { color: #6677aa; margin: 0 0 16px; }
+      a { color: #ff44cc; }
+      .bar { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; flex-wrap: wrap; }
+      button {
+        background: #101028; color: #cfe0ff; border: 1px solid #33447a;
+        padding: 6px 12px; border-radius: 6px; cursor: pointer; font: inherit;
+      }
+      button:hover { border-color: #00ffee; }
+      button.play { width: 100%; text-align: left; color: #00ffee; font-size: 14px; }
+      #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+      .card { background: #0a0a18; border: 1px solid #222244; border-radius: 8px; padding: 10px; }
+      .head { margin-bottom: 8px; }
+      label.slider { display: grid; grid-template-columns: 62px 1fr 46px; align-items: center; gap: 6px; margin: 3px 0; }
+      .sname { color: #8899cc; }
+      .sval { color: #ffcc44; text-align: right; }
+      input[type=range] { width: 100%; accent-color: #00ffee; }
+      textarea { width: 100%; height: 160px; margin-top: 14px; background: #0a0a18; color: #9fd; border: 1px solid #222244; border-radius: 6px; padding: 8px; font: inherit; }
+    </style>
+  </head>
+  <body>
+    <h1>◈ SOUNDBOARD</h1>
+    <p class="sub">
+      Dev tool — tune the procedural SFX live, then tell me the values (or paste the EXPORT
+      JSON) to bake into <code>synthVoices.ts</code> / <code>SoundManager.ts</code>.
+      · <a href="/gallery.html">→ Visuals gallery</a> · <a href="/">→ Game</a>
+    </p>
+    <div class="bar">
+      <button id="playAll">▶ Play all</button>
+      <button id="playMusic">▶ Music (OG track)</button>
+      <button id="stopMusic">■ Stop music</button>
+      <button id="export">⇩ Export values JSON</button>
+      <audio id="music" src="/audio/music-main.mp3" loop preload="none"></audio>
+    </div>
+    <div id="grid"></div>
+    <textarea id="dump" placeholder="EXPORT values appear here — copy and paste back to me to bake them in."></textarea>
+    <script type="module" src="/dev/soundboard.ts"></script>
+  </body>
+</html>

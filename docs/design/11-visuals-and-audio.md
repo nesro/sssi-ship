@@ -14,9 +14,18 @@ procedural — no PNG/SVG assets.
 triangle body with wing stubs; additive thruster particle emitter (amber, ~12/sec, 200 ms
 lifespan); slow scale pulse (0.96–1.04) for heartbeat feel.
 
-**Audio:** looping music ("Swim below as Leviathans" by Fireproof Babies, CC BY 2.5 —
-attribution required in Credits screen). SFX: LaserShot1–3, Rocket, Ding. Persisted mute
-toggle.
+**Audio — procedural SFX + licensed music.** The **SFX** are synthesised at runtime in
+`v2/src/audio/synthVoices.ts` (rendered into Phaser's audio cache by `synth.ts`'s
+`buildGameSounds`) — the audible counterpart to the procedural textures, so no SFX file is
+fetched or shipped. Voices: three laser zaps (per-weapon-kind detune/level, also reused
+pitched for rear/side weapons), a subtle UI-click tick, a bell `ding` (card-pick confirm), a
+kill explosion, a hull-collision impact, a shield-pulse shimmer, a boss-arrival alarm sting,
+a rocket/boost whoosh, and a resolving victory jingle. Every SFX is tunable live in the
+soundboard dev tool (`/soundboard.html`). The **music** stays the licensed track
+("Swim below as Leviathans" by Fireproof Babies, CC BY — attribution required in the Credits
+screen); it's loaded from a file (`preloadMusic` in BootScene, provisioned into
+`public/audio/` by `tools/provision-audio.ts`). Persisted music + SFX mute toggles. See
+`v2/docs/plans/generated-audio-and-richer-sprites.md`.
 
 ---
 
