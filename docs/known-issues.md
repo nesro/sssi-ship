@@ -15,6 +15,16 @@ Move resolved items to the bottom with the date and what fixed them, instead of 
 
 ## Open
 
+### `pnpm onboarding`'s t1-win coin assertion is stale — pre-existing, unrelated to 2026-07-25's narrator-popup work
+Found while re-running `pnpm onboarding` end to end to verify the new defeat-hint popup
+didn't break the tool's t1/t2 defeat flow (it didn't — every other check passed,
+including both defeat-shop-redirect checks). `tools/onboarding-audit.ts:168` asserts
+`afterRetry.coins === beforeRetry.coins + 45` ("30 completion + 15 real kill") for t1's
+win payout; the real payout no longer matches. Not touched by today's changes (verified:
+no diff in `missions.ts`/`combat.ts`/`result.ts`) — this drifted at some earlier,
+unrelated point. Needs the actual current t1 coin math re-derived and the assertion
+updated, not touched here since it's out of scope for the narrator/sound fixes below.
+
 ### Reported stale main-menu tutorial copy about Settings/Credits — not reproduced
 Tomáš (2026-07-24): "main menu tutorial have outdated into about settings, there are
 no credits and message anymore." Investigated thoroughly — read `HubTour.ts`,
@@ -334,6 +344,72 @@ actionable headlessly.**
 `docs/plans/mission-fun-review.md` §F6. Playtest call only, unchanged since 2026-07-11.
 
 ## Resolved
+
+### Narrator popup margins, redundant defeat-hint text, and a harsh shield-pulse sound — landed 2026-07-25
+Tomáš, three details from actually playing the game after the round-4 + reconciliation
+work:
+1. "the narrator window have sometimes text too close to the edge of the popup window"
+2. "when I die on the first try of t1, there is still some text in the bottom. I don't
+   want that bottom text ever again, make sure it's deleted from everywhere. Just add
+   another narrator popup window"
+3. "the sound for shield refil is terrible. it sounds often, so make it more subtle and
+   'space like'"
+
+**1 — narrator modal margins**: `showNarratorLine`'s (`CombatScene.ts`) wordWrap width
+was `panelW - 48` (24px margin each side) — a long tutorial line's wrapped text could
+run right up against that margin. Widened to `panelW - 80` (40px each side). Applied
+the same width to the new popup in item 2 below.
+
+**2 — the defeat-hint text, found appearing TWICE, both removed**: root cause —
+this session's own prior round-4 work added `NarratorBar.showInstant(defeatHint)`
+(bottom-strip text) during the death animation, but left `ResultScene.ts`'s *own*
+separate static defeat-hint text block untouched, reasoning it was "additive, not a
+migration." In practice a defeated t1/t2 player saw the identical message twice — once
+at the bottom during death, again at the bottom of the result screen seconds later.
+Fixed by removing both and replacing them with a single real popup:
+- Deleted the `narrator.showInstant(...)` call in `maybeFinish`'s defeat branch, and
+  deleted `NarratorBar.showInstant()` itself (now unused — it existed only for this).
+- Deleted `ResultScene.ts`'s static defeat-hint text block entirely (the GO TO SHOP
+  button and `defeat-shop-redirect` button-set logic are untouched — only the redundant
+  text line is gone).
+- Added `CombatScene.ts`'s `showDefeatHintPopup(hint, onDismiss)` — visually mirrors
+  `showNarratorLine`'s card (same panel/backdrop) but simpler: no page counter, no
+  arrow pointer, a single `CONTINUE ▸` button. Shown once, `DEFEAT_HINT_POPUP_DELAY_MS`
+  (500ms) into the death sequence — long enough for the initial flash/shake/shockwave
+  beat to read before a modal dims the screen. The transition to ResultScene now
+  happens on dismissal (`onDismiss`) instead of racing a fixed timer for any mission
+  with a `defeatHint` (t1, t2 today); missions without one (t3/t4/m1-m6 defeats) are
+  unaffected — still the plain `DEFEAT_EXIT_DELAY_MS` auto-transition.
+- Threaded a new `__cheat.combat.dismissDefeatHintPopup()` through the same
+  `CombatCheats.ts`/`main.ts` delegate pattern `dismissNarrator` uses, since the popup
+  now gates a real transition every automated tool depends on: updated
+  `screenshot.ts`'s `result-scene-t1/t2-shop-redirect` fixtures, `tools/
+  onboarding-audit.ts`'s `playToEnd` (unconditional no-op-safe call), and
+  `tutorialAutopilot.ts`'s `waitForResult` loop (real-tap-driven, matched on the
+  popup's distinct `'CONTINUE ▸'` label so it's never confused with the tutorial
+  modal's own bare `'CONTINUE'`/`'NEXT →'`).
+- `m3b`'s first-booster-appear and `m6`'s boss-appear ambient bottom-bar lines
+  (`story.ts`) were deliberately left alone — those are real, actively-used, non-
+  blocking mid-combat flavor text, not the redundant defeat-text this complaint was
+  about; pausing combat with a modal every time a boss appears would be a worse
+  regression than the one being fixed.
+
+**3 — shield-pulse sound reworked** (`synthVoices.ts`'s `fillShimmer`): was a rising
+pure-tone sine sweep with a close second harmonic (two audible tones beating together —
+read as a chirp/whistle, not "space-like"). Replaced with filtered noise (a soft
+one-pole low-pass over white noise, i.e. an airy whoosh) under a much fainter high
+partial, longer attack (30ms → 90ms, softening the onset), longer/gentler tail
+(`decay` 5 → 3). Also throttled further and played quieter:
+`SoundManager.shieldPulse()`'s volume `SFX_VOLUME × 0.22 → × 0.15`; `CombatScene.ts`'s
+`SHIELD_SOUND_MIN_MS` (minimum gap between plays) `1400 → 2600`.
+
+**Verified**: `build:dry`/`lint`/`lint:comments` clean, `pnpm test` 779/779 (untouched —
+no core logic), `pnpm campaign` 100%/100%, `pnpm pacing` clean, `pnpm audit-taps` 0
+failures, `pnpm dlx fallow` no new findings (same pre-existing baseline), full `pnpm
+screenshot` batch (77 shots) 0 failures, a forced Playwright capture of the new
+defeat-hint popup mid-death (confirms no bottom text anywhere, comfortable margins),
+and a full `pnpm onboarding` re-run (found one unrelated pre-existing stale assertion,
+logged separately above — every defeat-hint-popup-dependent check passed).
 
 ### Reconciled a second, independent audio-visual rework done in a parallel sandbox — landed 2026-07-25
 Tomáš had a second agent session running in a separate sandbox at the same time as this

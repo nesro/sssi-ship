@@ -18,3 +18,5 @@ tools/tune-report.md
 tools/tune-report.json
 tools/pacing-report.md
 tools/pacing-report.json
+
+.DS_Store

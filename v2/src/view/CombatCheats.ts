@@ -144,6 +144,13 @@ export class CombatCheats {
     scene.showNarratorLine(lines, scene.narratorLineIdx);
   }
 
+  /** __cheat.combat.dismissDefeatHintPopup() — headless equivalent of tapping CONTINUE
+   * on showDefeatHintPopup (a tutorial mission's defeatHint, shown once during the death
+   * sequence). No-op if no such popup is currently up. */
+  dismissDefeatHintPopup(): void {
+    this.scene.pendingDefeatHintDismiss?.();
+  }
+
   /** __cheat.combat.pickCard(index) / rerollCard() / skipCard() — headless equivalents
    * of tapping a card in the offer overlay. Routes through the same handleCardAction()
    * the real click handler uses (not resolveAbilityAction directly), so the picked-

@@ -48,19 +48,6 @@ export class NarratorBar {
     this.label.setText('');
   }
 
-  /** Like show(), but fully revealed immediately — no typewriter reveal. For contexts
-   * with a short, fixed window to read the line (e.g. the death animation's hold delay,
-   * which the typewriter's own per-character pace would otherwise cut off mid-reveal). */
-  showInstant(text: string): void {
-    this.fullText = text;
-    this.charProgress = text.length;
-    this.idleMs = 0;
-    this.active = false;
-    this.bg.setVisible(true);
-    this.label.setVisible(true);
-    this.label.setText(text);
-  }
-
   update(deltaMs: number): void {
     if (!this.bg.visible) return;
     if (this.active) {

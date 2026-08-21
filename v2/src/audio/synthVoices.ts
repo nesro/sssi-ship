@@ -141,19 +141,19 @@ const fillVictory: Fill = (data, sr, p) => {
   }
 };
 
-/** Shield-pulse shimmer: a soft, airy upward swell with a faint octave partial and an eased
- * attack — a gentle "space" surge, not a chirpy bell (it plays repeatedly as the shield
- * recharges, so it must stay unobtrusive). */
-const fillShimmer: Fill = (data, sr, p) => {
-  let ph = 0;
-  const decay = p.decay ?? 5;
+/** Shield-pulse shimmer: soft filtered-noise air (a gentle whoosh, not a tone) under a
+ * faint high partial, with a slow attack and long tail — closer to a distant radio
+ * hiss than a chirp or bell. Plays often (every shield recharge), so it must read as
+ * ambient texture, not an event demanding attention. */
+const fillShimmer: Fill = (data, sr, p, rng) => {
+  let lp = 0;
+  const decay = p.decay ?? 3;
   for (let i = 0; i < data.length; i++) {
     const t = i / sr;
-    const f = (p.startF ?? 380) + (p.span ?? 500) * (1 - Math.exp(-t * 6));
-    ph += (Math.PI * 2 * f) / sr;
-    const air = Math.sin(ph) * 0.4 + Math.sin(ph * 2.01) * 0.12;
-    const env = (t < 0.03 ? t / 0.03 : 1) * Math.exp(-t * decay);
-    data[i] = clamp(air * env * 0.7);
+    lp += (rng() * 2 - 1 - lp) * 0.04;
+    const partial = Math.sin(2 * Math.PI * ((p.startF ?? 300) + (p.span ?? 200) * Math.min(1, t * 2)) * t) * 0.12;
+    const env = (t < 0.09 ? t / 0.09 : 1) * Math.exp(-t * decay);
+    data[i] = clamp((lp * 0.55 + partial) * env * 0.5);
   }
 };
 
@@ -203,8 +203,8 @@ export const SFX_SPECS: SoundSpec[] = [
     params: { base: 70, decay: 8 }, meta: { base: F(30, 200, 1), decay: F(3, 30, 0.5) } },
   { key: 'victory', seconds: 1.5, seed: 6, gain: 1, fill: fillVictory,
     params: { step: 0.13 }, meta: { step: F(0.06, 0.3, 0.005) } },
-  { key: 'shimmer', seconds: 0.5, seed: 7, gain: 0.25, fill: fillShimmer,
-    params: { startF: 380, span: 500, decay: 5 }, meta: { startF: F(200, 1200, 10), span: F(100, 2000, 10), decay: F(2, 20, 0.5) } },
+  { key: 'shimmer', seconds: 0.6, seed: 7, gain: 0.25, fill: fillShimmer,
+    params: { startF: 300, span: 200, decay: 3 }, meta: { startF: F(150, 900, 10), span: F(50, 1000, 10), decay: F(1, 20, 0.5) } },
   { key: 'boss-alarm', seconds: 0.9, seed: 8, gain: 0.7, fill: fillBossAlarm,
     params: { droneF: 110, throbHz: 4, decay: 1.2 }, meta: { droneF: F(50, 300, 2), throbHz: F(1, 12, 0.5), decay: F(0.4, 4, 0.1) } },
   { key: 'rocket', seconds: 0.7, seed: 7, gain: 0.8, fill: fillRocket,

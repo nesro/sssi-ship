@@ -186,6 +186,7 @@ if (import.meta.env.DEV) {
       fastForwardToNarrator: (maxTicks: number) => callCombatCheat('cheatFastForwardToNarrator', maxTicks),
       dismissNarrator: () => callCombatCheat('cheatDismissNarrator'),
       narratorNext: () => callCombatCheat('cheatNarratorNext'),
+      dismissDefeatHintPopup: () => callCombatCheat('cheatDismissDefeatHintPopup'),
       markTarget: (enemyId: number | null) => callCombatCheat('cheatMarkTarget', enemyId),
       setToggle: (system: string, on: boolean) => callCombatCheat('cheatSetToggle', system, on),
       inspect: (): unknown => callCombatCheat('cheatInspect'),
@@ -258,7 +259,7 @@ if (import.meta.env.DEV) {
   console.info(
     '[dev] __cheat available: coins(n) · setCoins(n) · richSave() · unlockAll() · setProgress(ids) · reset() · ' +
       'inspect() · equip(id) · buySupply(id) · navShop(tab) · navTo(nav) · selectSubscription(id) · selectMission(id) · startMission(id) · ' +
-      'combat.{fastForward,fastForwardToOffer,fastForwardToNarrator,dismissNarrator,narratorNext,markTarget,setToggle,inspect,' +
+      'combat.{fastForward,fastForwardToOffer,fastForwardToNarrator,dismissNarrator,narratorNext,dismissDefeatHintPopup,markTarget,setToggle,inspect,' +
       'showExitConfirm,confirmExit,pickCard,rerollCard,skipCard,activateAbility,fireSideWeapon,activateSupply} · ' +
       'alpha.continue() · hub.{showTour,showShopTour,showDispatchTour,tourNext,tourSkip,toggleAudio} · daily.{play,markPlayed,clear}',
   );

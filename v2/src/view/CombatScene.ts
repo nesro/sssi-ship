@@ -83,6 +83,9 @@ const MAX_CATCH_UP_MS = 250;
 // short — a voluntary quit should feel snappy, not padded.
 const VICTORY_EXIT_DELAY_MS = 2000;
 const DEFEAT_EXIT_DELAY_MS = 2000;
+/** Delay before showDefeatHintPopup appears — long enough for the death animation's
+ * initial flash/shake/shockwave beat to read before a modal dims the screen over it. */
+const DEFEAT_HINT_POPUP_DELAY_MS = 500;
 const ABANDON_EXIT_DELAY_MS = 600;
 // Right button panel: a dynamic top-down layout, not fixed Y offsets — the row count
 // varies with loadout (toggle buttons: fire+shield always, rear/side conditional;
@@ -116,7 +119,7 @@ const ABILITY_SLOT_COOLDOWN_FILL = 0x2a1f0a;
 // How fast shield hit-flash decays (full fade in ~550ms, matching v1 ShieldVisual).
 const SHIELD_FLASH_DECAY = 1.8;
 /** Minimum gap (ms) between Sound.shieldPulse() plays — see lastShieldSoundMs's own doc. */
-const SHIELD_SOUND_MIN_MS = 1400;
+const SHIELD_SOUND_MIN_MS = 2600;
 /** Gun-mount recoil-kick decay rate (1/s) — a shot snaps recoil to 1, this brings it
  * back to 0 in ~150ms, quick enough to read as a kick rather than a lingering glow. */
 const GUN_RECOIL_DECAY = 6.5;
@@ -329,6 +332,7 @@ export class CombatScene extends Phaser.Scene {
   }> = [];
   exitConfirmObjects = new ManagedObjectGroup(); // not private: CombatCheats.ts needs direct access
   private narratorModalObjects = new ManagedObjectGroup();
+  private defeatHintPopupObjects = new ManagedObjectGroup();
   narratorLineIdx = 0; // not private: CombatCheats.ts needs direct access
   /** Reference to whichever narratorEvents.lines array is currently on screen — tick.ts
    * assigns a fresh array (`[...event.lines]`) each time a new event fires, so `!==`
@@ -584,6 +588,8 @@ export class CombatScene extends Phaser.Scene {
     this.narratorBossShown = false;
     this.narratorBoosterShown = false;
     this.narratorModalObjects = new ManagedObjectGroup();
+    this.defeatHintPopupObjects = new ManagedObjectGroup();
+    this.pendingDefeatHintDismiss = null;
     this.displayedNarratorLines = null;
     this.narratorLineIdx = 0;
     this.narratorEventIndex = 0;
@@ -1367,7 +1373,7 @@ export class CombatScene extends Phaser.Scene {
     this.narratorModalObjects.add(
       this.add.text(px(cx), px(cy - 22), lines[idx] ?? '', {
         fontFamily: UI_FONT, fontSize: `${String(fontPx(16))}px`,
-        color: '#ffaa22', wordWrap: { width: px(panelW - 48) }, align: 'center',
+        color: '#ffaa22', wordWrap: { width: px(panelW - 80) }, align: 'center',
       }).setOrigin(0.5).setDepth(depth + 2),
     );
     const isLast = idx >= lines.length - 1;
@@ -1399,6 +1405,49 @@ export class CombatScene extends Phaser.Scene {
   private hideNarratorModal(): void {
     this.narratorModalObjects.destroyAll();
   }
+
+  /** Set only while showDefeatHintPopup's popup is on screen — widened from private so
+   * CombatCheats.ts's dismissDefeatHintPopup() can tap its one button headlessly, the
+   * same way dismissNarrator() does for the tutorial modal. */
+  pendingDefeatHintDismiss: (() => void) | null = null;
+
+  /** A one-line popup for a tutorial mission's defeatHint (missions.ts) — shown once,
+   * during the death sequence, instead of the message appearing twice (once as passive
+   * bottom-bar text during the death animation, again as static text on ResultScene).
+   * Visually mirrors showNarratorLine's card but simpler: no page counter, no arrow
+   * pointer, and its one button proceeds straight to ResultScene rather than resuming
+   * the sim — there's nothing left to resume, the mission already ended. */
+  private showDefeatHintPopup(hint: string, onDismiss: () => void): void {
+    const depth = 35;
+    const panelW = 560;
+    const panelH = 170;
+    const cx = LOGICAL_WIDTH / 2;
+    const cy = LOGICAL_HEIGHT / 2;
+    this.defeatHintPopupObjects.add(addModalBackdrop(this, depth));
+    this.defeatHintPopupObjects.add(
+      this.add.rectangle(px(cx), px(cy), px(panelW), px(panelH), 0x080820, 0.97)
+        .setStrokeStyle(px(1), 0x334466)
+        .setDepth(depth + 1),
+    );
+    this.defeatHintPopupObjects.add(
+      this.add.text(px(cx), px(cy - 14), hint, {
+        fontFamily: UI_FONT, fontSize: `${String(fontPx(15))}px`,
+        color: '#ffaa22', wordWrap: { width: px(panelW - 80) }, align: 'center',
+      }).setOrigin(0.5).setDepth(depth + 2),
+    );
+    this.pendingDefeatHintDismiss = () => {
+      this.pendingDefeatHintDismiss = null;
+      this.defeatHintPopupObjects.destroyAll();
+      onDismiss();
+    };
+    this.defeatHintPopupObjects.add(
+      addTextButton(this, {
+        x: px(cx), y: px(cy + 60), label: 'CONTINUE ▸', color: 0x00ffee, size: 16,
+        onClick: () => { this.pendingDefeatHintDismiss?.(); },
+      }).setDepth(depth + 2),
+    );
+  }
+
 
   private syncNarrator(): void {
     const missionId = this.core.mission.id;
@@ -2400,13 +2449,19 @@ export class CombatScene extends Phaser.Scene {
       // that visual means "you were destroyed" and this player wasn't.
       this.time.delayedCall(ABANDON_EXIT_DELAY_MS, () => { this.scene.start('ResultScene', sceneData); });
     } else {
-      // A tutorial mission's fix-it message (missions.ts's defeatHint, also shown as
-      // static text on ResultScene) now lands as a narrator line during the death
-      // animation itself — the player sees the lesson while the moment that taught it
-      // is still on screen, not seconds later on a results panel.
-      if (this.core.mission.defeatHint !== undefined) this.narrator.showInstant(this.core.mission.defeatHint);
       this.playDeathAnimation();
-      this.time.delayedCall(DEFEAT_EXIT_DELAY_MS, () => { this.scene.start('ResultScene', sceneData); });
+      const defeatHint = this.core.mission.defeatHint;
+      if (defeatHint !== undefined) {
+        // A tutorial mission's fix-it message — shown exactly once, as its own popup,
+        // once the initial death flash/shake/shockwave has had a beat to read. The
+        // player dismisses it at their own pace instead of racing a fixed timer to
+        // ResultScene, which used to show the identical text a second time anyway.
+        this.time.delayedCall(DEFEAT_HINT_POPUP_DELAY_MS, () => {
+          this.showDefeatHintPopup(defeatHint, () => { this.scene.start('ResultScene', sceneData); });
+        });
+      } else {
+        this.time.delayedCall(DEFEAT_EXIT_DELAY_MS, () => { this.scene.start('ResultScene', sceneData); });
+      }
     }
   }
 
@@ -2597,6 +2652,8 @@ export class CombatScene extends Phaser.Scene {
   cheatDismissNarrator(): void { this.cheats.dismissNarrator(); }
   // fallow-ignore-next-line unused-class-member
   cheatNarratorNext(): void { this.cheats.narratorNext(); }
+  // fallow-ignore-next-line unused-class-member
+  cheatDismissDefeatHintPopup(): void { this.cheats.dismissDefeatHintPopup(); }
   // fallow-ignore-next-line unused-class-member
   cheatPickCard(index: number): void { this.cheats.pickCard(index); }
   // fallow-ignore-next-line unused-class-member

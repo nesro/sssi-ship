@@ -211,12 +211,24 @@ async function dismissCardOfferIfPresent(game: Phaser.Game): Promise<boolean> {
   return true;
 }
 
+/** showDefeatHintPopup's own CONTINUE ▸ button (CombatScene.ts) — a tutorial mission's
+ * defeatHint, shown once during the death sequence. A distinct label from the narrator
+ * modal's own CONTINUE/NEXT → (dismissNarratorIfPresent) so the two never get confused —
+ * this one gates the actual transition to ResultScene, not tick advancement. */
+async function dismissDefeatHintPopupIfPresent(game: Phaser.Game): Promise<boolean> {
+  const pos = findTextCenter(game, 'CombatScene', (t) => t === 'CONTINUE ▸');
+  if (pos === null) return false;
+  await tapAt(game, pos.x, pos.y);
+  return true;
+}
+
 async function waitForResult(game: Phaser.Game, timeoutMs = 180_000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (game.scene.isActive('ResultScene')) { await sleep(500); return; }
     await dismissNarratorIfPresent(game);
     await dismissCardOfferIfPresent(game);
+    await dismissDefeatHintPopupIfPresent(game);
     await sleep(200);
   }
   throw new Error('tutorialAutopilot: timed out waiting for ResultScene');

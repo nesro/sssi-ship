@@ -781,7 +781,10 @@ const SHOTS: Shot[] = [
       await cheat(page, 'startMission', 't1');
       await waitForMissionReady(page, 't1');
       await cheat(page, 'combat.fastForward', 6000);
-      await page.waitForTimeout(1600);
+      // t1 has a defeatHint (missions.ts) — the transition to ResultScene now waits on
+      // its own popup (showDefeatHintPopup, CombatScene.ts) instead of a fixed timer.
+      await page.waitForTimeout(900);
+      await cheat(page, 'combat.dismissDefeatHintPopup');
       await waitForSceneActive(page, 'ResultScene', 5000);
     },
     cleanup: restoreBaseline,
@@ -882,7 +885,9 @@ const SHOTS: Shot[] = [
       await cheat(page, 'startMission', 't2');
       await waitForMissionReady(page, 't2');
       await cheat(page, 'combat.fastForward', 6000);
-      await page.waitForTimeout(1600);
+      // t2 also has a defeatHint — same popup-gated transition as t1 above.
+      await page.waitForTimeout(900);
+      await cheat(page, 'combat.dismissDefeatHintPopup');
       await waitForSceneActive(page, 'ResultScene', 5000);
     },
     cleanup: restoreBaseline,

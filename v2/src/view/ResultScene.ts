@@ -76,10 +76,9 @@ export class ResultScene extends Phaser.Scene {
     const buttonY = px(460);
 
     if (vm.buttons.kind === 'defeat-shop-redirect') {
-      this.add.text(SCREEN_WIDTH / 2, px(390), vm.defeatHint ?? '', {
-        fontFamily: UI_FONT, fontSize: `${String(fontPx(13))}px`, color: cssColor(PALETTE.generatorAmber),
-        align: 'center', wordWrap: { width: px(640) },
-      }).setOrigin(0.5, 0);
+      // The fix-it message itself is no longer shown here — it's delivered once, as a
+      // popup, during the death sequence in CombatScene (showDefeatHintPopup). Showing
+      // it a second time as static text here was pure redundant nagging.
       addTextButton(this, {
         x: SCREEN_WIDTH / 2, y: buttonY, label: 'GO TO SHOP ▸',
         color: PALETTE.motorMagenta, size: 18,

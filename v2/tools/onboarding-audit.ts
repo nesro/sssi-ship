@@ -94,6 +94,13 @@ function check(condition: boolean, label: string): void {
 async function playToEnd(page: Page): Promise<CombatSnapshot> {
   await cheat(page, 'combat.fastForward', 6000);
   const snap = await cheat<CombatSnapshot>(page, 'combat.inspect');
+  // A defeat with a defeatHint (t1/t2) shows its own popup (CombatScene.ts's
+  // showDefeatHintPopup) that gates the transition to ResultScene — dismiss it the same
+  // way a real player's tap would. A no-op otherwise (victory, or no popup up), so
+  // always safe to call. The wait gives the real Phaser frame loop time to actually
+  // create the popup — fastForward stopping the tick loop doesn't mean it has yet.
+  await page.waitForTimeout(900);
+  await cheat(page, 'combat.dismissDefeatHintPopup');
   await waitForSceneActive(page, 'ResultScene', 10_000);
   return snap;
 }

@@ -165,10 +165,10 @@ class SoundManager {
   }
 
   /** Generator fired a shield pulse (shield jumped up) — a soft, airy surge. Kept quiet
-   * because the shield recharges often; the caller also throttles how frequently this
-   * fires so it never machine-guns. */
+   * and infrequent because the shield recharges often; the caller also throttles how
+   * often this fires so it never machine-guns. */
   shieldPulse(): void {
-    this.sfx(AUDIO.shimmer, SFX_VOLUME * 0.22);
+    this.sfx(AUDIO.shimmer, SFX_VOLUME * 0.15);
   }
 
   /** A boss just entered the field — a throbbing low alarm sting. */
